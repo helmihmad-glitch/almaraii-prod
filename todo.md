@@ -33,3 +33,6 @@
 - [x] Calculer la production mensuelle comme la somme des lignes du mois, incluant les ajouts et corrections.
 - [x] Recalculer la somme après suppression ou réinitialisation d’une ligne Excel.
 - [x] Vérifier les scénarios et publier la version mise à jour.
+- [x] Vérifier que la saisie est enregistrée dans le registre journalier avec sa date exacte.
+- [x] Vérifier que la saisie apparaît dans le mois correspondant et modifie son total mensuel.
+- [x] Tester le flux complet et publier la version vérifiée.

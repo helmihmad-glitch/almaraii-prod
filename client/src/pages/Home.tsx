@@ -53,9 +53,10 @@ export default function Home() {
   const [targets, setTargets] = useState<Record<string, number>>(() => { try { return JSON.parse(localStorage.getItem("production-month-targets") ?? "{}"); } catch { return {}; } });
   const [targetDraft, setTargetDraft] = useState("");
   const [isTargetEditing, setIsTargetEditing] = useState(false);
+  const monthForDate = (date: string) => months.find((item) => item.daily[0]?.date.slice(0, 7) === date.slice(0, 7));
   const productionQuery = trpc.production.list.useQuery();
-  const createEntry = trpc.production.create.useMutation({ onSuccess: () => { productionQuery.refetch(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: "Les indicateurs ont été calculés automatiquement." }); } });
-  const updateEntry = trpc.production.update.useMutation({ onSuccess: () => { productionQuery.refetch(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour"); } });
+  const createEntry = trpc.production.create.useMutation({ onSuccess: (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); productionQuery.refetch(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: targetMonth ? `Ajoutée au registre de ${targetMonth.name}.` : "Les indicateurs ont été calculés automatiquement." }); } });
+  const updateEntry = trpc.production.update.useMutation({ onSuccess: (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); productionQuery.refetch(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour", { description: targetMonth ? `Rattachée au registre de ${targetMonth.name}.` : undefined }); } });
   const deleteEntry = trpc.production.delete.useMutation({ onSuccess: () => { productionQuery.refetch(); toast.success("Ligne supprimée"); } });
   const month = months.find((item) => item.key === selectedKey) ?? months[0];
   const monthPrefix = month.daily[0]?.date.slice(0, 7) ?? "";
