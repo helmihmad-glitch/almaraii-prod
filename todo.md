@@ -29,3 +29,7 @@
 - [x] Ajouter une action de restauration/réinitialisation des corrections ou suppressions Excel.
 - [x] Vérifier le flux Excel modifier/supprimer/restaurer et la persistance après rechargement.
 - [x] Créer un nouveau checkpoint après ces validations et livrer la version mise à jour.
+- [x] Rendre l’objectif mensuel modifiable et conserver sa valeur par période.
+- [x] Calculer la production mensuelle comme la somme des lignes du mois, incluant les ajouts et corrections.
+- [x] Recalculer la somme après suppression ou réinitialisation d’une ligne Excel.
+- [x] Vérifier les scénarios et publier la version mise à jour.
