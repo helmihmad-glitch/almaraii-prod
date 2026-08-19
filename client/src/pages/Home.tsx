@@ -11,6 +11,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { toast } from "sonner";
 import data from "@/data/app-data.json";
 import { trpc } from "@/lib/trpc";
+import { useLocation } from "wouter";
 
 type Day = (typeof data.months)[number]["daily"][number];
 type Month = (typeof data.months)[number];
@@ -39,6 +40,7 @@ function Donut({ value }: { value: number }) {
 
 export default function Home() {
 
+  const [, setLocation] = useLocation();
   const months = data.months as unknown as Month[];
   const [selectedKey, setSelectedKey] = useState(months[months.length - 1]?.key ?? months[0].key);
   const [articleFilter, setArticleFilter] = useState("Toutes les lignes");
@@ -61,6 +63,7 @@ export default function Home() {
   const createEntry = trpc.production.create.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: targetMonth ? `Ajoutée au registre de ${targetMonth.name}.` : "Les indicateurs ont été calculés automatiquement." }); } });
   const updateEntry = trpc.production.update.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour", { description: targetMonth ? `Rattachée au registre de ${targetMonth.name}.` : undefined }); } });
   const deleteEntry = trpc.production.delete.useMutation({ onSuccess: () => { productionQuery.refetch(); toast.success("Ligne supprimée"); } });
+  const openRegistry = () => { setSidebarOpen(false); setLocation("/registre"); };
   const month = months.find((item) => item.key === selectedKey) ?? months[0];
   const monthPrefix = month.daily[0]?.date.slice(0, 7) ?? "";
   const registryDays = useMemo(() => {
@@ -112,7 +115,7 @@ export default function Home() {
         <div className="brand"><div className="brand-mark"><img src="/manus-storage/ap-monogram_c6867464.png" alt="" /></div><div><strong>Almaraïi</strong><span>Production Pulse</span></div><button className="mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu"><X size={18} /></button></div>
         <div className="rail-section"><span className="rail-label">Espace opérationnel</span><nav>
           <button className="rail-link active"><LayoutDashboard size={17} />Vue d’ensemble</button>
-          <button className="rail-link" onClick={() => toast.info("Le registre détaillé sera disponible dans une prochaine version.")}><ClipboardList size={17} />Registre journalier</button>
+          <button className="rail-link" onClick={openRegistry}><ClipboardList size={17} />Registre journalier</button>
           <button className="rail-link" onClick={() => toast.info("La comparaison multi-lignes arrive bientôt.")}><BarChart3 size={17} />Analyse des lignes</button>
         </nav></div>
         <div className="rail-section"><span className="rail-label">Raccourcis</span><nav>

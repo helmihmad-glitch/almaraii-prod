@@ -57,3 +57,9 @@
 - [x] Vérifier le compteur, le graphique et l’export puis publier la version mise à jour.
 - [x] Confirmer que l’export CSV utilise le sous-ensemble filtré par date de début et de fin.
 - [x] Créer un nouveau checkpoint après validation du filtre entre deux dates.
+- [x] Activer le menu Registre journalier avec une vue dédiée des lignes enregistrées.
+- [x] Vérifier la sauvegarde persistante des nouvelles saisies et leur affichage dans le registre.
+- [x] Tester la navigation et publier la version mise à jour.
+- [x] Créer une page dédiée Registre journalier avec les lignes sauvegardées.
+- [x] Relier le menu latéral à cette page et vérifier la navigation.
+- [x] Tester la persistance des saisies dans la page dédiée et publier la version.
