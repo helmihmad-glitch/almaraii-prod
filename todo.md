@@ -63,3 +63,7 @@
 - [x] Créer une page dédiée Registre journalier avec les lignes sauvegardées.
 - [x] Relier le menu latéral à cette page et vérifier la navigation.
 - [x] Tester la persistance des saisies dans la page dédiée et publier la version.
+- [x] Trier le tableau des dernières productions selon la date réelle de chaque ligne.
+- [x] Vérifier qu’une nouvelle saisie apparaît à la bonne position chronologique et publier la correction.
+- [x] Tester le tri chronologique avec une nouvelle saisie de production et une date distincte.
+- [x] Créer un checkpoint après validation du tri chronologique et publier la correction.

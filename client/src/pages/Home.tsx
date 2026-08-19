@@ -11,6 +11,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { toast } from "sonner";
 import data from "@/data/app-data.json";
 import { trpc } from "@/lib/trpc";
+import { orderProductionRows } from "@/lib/registryOrdering";
 import { useLocation } from "wouter";
 
 type Day = (typeof data.months)[number]["daily"][number];
@@ -94,7 +95,7 @@ export default function Home() {
   const monthProgress = monthTarget > 0 ? monthlyStats.production / monthTarget : 0;
   useEffect(() => { setTargetDraft(String(monthTarget)); setIsTargetEditing(false); }, [selectedKey, monthTarget]);
   const saveTarget = () => { const value = Number(targetDraft); if (!Number.isFinite(value) || value <= 0) { toast.error("Saisissez un objectif mensuel supérieur à 0."); return; } const next = { ...targets, [month.key]: value }; setTargets(next); localStorage.setItem("production-month-targets", JSON.stringify(next)); setIsTargetEditing(false); toast.success("Objectif mensuel mis à jour"); };
-  const filteredDays = useMemo(() => monthlyRows.filter((day) => (articleFilter === "Toutes les lignes" || day.article === articleFilter) && (!dateFilter || day.date === dateFilter) && (!dateFrom || day.date >= dateFrom) && (!dateTo || day.date <= dateTo) && (!query || day.article.toLowerCase().includes(query.toLowerCase()) || day.date.includes(query))), [monthlyRows, articleFilter, dateFilter, dateFrom, dateTo, query]);
+  const filteredDays = useMemo(() => orderProductionRows(monthlyRows.filter((day) => (articleFilter === "Toutes les lignes" || day.article === articleFilter) && (!dateFilter || day.date === dateFilter) && (!dateFrom || day.date >= dateFrom) && (!dateTo || day.date <= dateTo) && (!query || day.article.toLowerCase().includes(query.toLowerCase()) || day.date.includes(query)))), [monthlyRows, articleFilter, dateFilter, dateFrom, dateTo, query]);
   const articles = useMemo(() => Array.from(new Set(monthlyRows.map((d) => d.article))).map((article) => { const production = monthlyRows.filter((d) => d.article === article).reduce((sum, d) => sum + d.production, 0); return { article, production, share: monthlyStats.production > 0 ? production / monthlyStats.production : 0 }; }), [monthlyRows, monthlyStats.production]);
   const chartData = useMemo(() => {
     const grouped = new Map<string, { date: string; production: number; trs: number; waste: number }>();
