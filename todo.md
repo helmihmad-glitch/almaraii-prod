@@ -45,3 +45,6 @@
 - [x] Vérifier le résultat et publier la version mise à jour.
 - [x] Tester la combinaison filtre date, recherche texte et filtre article dans la journal d’activité.
 - [x] Publier un nouveau checkpoint contenant le filtre par date.
+- [x] Afficher le dernier mois disponible au chargement de l’application.
+- [x] Vérifier le rendu initial et publier la correction.
+- [x] Créer un nouveau checkpoint après la correction du mois par défaut et livrer cette version publiée.

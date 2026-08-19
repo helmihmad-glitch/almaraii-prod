@@ -40,7 +40,7 @@ function Donut({ value }: { value: number }) {
 export default function Home() {
 
   const months = data.months as unknown as Month[];
-  const [selectedKey, setSelectedKey] = useState(months[months.length - 2]?.key ?? months[0].key);
+  const [selectedKey, setSelectedKey] = useState(months[months.length - 1]?.key ?? months[0].key);
   const [articleFilter, setArticleFilter] = useState("Toutes les lignes");
   const [query, setQuery] = useState("");
   const [dateFilter, setDateFilter] = useState("");
