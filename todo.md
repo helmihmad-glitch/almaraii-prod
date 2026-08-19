@@ -36,3 +36,7 @@
 - [x] Vérifier que la saisie est enregistrée dans le registre journalier avec sa date exacte.
 - [x] Vérifier que la saisie apparaît dans le mois correspondant et modifie son total mensuel.
 - [x] Tester le flux complet et publier la version vérifiée.
+- [x] Faire apparaître immédiatement chaque nouvelle saisie dans la journal d’activité.
+- [x] Vérifier le rafraîchissement, le filtre de mois et la conservation de la ligne après rechargement.
+- [x] Publier la correction du registre.
+- [x] Vérifier la persistance de la ligne créée dans la journal d’activité après rechargement et maintien du mois concerné.
