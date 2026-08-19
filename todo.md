@@ -40,3 +40,8 @@
 - [x] Vérifier le rafraîchissement, le filtre de mois et la conservation de la ligne après rechargement.
 - [x] Publier la correction du registre.
 - [x] Vérifier la persistance de la ligne créée dans la journal d’activité après rechargement et maintien du mois concerné.
+- [x] Ajouter un champ de filtre par date dans la journal d’activité.
+- [x] Faire fonctionner la combinaison date, recherche et article.
+- [x] Vérifier le résultat et publier la version mise à jour.
+- [x] Tester la combinaison filtre date, recherche texte et filtre article dans la journal d’activité.
+- [x] Publier un nouveau checkpoint contenant le filtre par date.
