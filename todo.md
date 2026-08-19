@@ -48,3 +48,7 @@
 - [x] Afficher le dernier mois disponible au chargement de l’application.
 - [x] Vérifier le rendu initial et publier la correction.
 - [x] Créer un nouveau checkpoint après la correction du mois par défaut et livrer cette version publiée.
+- [x] Ajouter le bouton « Enregistrer la saisie » dans le formulaire de production.
+- [x] Vérifier qu’il crée la ligne dans le registre et publie la correction.
+- [x] Valider le bouton « Enregistrer la saisie » avec une nouvelle production et vérifier son apparition dans le registre du bon mois.
+- [x] Créer un checkpoint après validation du bouton et publier la version mise à jour.
