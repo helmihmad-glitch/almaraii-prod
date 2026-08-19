@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,9 +29,12 @@ export default function Registry() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const registryQuery = trpc.production.list.useQuery();
+  const synchronizedFileQuery = trpc.production.syncFile.useQuery();
+  const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]) });
+  useEffect(() => { if (!registryQuery.isLoading && !registryQuery.data?.some((row) => row.source === "excel")) initializeExcel.mutate(); }, [registryQuery.isLoading, registryQuery.data, initializeExcel]);
   const removeLine = trpc.production.delete.useMutation({
     onSuccess: async () => {
-      await registryQuery.refetch();
+      await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
       toast.success("Ligne supprimée du registre");
     },
   });
@@ -54,6 +57,14 @@ export default function Registry() {
     URL.revokeObjectURL(url);
     toast.success("Export du registre généré", { description: `${rows.length} lignes exportées.` });
   };
+  const downloadSynchronizedExcel = () => {
+    const url = synchronizedFileQuery.data?.downloadUrl;
+    if (!url) {
+      toast.error("Le fichier Excel synchronisé est en cours de préparation.");
+      return;
+    }
+    window.location.assign(url);
+  };
 
   return <div className="registry-screen">
     <header className="registry-topbar">
@@ -72,7 +83,7 @@ export default function Registry() {
           <label className="registry-date">Du<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
           <label className="registry-date">Au<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
           {(query || dateFrom || dateTo) && <button className="registry-clear" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); }}>Effacer les filtres</button>}
-          <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter</button>
+          <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter CSV</button><button className="registry-excel" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={15} />Excel synchronisé</button>
         </div>
         <div className="registry-table-wrap">
           <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={9} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(Number(row.productionTons))} T</td><td>{fmt(Number(row.wasteTons))} T</td><td>{pct(Number(row.availability))}</td><td>{pct(Number(row.performance))}</td><td><strong>{pct(Number(row.trs))}</strong></td><td>{fmt(Number(row.realHours))} h</td><td><button className="registry-delete" onClick={() => { if (window.confirm("Supprimer cette ligne sauvegardée ?")) removeLine.mutate({ id: row.id }); }} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={9} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » pour ajouter une première ligne au registre.</span></td></tr>}</tbody></table>

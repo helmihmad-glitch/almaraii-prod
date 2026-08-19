@@ -61,6 +61,8 @@ export default function Home() {
   const [isTargetEditing, setIsTargetEditing] = useState(false);
   const monthForDate = (date: string) => months.find((item) => item.daily[0]?.date.slice(0, 7) === date.slice(0, 7));
   const productionQuery = trpc.production.list.useQuery();
+  const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => productionQuery.refetch() });
+  useEffect(() => { if (!productionQuery.isLoading && !productionQuery.data?.some((row) => row.source === "excel")) initializeExcel.mutate(); }, [productionQuery.isLoading, productionQuery.data, initializeExcel]);
   const createEntry = trpc.production.create.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: targetMonth ? `Ajoutée au registre de ${targetMonth.name}.` : "Les indicateurs ont été calculés automatiquement." }); } });
   const updateEntry = trpc.production.update.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour", { description: targetMonth ? `Rattachée au registre de ${targetMonth.name}.` : undefined }); } });
   const deleteEntry = trpc.production.delete.useMutation({ onSuccess: () => { productionQuery.refetch(); toast.success("Ligne supprimée"); } });
@@ -81,7 +83,8 @@ export default function Home() {
       return [{ ...day, sourceKey, date: override.productionDate, article: override.article, hours, plannedStops, unplannedStops, production, waste, standardRate, realHours, availability, performance, quality, trs: availability * performance * quality }];
     });
     const saved = (productionQuery.data ?? []).filter((row) => row.productionDate.startsWith(monthPrefix)).map((row) => ({ id: row.id, date: row.productionDate, article: row.article, hours: Number(row.totalProductionHours), plannedStops: Number(row.plannedStopsHours), unplannedStops: Number(row.unplannedStopsHours), production: Number(row.productionTons), waste: Number(row.wasteTons), availability: Number(row.availability), performance: Number(row.performance), quality: Number(row.quality), trs: Number(row.trs), standardRate: Number(row.standardRate), realHours: Number(row.realHours) }));
-    return [...source, ...saved];
+    const hasImportedExcelRows = (productionQuery.data ?? []).some((row) => row.source === "excel");
+    return hasImportedExcelRows ? saved : [...source, ...saved];
   }, [month, monthPrefix, productionQuery.data, sourceOverrides, sourceDeleted]);
   const openNewEntry = () => { setEditingId(null); setEditingSourceKey(null); setEntryForm({ ...emptyEntry, productionDate: new Date().toISOString().slice(0, 10) }); setIsEntryOpen(true); };
   const openEditEntry = (row: any) => { setEditingId(row.id ?? null); setEditingSourceKey(row.sourceKey ?? null); setEntryForm({ productionDate: row.date, article: row.article, totalProductionHours: String(row.hours), plannedStopsHours: String(row.plannedStops), unplannedStopsHours: String(row.unplannedStops), productionTons: String(row.production), wasteTons: String(row.waste), standardRate: String(row.standardRate ?? 15) }); setIsEntryOpen(true); };

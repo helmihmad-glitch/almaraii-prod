@@ -4,6 +4,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { createProductionRecord, deleteProductionRecord, listProductionRecords, updateProductionRecord } from "./db";
+import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
@@ -53,12 +54,24 @@ export const appRouter = router({
   }),
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
-    create: publicProcedure.input(recordInput).mutation(({ input }) => createProductionRecord(calculateRecord(input))),
-    update: publicProcedure.input(recordInput.safeExtend({ id: z.number().int().positive() })).mutation(({ input }) => {
-      const { id, ...record } = input;
-      return updateProductionRecord(id, calculateRecord(record));
+    initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
+    syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
+    create: publicProcedure.input(recordInput).mutation(async ({ input }) => {
+      const created = await createProductionRecord({ ...calculateRecord(input), source: "manual" });
+      await syncExcelFromRecords();
+      return created;
     }),
-    delete: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(({ input }) => deleteProductionRecord(input.id)),
+    update: publicProcedure.input(recordInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ input }) => {
+      const { id, ...record } = input;
+      const updated = await updateProductionRecord(id, calculateRecord(record));
+      await syncExcelFromRecords();
+      return updated;
+    }),
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => {
+      const deleted = await deleteProductionRecord(input.id);
+      await syncExcelFromRecords();
+      return deleted;
+    }),
   }),
 });
 

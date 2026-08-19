@@ -27,7 +27,17 @@ export const productionRecords = mysqlTable("production_records", {
   quality: decimal("quality", { precision: 8, scale: 6 }).notNull(),
   trs: decimal("trs", { precision: 8, scale: 6 }).notNull(),
   realHours: decimal("realHours", { precision: 10, scale: 2 }).notNull(),
+  source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const synchronizedExcelFiles = mysqlTable("synchronized_excel_files", {
+  id: int("id").primaryKey(),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  storageKey: varchar("storageKey", { length: 512 }).notNull(),
+  downloadUrl: varchar("downloadUrl", { length: 1024 }).notNull(),
+  recordCount: int("recordCount").notNull().default(0),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
@@ -35,3 +45,4 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ProductionRecord = typeof productionRecords.$inferSelect;
 export type InsertProductionRecord = typeof productionRecords.$inferInsert;
+export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;

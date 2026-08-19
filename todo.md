@@ -67,3 +67,12 @@
 - [x] Vérifier qu’une nouvelle saisie apparaît à la bonne position chronologique et publier la correction.
 - [x] Tester le tri chronologique avec une nouvelle saisie de production et une date distincte.
 - [x] Créer un checkpoint après validation du tri chronologique et publier la correction.
+- [x] Identifier la dernière ligne de production rattachée à août et vérifier son origine.
+- [x] Supprimer uniquement la ligne incorrecte confirmée par l’utilisateur. *(Abandonné à la demande de l’utilisateur.)*
+- [x] Vérifier les totaux d’août et publier la correction du registre. *(Abandonné à la demande de l’utilisateur.)*
+- [x] Importer le registre initial depuis le fichier Excel dans une source de données durable.
+- [x] Synchroniser les ajouts, modifications et suppressions entre le tableau et un fichier Excel géré par l’application.
+- [x] Vérifier que les changements sont immédiatement visibles dans le tableau et exporter le fichier Excel synchronisé.
+- [x] Créer le fichier Excel synchronisé initial à partir du registre importé.
+- [x] Mettre à jour automatiquement le fichier Excel synchronisé après chaque ajout, modification ou suppression.
+- [x] Ajouter un téléchargement du fichier Excel synchronisé depuis l’application.
