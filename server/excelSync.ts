@@ -41,11 +41,17 @@ function periodPrefix(monthKey: string) {
   return `${year}-${monthNumbers[monthName]}`;
 }
 
+function normalizeDateForPeriod(date: string, prefix: string | undefined) {
+  if (!prefix || date.startsWith(prefix)) return date;
+  const day = date.match(/-(\d{2})$/)?.[1];
+  return day ? `${prefix}-${day}` : date;
+}
+
 export function buildSeedRows() {
   const months = (sourceData as unknown as { months: SourceMonth[] }).months;
   const rows = months.flatMap((month) => {
     const prefix = periodPrefix(month.key);
-    return month.daily.filter((day) => !prefix || day.date.startsWith(prefix));
+    return month.daily.map((day) => ({ ...day, date: normalizeDateForPeriod(day.date, prefix) }));
   }).map((day) => {
     const realHours = Math.max(day.hours - day.plannedStops - day.unplannedStops, 0);
     const standardRate = realHours > 0 && day.performance > 0
@@ -76,17 +82,22 @@ export async function seedExcelRecordsIfNeeded() {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const existing = await db.select({ id: productionRecords.id })
+  const existing = await db.select({
+    productionDate: productionRecords.productionDate,
+    article: productionRecords.article,
+    totalProductionHours: productionRecords.totalProductionHours,
+    productionTons: productionRecords.productionTons,
+  })
     .from(productionRecords)
-    .where(eq(productionRecords.source, "excel"))
-    .limit(1);
-  if (existing.length) return { seeded: false, count: 0 };
+    .where(eq(productionRecords.source, "excel"));
 
   const rows = buildSeedRows();
-  for (let start = 0; start < rows.length; start += 100) {
-    await db.insert(productionRecords).values(rows.slice(start, start + 100));
+  const signatures = new Set(existing.map((row) => `${row.productionDate}::${row.article}::${row.totalProductionHours}::${row.productionTons}`));
+  const missingRows = rows.filter((row) => !signatures.has(`${row.productionDate}::${row.article}::${row.totalProductionHours}::${row.productionTons}`));
+  for (let start = 0; start < missingRows.length; start += 100) {
+    await db.insert(productionRecords).values(missingRows.slice(start, start + 100));
   }
-  return { seeded: true, count: rows.length };
+  return { seeded: missingRows.length > 0, count: missingRows.length };
 }
 
 export async function getSynchronizedExcelFile() {

@@ -84,3 +84,6 @@
 - [x] Créer un checkpoint et publier la synchronisation instantanée du tableau et de l’objectif mensuel.
 - [x] Tester en navigation réelle le cycle ajout, modification et suppression depuis la page d’accueil, sans rechargement.
 - [x] Créer le checkpoint final après la validation UI de la synchronisation instantanée.
+- [x] Isoler les lignes de production, totaux, graphiques et KPI de juillet et d’août selon la période sélectionnée.
+- [x] Vérifier que le passage de juillet à août n’affiche aucune ligne ni aucun total de l’autre mois.
+- [x] Tester les vues séparées de juillet et août puis publier la correction.

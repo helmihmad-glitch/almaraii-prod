@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,10 +28,11 @@ export default function Registry() {
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const hasInitializedExcel = useRef(false);
   const registryQuery = trpc.production.list.useQuery();
   const synchronizedFileQuery = trpc.production.syncFile.useQuery();
   const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]) });
-  useEffect(() => { if (!registryQuery.isLoading && !registryQuery.data?.some((row) => row.source === "excel")) initializeExcel.mutate(); }, [registryQuery.isLoading, registryQuery.data, initializeExcel]);
+  useEffect(() => { if (!registryQuery.isLoading && !hasInitializedExcel.current) { hasInitializedExcel.current = true; initializeExcel.mutate(); } }, [registryQuery.isLoading, initializeExcel]);
   const removeLine = trpc.production.delete.useMutation({
     onSuccess: async () => {
       await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
