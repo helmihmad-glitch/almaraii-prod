@@ -23,3 +23,9 @@
 - [x] Vérifier le rendu, les tests et publier la correction.
 - [x] Tester l’édition d’une ligne source Excel, vérifier la persistance de la correction après rechargement et confirmer le recalcul des indicateurs.
 - [x] Créer un nouveau checkpoint après la correction d’édition des lignes Excel et livrer cette version mise à jour.
+- [x] Autoriser la suppression des lignes issues du fichier Excel dans l’application.
+- [x] Conserver les lignes Excel supprimées ou modifiées dans des surcharges locales réversibles.
+- [x] Vérifier les actions de modification/suppression et publier la correction.
+- [x] Ajouter une action de restauration/réinitialisation des corrections ou suppressions Excel.
+- [x] Vérifier le flux Excel modifier/supprimer/restaurer et la persistance après rechargement.
+- [x] Créer un nouveau checkpoint après ces validations et livrer la version mise à jour.
