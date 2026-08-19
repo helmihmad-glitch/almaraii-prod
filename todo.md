@@ -18,3 +18,8 @@
 - [x] Permettre de modifier la date d’une ligne existante depuis le formulaire d’édition.
 - [x] Vérifier la sauvegarde de la nouvelle date et publier la correction.
 - [x] Créer un nouveau checkpoint après la correction de modification de date et livrer la version mise à jour.
+- [x] Ajouter une action de modification aux lignes provenant du fichier Excel.
+- [x] Conserver les corrections Excel dans l’application et vérifier le recalcul.
+- [x] Vérifier le rendu, les tests et publier la correction.
+- [x] Tester l’édition d’une ligne source Excel, vérifier la persistance de la correction après rechargement et confirmer le recalcul des indicateurs.
+- [x] Créer un nouveau checkpoint après la correction d’édition des lignes Excel et livrer cette version mise à jour.
