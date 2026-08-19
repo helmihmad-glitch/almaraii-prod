@@ -11,7 +11,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { toast } from "sonner";
 import data from "@/data/app-data.json";
 import { trpc } from "@/lib/trpc";
-import { orderProductionRows } from "@/lib/registryOrdering";
+import { calculateMonthlyProductionStats, orderProductionRows } from "@/lib/registryOrdering";
 import { useLocation } from "wouter";
 
 type Day = (typeof data.months)[number]["daily"][number];
@@ -61,11 +61,33 @@ export default function Home() {
   const [isTargetEditing, setIsTargetEditing] = useState(false);
   const monthForDate = (date: string) => months.find((item) => item.daily[0]?.date.slice(0, 7) === date.slice(0, 7));
   const productionQuery = trpc.production.list.useQuery();
+  const productionUtils = trpc.useUtils();
+  type ProductionRecord = NonNullable<typeof productionQuery.data>[number];
+  const toOptimisticRecord = (id: number, input: { productionDate: string; article: string; totalProductionHours: number; plannedStopsHours: number; unplannedStopsHours: number; productionTons: number; wasteTons: number; standardRate: number }): ProductionRecord => {
+    const realHours = Math.max(input.totalProductionHours - input.plannedStopsHours - input.unplannedStopsHours, 0);
+    const availability = input.totalProductionHours > 0 ? Math.max((input.totalProductionHours - input.unplannedStopsHours) / input.totalProductionHours, 0) : 0;
+    const performance = realHours > 0 ? input.productionTons / (realHours * input.standardRate) : 0;
+    const quality = input.productionTons > 0 ? Math.max((input.productionTons - input.wasteTons) / input.productionTons, 0) : 1;
+    return { id, productionDate: input.productionDate, article: input.article, totalProductionHours: input.totalProductionHours.toFixed(2), plannedStopsHours: input.plannedStopsHours.toFixed(2), unplannedStopsHours: input.unplannedStopsHours.toFixed(2), productionTons: input.productionTons.toFixed(2), wasteTons: input.wasteTons.toFixed(2), standardRate: input.standardRate.toFixed(2), availability: availability.toFixed(6), performance: performance.toFixed(6), quality: quality.toFixed(6), trs: (availability * performance * quality).toFixed(6), realHours: realHours.toFixed(2), source: "manual", createdAt: new Date(), updatedAt: new Date() };
+  };
+  const replaceCachedRecord = (record: ProductionRecord, temporaryId?: number) => productionUtils.production.list.setData(undefined, (current) => [record, ...(current ?? []).filter((row) => row.id !== record.id && row.id !== temporaryId)]);
   const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => productionQuery.refetch() });
   useEffect(() => { if (!productionQuery.isLoading && !productionQuery.data?.some((row) => row.source === "excel")) initializeExcel.mutate(); }, [productionQuery.isLoading, productionQuery.data, initializeExcel]);
-  const createEntry = trpc.production.create.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: targetMonth ? `Ajoutée au registre de ${targetMonth.name}.` : "Les indicateurs ont été calculés automatiquement." }); } });
-  const updateEntry = trpc.production.update.useMutation({ onSuccess: async (_data, variables) => { const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); await productionQuery.refetch(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour", { description: targetMonth ? `Rattachée au registre de ${targetMonth.name}.` : undefined }); } });
-  const deleteEntry = trpc.production.delete.useMutation({ onSuccess: () => { productionQuery.refetch(); toast.success("Ligne supprimée"); } });
+  const createEntry = trpc.production.create.useMutation({
+    onMutate: async (variables) => { await productionUtils.production.list.cancel(); const previous = productionUtils.production.list.getData(); const temporaryId = -Date.now(); replaceCachedRecord(toOptimisticRecord(temporaryId, variables)); return { previous, temporaryId }; },
+    onError: (_error, _variables, context) => { productionUtils.production.list.setData(undefined, context?.previous); toast.error("La ligne n’a pas pu être enregistrée."); },
+    onSuccess: (created, variables, context) => { if (created) replaceCachedRecord(created, context?.temporaryId); const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); void productionUtils.production.syncFile.invalidate(); setIsEntryOpen(false); setEntryForm(emptyEntry); toast.success("Ligne enregistrée", { description: targetMonth ? `Ajoutée au registre de ${targetMonth.name}.` : "Les indicateurs ont été calculés automatiquement." }); },
+  });
+  const updateEntry = trpc.production.update.useMutation({
+    onMutate: async (variables) => { await productionUtils.production.list.cancel(); const previous = productionUtils.production.list.getData(); replaceCachedRecord(toOptimisticRecord(variables.id, variables)); return { previous }; },
+    onError: (_error, _variables, context) => { productionUtils.production.list.setData(undefined, context?.previous); toast.error("La ligne n’a pas pu être mise à jour."); },
+    onSuccess: (updated, variables) => { if (updated) replaceCachedRecord(updated); const targetMonth = monthForDate(variables.productionDate); if (targetMonth) setSelectedKey(targetMonth.key); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); void productionUtils.production.syncFile.invalidate(); setIsEntryOpen(false); setEditingId(null); toast.success("Ligne mise à jour", { description: targetMonth ? `Rattachée au registre de ${targetMonth.name}.` : undefined }); },
+  });
+  const deleteEntry = trpc.production.delete.useMutation({
+    onMutate: async ({ id }) => { await productionUtils.production.list.cancel(); const previous = productionUtils.production.list.getData(); productionUtils.production.list.setData(undefined, (current) => current?.filter((row) => row.id !== id)); return { previous }; },
+    onError: (_error, _variables, context) => { productionUtils.production.list.setData(undefined, context?.previous); toast.error("La ligne n’a pas pu être supprimée."); },
+    onSuccess: () => { void productionUtils.production.syncFile.invalidate(); toast.success("Ligne supprimée"); },
+  });
   const openRegistry = () => { setSidebarOpen(false); setLocation("/registre"); };
   const month = months.find((item) => item.key === selectedKey) ?? months[0];
   const monthPrefix = month.daily[0]?.date.slice(0, 7) ?? "";
@@ -93,7 +115,7 @@ export default function Home() {
   const saveEntry = (event: React.FormEvent) => { event.preventDefault(); const payload = { ...entryForm, totalProductionHours: Number(entryForm.totalProductionHours), plannedStopsHours: Number(entryForm.plannedStopsHours), unplannedStopsHours: Number(entryForm.unplannedStopsHours), productionTons: Number(entryForm.productionTons), wasteTons: Number(entryForm.wasteTons), standardRate: Number(entryForm.standardRate) }; if (!payload.article || !payload.productionDate || !payload.productionTons) { toast.error("Complétez la date, l’article et la production."); return; } if (editingId) updateEntry.mutate({ id: editingId, ...payload }); else if (editingSourceKey) { const next = { ...sourceOverrides, [editingSourceKey]: entryForm }; setSourceOverrides(next); localStorage.setItem("production-source-overrides", JSON.stringify(next)); setEditingSourceKey(null); setIsEntryOpen(false); toast.success("Ligne Excel corrigée", { description: "La correction est conservée dans l’application." }); } else createEntry.mutate(payload); };
 
   const monthlyRows = useMemo(() => registryDays.filter((day) => day.date.startsWith(monthPrefix)), [registryDays, monthPrefix]);
-  const monthlyStats = useMemo(() => { const hours = monthlyRows.reduce((sum, d) => sum + d.hours, 0); const plannedStops = monthlyRows.reduce((sum, d) => sum + d.plannedStops, 0); const unplannedStops = monthlyRows.reduce((sum, d) => sum + d.unplannedStops, 0); const production = monthlyRows.reduce((sum, d) => sum + d.production, 0); const waste = monthlyRows.reduce((sum, d) => sum + d.waste, 0); const realHours = Math.max(hours - plannedStops - unplannedStops, 0); const standardCapacity = monthlyRows.reduce((sum, d) => sum + d.realHours * d.standardRate, 0); const availability = hours > 0 ? Math.max((hours - unplannedStops) / hours, 0) : 0; const performance = standardCapacity > 0 ? production / standardCapacity : 0; const quality = production > 0 ? Math.max((production - waste) / production, 0) : 1; return { production, waste, availability, performance, quality, trs: availability * performance * quality, realHours }; }, [monthlyRows]);
+  const monthlyStats = useMemo(() => calculateMonthlyProductionStats(monthlyRows), [monthlyRows]);
   const monthTarget = targets[month.key] ?? month.target;
   const monthProgress = monthTarget > 0 ? monthlyStats.production / monthTarget : 0;
   useEffect(() => { setTargetDraft(String(monthTarget)); setIsTargetEditing(false); }, [selectedKey, monthTarget]);

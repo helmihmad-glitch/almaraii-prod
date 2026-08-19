@@ -76,3 +76,11 @@
 - [x] Créer le fichier Excel synchronisé initial à partir du registre importé.
 - [x] Mettre à jour automatiquement le fichier Excel synchronisé après chaque ajout, modification ou suppression.
 - [x] Ajouter un téléchargement du fichier Excel synchronisé depuis l’application.
+- [x] Synchroniser instantanément le tableau « Dernières productions » avec chaque ajout, modification ou suppression du registre.
+- [x] Recalculer et afficher instantanément la production mensuelle dans le panneau « Objectif mensuel » après chaque modification du registre.
+- [x] Tester les recalculs du tableau et de l’objectif mensuel pour les scénarios d’ajout, modification et suppression.
+- [x] Vérifier l’interface et publier la correction de synchronisation des indicateurs mensuels.
+- [x] Revalider le flux ajout, modification et suppression depuis la page d’accueil avec le recalcul immédiat du panneau mensuel.
+- [x] Créer un checkpoint et publier la synchronisation instantanée du tableau et de l’objectif mensuel.
+- [x] Tester en navigation réelle le cycle ajout, modification et suppression depuis la page d’accueil, sans rechargement.
+- [x] Créer le checkpoint final après la validation UI de la synchronisation instantanée.
