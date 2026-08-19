@@ -15,3 +15,6 @@
 - [x] Vérifier la table complète et publier la correction.
 - [x] Relancer une vérification finale build/check après la correction d’affichage du registre complet.
 - [x] Créer un nouveau checkpoint après la modification du registre scrollable et livrer cette version mise à jour.
+- [x] Permettre de modifier la date d’une ligne existante depuis le formulaire d’édition.
+- [x] Vérifier la sauvegarde de la nouvelle date et publier la correction.
+- [x] Créer un nouveau checkpoint après la correction de modification de date et livrer la version mise à jour.
