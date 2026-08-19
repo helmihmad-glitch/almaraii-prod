@@ -52,3 +52,8 @@
 - [x] Vérifier qu’il crée la ligne dans le registre et publie la correction.
 - [x] Valider le bouton « Enregistrer la saisie » avec une nouvelle production et vérifier son apparition dans le registre du bon mois.
 - [x] Créer un checkpoint après validation du bouton et publier la version mise à jour.
+- [x] Ajouter une date de début et une date de fin dans la journal d’activité.
+- [x] Filtrer les lignes inclusivement entre ces deux dates et conserver les autres filtres.
+- [x] Vérifier le compteur, le graphique et l’export puis publier la version mise à jour.
+- [x] Confirmer que l’export CSV utilise le sous-ensemble filtré par date de début et de fin.
+- [x] Créer un nouveau checkpoint après validation du filtre entre deux dates.
