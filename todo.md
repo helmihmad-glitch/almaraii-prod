@@ -137,5 +137,5 @@
 - [x] Vérifier l’ajustement visuel appliqué à la carte Production J-1 et supprimer les surcharges de style inutiles.
 - [x] Conserver un espacement compact de la carte via des styles maintenables et cohérents.
 - [x] Valider le rendu puis créer un checkpoint de cette correction visuelle.
-- [ ] Créer un nouveau checkpoint après le nettoyage visuel de la carte Production J-1.
-- [ ] Vérifier après ce checkpoint que la carte Production J-1 conserve son compactage CSS sans styles inline parasites.
+- [x] Créer un nouveau checkpoint après le nettoyage visuel de la carte Production J-1.
+- [x] Vérifier après ce checkpoint que la carte Production J-1 conserve son compactage CSS sans styles inline parasites.
