@@ -101,3 +101,5 @@
 - [x] Remplacer le sélecteur « Période observée » par un contrôle calendrier ne sélectionnant que le mois et l’année.
 - [x] Afficher un état clair sans données lorsque le mois et l’année sélectionnés ne possèdent aucun enregistrement.
 - [x] Tester les périodes avec et sans données, puis publier la mise à jour.
+- [x] Distinguer le chargement initial du registre d’un mois réellement sans données.
+- [x] Revalider l’affichage du mois disponible après initialisation et publier la correction.
