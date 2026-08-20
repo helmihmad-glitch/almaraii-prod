@@ -112,3 +112,6 @@
 - [x] Calculer « Production J-1 » uniquement sur la date d’hier, quelle que soit la dernière date présente dans le registre.
 - [x] Afficher explicitement l’absence de production lorsque la date d’hier ne comporte aucune ligne.
 - [x] Tester la correction J-1 et publier la version mise à jour.
+- [x] Déplacer le contrôle « Période observée » dans la carte « Objectif mensuel ».
+- [x] Conserver le filtrage mois-année, l’état de chargement et l’état sans données après le déplacement.
+- [x] Vérifier le rendu desktop et mobile, puis publier la nouvelle disposition.

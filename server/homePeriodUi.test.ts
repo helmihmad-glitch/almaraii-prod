@@ -10,6 +10,14 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain("Choisir le mois et l’année");
   });
 
+  it("place la période observée dans la carte d’objectif mensuel", () => {
+    const heroStart = homePage.indexOf('className="hero-panel"');
+    const periodControl = homePage.indexOf('className="hero-period-control"');
+    expect(heroStart).toBeGreaterThan(-1);
+    expect(periodControl).toBeGreaterThan(heroStart);
+    expect(homePage).not.toContain('className="page-intro period-intro"');
+  });
+
   it("retire l’ancienne accroche et prévoit un état sans données", () => {
     expect(homePage).not.toContain("La cadence tient l’objectif");
     expect(homePage).toContain("Aucune donnée disponible");
