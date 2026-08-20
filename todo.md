@@ -108,3 +108,7 @@
 - [x] Ajouter une carte rectangulaire avec un graphique quotidien des heures actives et perdues du mois sélectionné.
 - [x] Ajouter une cinquième carte KPI « Temps total prod. (h) / Mois » avec les sommes mensuelles des heures perdues et actives.
 - [x] Tester les calculs horaires par jour et par mois, les périodes sans données et publier les nouveaux indicateurs.
+- [x] Retirer la seconde carte quotidienne « Arrêts J-1 » du haut du tableau de bord.
+- [x] Calculer « Production J-1 » uniquement sur la date d’hier, quelle que soit la dernière date présente dans le registre.
+- [x] Afficher explicitement l’absence de production lorsque la date d’hier ne comporte aucune ligne.
+- [x] Tester la correction J-1 et publier la version mise à jour.

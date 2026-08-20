@@ -8,22 +8,22 @@ try {
   await page.getByText("Données disponibles", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
 
   const productionCard = page.locator(".daily-production-card");
-  const stopsCard = page.locator(".daily-stops-card");
   const hoursPanel = page.locator(".top-hours-panel");
   const monthlyHoursCard = page.locator(".metric-hours");
-  await Promise.all([productionCard.waitFor(), stopsCard.waitFor(), hoursPanel.waitFor(), monthlyHoursCard.waitFor()]);
+  await Promise.all([productionCard.waitFor(), hoursPanel.waitFor(), monthlyHoursCard.waitFor()]);
   if (!(await productionCard.getByText("Production J-1", { exact: true }).isVisible())) throw new Error("La carte Production J-1 est absente.");
-  if (!(await productionCard.locator(".daily-article-list > div").count())) throw new Error("Les articles du dernier jour ne sont pas regroupés dans la carte J-1.");
-  if (!(await stopsCard.getByText("Arrêts J-1", { exact: true }).isVisible())) throw new Error("La carte d’arrêts J-1 est absente.");
+  const j1Text = await productionCard.textContent();
+  if (!j1Text?.includes("Production du") && !j1Text?.includes("Aucune production enregistrée le")) throw new Error("La carte J-1 ne cible pas explicitement la date d’hier.");
+  if (await page.locator(".daily-stops-card").count()) throw new Error("La seconde carte Arrêts J-1 doit être retirée.");
   if (!(await hoursPanel.locator(".recharts-wrapper").isVisible())) throw new Error("Le graphique quotidien des heures est absent.");
   if (!(await monthlyHoursCard.getByText("Temps total prod. (h) / Mois", { exact: true }).isVisible())) throw new Error("La carte mensuelle des heures est absente.");
 
   const monthPicker = page.locator('input[type="month"]');
   await monthPicker.fill("2025-01");
   await page.getByText("Aucune donnée disponible", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
-  if (!(await productionCard.getByText("Aucune production enregistrée pour cette période.", { exact: true }).isVisible())) throw new Error("La carte J-1 ne reflète pas la période vide.");
+  if ((await productionCard.textContent()) !== j1Text) throw new Error("La carte J-1 ne doit pas dépendre du mois sélectionné, mais de la date d’hier.");
 
-  console.log(JSON.stringify({ dailyCard: "ok", stopsCard: "ok", dailyHoursChart: "ok", monthlyHoursCard: "ok", emptyMonth: "ok" }));
+  console.log(JSON.stringify({ j1Yesterday: "ok", secondCardRemoved: "ok", dailyHoursChart: "ok", monthlyHoursCard: "ok", emptyMonth: "ok" }));
 } finally {
   await browser.close();
 }

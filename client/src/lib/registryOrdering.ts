@@ -29,6 +29,16 @@ export type DailyHoursSummary = {
   articles: Array<{ article: string; production: number }>;
 };
 
+/** Retourne la veille de la date fournie au format ISO local YYYY-MM-DD. */
+export function getPreviousCalendarDate(referenceDate = new Date()): string {
+  const yesterday = new Date(referenceDate);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const year = yesterday.getFullYear();
+  const month = String(yesterday.getMonth() + 1).padStart(2, "0");
+  const day = String(yesterday.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 /** Additionne les heures réellement planifiées, les arrêts et les heures actives d’une période. */
 export function calculateHoursSummary(rows: MonthlyProductionRow[]) {
   const totalHours = rows.reduce((sum, row) => sum + row.hours, 0);
@@ -54,6 +64,11 @@ export function calculateDailyHoursSummaries(rows: HourlyProductionRow[]): Daily
   return Array.from(summaries.values())
     .map((summary) => ({ ...summary, articles: [...summary.articles].sort((a, b) => a.article.localeCompare(b.article)) }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Récupère l’agrégat de production d’une date précise, notamment pour la carte J-1. */
+export function getDailyHoursSummary(rows: HourlyProductionRow[], date: string): DailyHoursSummary | undefined {
+  return calculateDailyHoursSummaries(rows).find((summary) => summary.date === date);
 }
 
 /** Calcule les indicateurs affichés dans le panneau « Objectif mensuel » à partir des lignes visibles du registre. */

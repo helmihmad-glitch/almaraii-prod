@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateDailyHoursSummaries, calculateHoursSummary, calculateMonthlyProductionStats } from "../client/src/lib/registryOrdering";
+import { calculateDailyHoursSummaries, calculateHoursSummary, calculateMonthlyProductionStats, getDailyHoursSummary, getPreviousCalendarDate } from "../client/src/lib/registryOrdering";
 
 const row = (production: number) => ({ hours: 2, plannedStops: 0, unplannedStops: 0, production, waste: 0, realHours: 2, standardRate: 5 });
 
@@ -29,5 +29,16 @@ describe("calculateMonthlyProductionStats", () => {
       { date: "2026-08-30", totalHours: 20, lostHours: 2, activeHours: 18, production: 120, articles: [{ article: "CG3", production: 50 }, { article: "CM1", production: 70 }] },
       { date: "2026-08-31", totalHours: 10, lostHours: 2, activeHours: 8, production: 60, articles: [{ article: "CM1", production: 60 }] },
     ]);
+  });
+
+  it("rattache la carte J-1 à la veille réelle, y compris lors d’un changement de mois", () => {
+    const rows = [
+      { date: "2026-08-30", article: "CM1", hours: 12, plannedStops: 1, unplannedStops: 0, production: 70, waste: 0, realHours: 11, standardRate: 10 },
+      { date: "2026-08-31", article: "CG3", hours: 8, plannedStops: 0, unplannedStops: 1, production: 50, waste: 0, realHours: 7, standardRate: 10 },
+    ];
+    const j1 = getPreviousCalendarDate(new Date(2026, 8, 1, 8));
+    expect(j1).toBe("2026-08-31");
+    expect(getDailyHoursSummary(rows, j1)).toMatchObject({ date: "2026-08-31", production: 50, articles: [{ article: "CG3", production: 50 }] });
+    expect(getDailyHoursSummary(rows, "2026-08-29")).toBeUndefined();
   });
 });
