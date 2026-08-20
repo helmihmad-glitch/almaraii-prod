@@ -132,5 +132,5 @@
 - [x] Afficher les commentaires des lignes de production de la veille dans la carte « Production J-1 ».
 - [x] Permettre de modifier ces commentaires depuis la carte J-1 après validation du mot de passe.
 - [x] Tester l’affichage, le refus et l’autorisation de modification, puis publier la mise à jour.
-- [ ] Créer un nouveau checkpoint pour la fonctionnalité des commentaires J-1 et publier cette version.
-- [ ] Vérifier après publication que la carte Production J-1 affiche les commentaires et conserve l’édition protégée par mot de passe.
+- [x] Créer un nouveau checkpoint pour la fonctionnalité des commentaires J-1 et publier cette version.
+- [x] Vérifier après publication que la carte Production J-1 affiche les commentaires et conserve l’édition protégée par mot de passe.
