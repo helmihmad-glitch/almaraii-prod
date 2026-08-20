@@ -97,3 +97,7 @@
 - [x] Vérifier le lien de publication et indiquer le réglage nécessaire pour appliquer le préfixe « almaraii-prod ».
 - [x] Créer un checkpoint après les changements de favicon et de titre, puis publier la version Almaraii Prod.
 - [x] Indiquer que le préfixe de l’URL se règle dans les paramètres de domaine si aucune modification automatisée n’est disponible.
+- [x] Retirer le titre et le texte descriptif demandés de l’en-tête de la page d’accueil.
+- [x] Remplacer le sélecteur « Période observée » par un contrôle calendrier ne sélectionnant que le mois et l’année.
+- [x] Afficher un état clair sans données lorsque le mois et l’année sélectionnés ne possèdent aucun enregistrement.
+- [x] Tester les périodes avec et sans données, puis publier la mise à jour.
