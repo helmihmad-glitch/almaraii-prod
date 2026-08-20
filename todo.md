@@ -103,3 +103,8 @@
 - [x] Tester les périodes avec et sans données, puis publier la mise à jour.
 - [x] Distinguer le chargement initial du registre d’un mois réellement sans données.
 - [x] Revalider l’affichage du mois disponible après initialisation et publier la correction.
+- [x] Ajouter une carte quotidienne J-1 regroupant la production par article et affichant tous les articles produits.
+- [x] Ajouter une seconde carte quotidienne de suivi opérationnel choisie pour compléter la vue J-1.
+- [x] Ajouter une carte rectangulaire avec un graphique quotidien des heures actives et perdues du mois sélectionné.
+- [x] Ajouter une cinquième carte KPI « Temps total prod. (h) / Mois » avec les sommes mensuelles des heures perdues et actives.
+- [x] Tester les calculs horaires par jour et par mois, les périodes sans données et publier les nouveaux indicateurs.
