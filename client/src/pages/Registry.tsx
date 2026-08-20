@@ -70,7 +70,7 @@ export default function Registry() {
   return <div className="registry-screen">
     <header className="registry-topbar">
       <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
-      <div className="registry-brand"><span className="registry-brand-mark">AP</span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
+      <div className="registry-brand"><span className="registry-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
       <Link href="/?entry=1" className="registry-add"><Plus size={16} />Saisir une production</Link>
     </header>
     <main className="registry-page">

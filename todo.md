@@ -87,3 +87,8 @@
 - [x] Isoler les lignes de production, totaux, graphiques et KPI de juillet et d’août selon la période sélectionnée.
 - [x] Vérifier que le passage de juillet à août n’affiche aucune ligne ni aucun total de l’autre mois.
 - [x] Tester les vues séparées de juillet et août puis publier la correction.
+- [x] Préparer et intégrer le nouveau logo fourni dans la navigation et les en-têtes.
+- [x] Adapter les couleurs principales de la plateforme au vert profond et au jaune doré du logo.
+- [x] Vérifier le rendu responsive et publier la nouvelle identité visuelle.
+- [x] Vérifier le rendu mobile et tablette du nouveau logo et de la palette sur le tableau de bord et le registre.
+- [x] Créer un checkpoint après validation visuelle responsive et publier la nouvelle identité visuelle.
