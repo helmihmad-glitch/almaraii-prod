@@ -2,6 +2,7 @@
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./j1-comments.css";
 @custom-variant dark (&:is(.dark *));
 
 :root { --background: #f5f6ee; --foreground: #1d4826; --card: #fffef8; --card-foreground: #1d4826; --popover: #fffef8; --popover-foreground: #1d4826; --primary: #1d4826; --primary-foreground: #fffef8; --secondary: #e8eee1; --secondary-foreground: #1d4826; --muted: #eceee4; --muted-foreground: #73806d; --accent: #e8b53a; --accent-foreground: #1d4826; --destructive: #b44a36; --border: #dce3d6; --input: #dce3d6; --ring: #e8b53a; --radius: 0.8rem; --signal: #e8b53a; --blue: #4e7b45; --green: #4d7b40; --ink: #1d4826; }

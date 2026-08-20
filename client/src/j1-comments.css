@@ -1,0 +1,16 @@
+.daily-comments { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ece9e1; }
+.daily-comments-title { display: block; color: #7c8983; font-size: 9px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.daily-comment-list { display: flex; flex-direction: column; gap: 8px; max-height: 132px; overflow: auto; margin-top: 8px; padding-right: 2px; }
+.daily-comment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 8px; border: 1px solid #e8e5dd; border-radius: 7px; background: rgba(255, 253, 246, .72); }
+.daily-comment-copy { min-width: 0; }
+.daily-comment-copy strong { color: var(--ink); font: 600 11px 'Space Grotesk', sans-serif; }
+.daily-comment-copy p { margin: 3px 0 0; color: #61736a; font-size: 11px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.daily-comment-edit { width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid #dedbd3; border-radius: 6px; background: #fffefa; color: #63746d; }
+.daily-comment-edit:hover { border-color: #d6af45; background: #fff8e4; color: var(--ink); }
+.comment-edit-dialog { width: min(520px, 100%); border-radius: 14px; background: #fffefa; box-shadow: 0 24px 80px rgba(19,43,53,.28); padding: 26px; }
+.comment-edit-dialog h3 { margin: 8px 0 3px; color: var(--ink); font: 600 22px 'Space Grotesk', sans-serif; }
+.comment-edit-dialog > p { margin: 0 0 18px; color: #75817a; font-size: 12px; }
+.comment-edit-dialog label { display: flex; flex-direction: column; gap: 7px; color: #65736e; font-size: 11px; font-weight: 600; }
+.comment-edit-dialog textarea { min-height: 132px; resize: vertical; border: 1px solid #dcded7; border-radius: 7px; background: #fcfbf7; padding: 11px; outline: 0; color: var(--ink); font: 13px 'IBM Plex Sans', sans-serif; }
+.comment-edit-dialog textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(240,107,60,.12); }
+@media (max-width: 760px) { .daily-comment-list { max-height: 160px; }.comment-edit-dialog { padding: 20px 16px; } }
