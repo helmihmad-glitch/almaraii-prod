@@ -115,12 +115,12 @@
 - [x] Déplacer le contrôle « Période observée » dans la carte « Objectif mensuel ».
 - [x] Conserver le filtrage mois-année, l’état de chargement et l’état sans données après le déplacement.
 - [x] Vérifier le rendu desktop et mobile, puis publier la nouvelle disposition.
-- [ ] Vérifier l’accès GitHub disponible pour l’export du projet Almaraii Prod.
-- [ ] Créer ou utiliser un dépôt GitHub de destination dans le compte de l’utilisateur.
-- [ ] Envoyer le projet vers GitHub et confirmer l’URL du dépôt.
-- [ ] Vérifier et synchroniser le projet avec le dépôt GitHub fourni : helmihmad-glitch/almaraii-prod.
-- [ ] Vérifier que l’intégration GitHub autorise l’envoi vers helmihmad-glitch/almaraii-prod.
-- [ ] Configurer le dépôt distant et envoyer la version actuelle du projet Almaraii Prod.
+- [x] Vérifier l’accès GitHub disponible pour l’export du projet Almaraii Prod.
+- [x] Créer ou utiliser un dépôt GitHub de destination dans le compte de l’utilisateur.
+- [x] Envoyer le projet vers GitHub et confirmer l’URL du dépôt.
+- [x] Vérifier et synchroniser le projet avec le dépôt GitHub fourni : helmihmad-glitch/almaraii-prod.
+- [x] Vérifier que l’intégration GitHub autorise l’envoi vers helmihmad-glitch/almaraii-prod.
+- [x] Configurer le dépôt distant et envoyer la version actuelle du projet Almaraii Prod.
 - [x] Ajouter un champ commentaire persistant aux lignes du registre de production.
 - [x] Protéger l’ajout et la modification des commentaires par le mot de passe fourni.
 - [x] Ajouter la colonne commentaire au fichier Excel synchronisé et régénérer l’export après modification.
