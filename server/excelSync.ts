@@ -71,6 +71,7 @@ export function buildSeedRows() {
       quality: day.quality.toFixed(6),
       trs: day.trs.toFixed(6),
       realHours: realHours.toFixed(2),
+      comment: null,
       source: "excel",
     };
   });
@@ -137,6 +138,7 @@ export async function syncExcelFromRecords() {
     { header: "QUALITÉ %", key: "quality", width: 14 },
     { header: "TRS %", key: "trs", width: 13 },
     { header: "H. RÉELLES", key: "realHours", width: 16 },
+    { header: "COMMENTAIRE", key: "comment", width: 46 },
     { header: "SOURCE", key: "source", width: 14 },
   ];
   worksheet.getRow(1).eachCell((cell) => {
@@ -162,6 +164,7 @@ export async function syncExcelFromRecords() {
       quality: asNumber(record.quality),
       trs: asNumber(record.trs),
       realHours: asNumber(record.realHours),
+      comment: record.comment ?? "",
       source: record.source,
     });
   });
@@ -173,7 +176,7 @@ export async function syncExcelFromRecords() {
   ["availability", "performance", "quality", "trs"].forEach((key) => {
     worksheet.getColumn(key).numFmt = "0.0%";
   });
-  worksheet.autoFilter = "A1:O1";
+  worksheet.autoFilter = "A1:P1";
 
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
   const uploaded = await storagePut(`production-sync/${EXCEL_FILE_NAME}`, buffer, EXCEL_MIME);

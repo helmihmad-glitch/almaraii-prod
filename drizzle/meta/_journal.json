@@ -15,6 +15,13 @@
       "when": 1787180337464,
       "tag": "0001_open_proudstar",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787266699154,
+      "tag": "0002_young_marten_broadcloak",
+      "breakpoints": true
     }
   ]
 }

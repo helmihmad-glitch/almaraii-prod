@@ -27,6 +27,7 @@ export const productionRecords = mysqlTable("production_records", {
   quality: decimal("quality", { precision: 8, scale: 6 }).notNull(),
   trs: decimal("trs", { precision: 8, scale: 6 }).notNull(),
   realHours: decimal("realHours", { precision: 10, scale: 2 }).notNull(),
+  comment: text("comment"),
   source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

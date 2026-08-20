@@ -10,5 +10,6 @@ describe("import initial du fichier Excel", () => {
     expect(rows.every((row) => /^2026-(04|05|06|07|08)-\d{2}$/.test(row.productionDate))).toBe(true);
     expect(rows.some((row) => row.productionDate.startsWith("2026-07"))).toBe(true);
     expect(rows.some((row) => row.productionDate.startsWith("2026-08"))).toBe(true);
+    expect(rows.every((row) => row.comment === null)).toBe(true);
   });
 });

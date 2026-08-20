@@ -18,6 +18,7 @@ type RegistryRow = {
   quality: number | string;
   trs: number | string;
   realHours: number | string;
+  comment: string | null;
 };
 
 const fmt = (value: number, digits = 1) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
@@ -42,14 +43,14 @@ export default function Registry() {
 
   const rows = useMemo(() => (registryQuery.data ?? [])
     .map((row) => ({ ...row, productionDate: row.productionDate.slice(0, 10) }) as RegistryRow)
-    .filter((row) => (!query || row.article.toLowerCase().includes(query.toLowerCase()) || row.productionDate.includes(query))
+    .filter((row) => (!query || row.article.toLowerCase().includes(query.toLowerCase()) || row.productionDate.includes(query) || row.comment?.toLowerCase().includes(query.toLowerCase()))
       && (!dateFrom || row.productionDate >= dateFrom)
       && (!dateTo || row.productionDate <= dateTo))
     .sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id), [registryQuery.data, query, dateFrom, dateTo]);
 
   const totalProduction = rows.reduce((sum, row) => sum + Number(row.productionTons), 0);
   const exportRows = () => {
-    const csv = ["Date;Article;Production (T);Rebuts (T);Disponibilité (%);TRS (%)", ...rows.map((row) => `${row.productionDate};${row.article};${row.productionTons};${row.wasteTons};${Math.round(Number(row.availability) * 100)};${Math.round(Number(row.trs) * 100)}`)].join("\n");
+    const csv = ["Date;Article;Production (T);Rebuts (T);Disponibilité (%);TRS (%);Commentaire", ...rows.map((row) => `${row.productionDate};${row.article};${row.productionTons};${row.wasteTons};${Math.round(Number(row.availability) * 100)};${Math.round(Number(row.trs) * 100)};${String(row.comment ?? "").replace(/[\r\n;]+/g, " ")}`)].join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
@@ -87,7 +88,7 @@ export default function Registry() {
           <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter CSV</button><button className="registry-excel" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={15} />Excel synchronisé</button>
         </div>
         <div className="registry-table-wrap">
-          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={9} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(Number(row.productionTons))} T</td><td>{fmt(Number(row.wasteTons))} T</td><td>{pct(Number(row.availability))}</td><td>{pct(Number(row.performance))}</td><td><strong>{pct(Number(row.trs))}</strong></td><td>{fmt(Number(row.realHours))} h</td><td><button className="registry-delete" onClick={() => { if (window.confirm("Supprimer cette ligne sauvegardée ?")) removeLine.mutate({ id: row.id }); }} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={9} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » pour ajouter une première ligne au registre.</span></td></tr>}</tbody></table>
+          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(Number(row.productionTons))} T</td><td>{fmt(Number(row.wasteTons))} T</td><td>{pct(Number(row.availability))}</td><td>{pct(Number(row.performance))}</td><td><strong>{pct(Number(row.trs))}</strong></td><td>{fmt(Number(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><button className="registry-delete" onClick={() => { if (window.confirm("Supprimer cette ligne sauvegardée ?")) removeLine.mutate({ id: row.id }); }} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » pour ajouter une première ligne au registre.</span></td></tr>}</tbody></table>
         </div>
         <footer className="registry-foot"><span><Activity size={14} />Les lignes affichées sont sauvegardées de façon persistante.</span><span>{rows.length} résultat{rows.length > 1 ? "s" : ""}</span></footer>
       </section>

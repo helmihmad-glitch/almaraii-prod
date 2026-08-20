@@ -1,0 +1,1 @@
+ALTER TABLE `production_records` ADD `comment` text;
