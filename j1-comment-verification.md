@@ -13,3 +13,5 @@ Le diagnostic de la session navigateur a confirmé que le DOM du domaine public 
 Une session fraîche ouverte après propagation confirme la version publiée : la carte Production J-1 rend « Commentaires de la journée », les trois lignes DG5, DG4 et DG3 du 19 août, ainsi que les trois boutons « Modifier le commentaire ». La publication est donc visible sur le domaine public.
 
 Sur cette même version publiée, l’action « Modifier le commentaire de DG5 » a été ouverte sans modifier de donnée : elle affiche bien la fenêtre « Autoriser la modification du commentaire », avec champ de mot de passe, boutons Annuler et Continuer. La protection demandée est donc effective avant tout accès à l’éditeur.
+
+Le compactage visuel a été vérifié en local à 1440 × 900 et 375 × 812. La carte conserve la lecture du total, des articles, des commentaires et des actions d’édition ; la liste des commentaires reste défilable lorsque les trois lignes de la veille sont présentes. Les styles inline accidentellement diffusés par l’éditeur visuel ont été retirés au profit d’une seule règle CSS sur la carte.

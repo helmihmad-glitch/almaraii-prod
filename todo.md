@@ -134,3 +134,8 @@
 - [x] Tester l’affichage, le refus et l’autorisation de modification, puis publier la mise à jour.
 - [x] Créer un nouveau checkpoint pour la fonctionnalité des commentaires J-1 et publier cette version.
 - [x] Vérifier après publication que la carte Production J-1 affiche les commentaires et conserve l’édition protégée par mot de passe.
+- [x] Vérifier l’ajustement visuel appliqué à la carte Production J-1 et supprimer les surcharges de style inutiles.
+- [x] Conserver un espacement compact de la carte via des styles maintenables et cohérents.
+- [x] Valider le rendu puis créer un checkpoint de cette correction visuelle.
+- [ ] Créer un nouveau checkpoint après le nettoyage visuel de la carte Production J-1.
+- [ ] Vérifier après ce checkpoint que la carte Production J-1 conserve son compactage CSS sans styles inline parasites.
