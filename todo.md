@@ -92,3 +92,8 @@
 - [x] Vérifier le rendu responsive et publier la nouvelle identité visuelle.
 - [x] Vérifier le rendu mobile et tablette du nouveau logo et de la palette sur le tableau de bord et le registre.
 - [x] Créer un checkpoint après validation visuelle responsive et publier la nouvelle identité visuelle.
+- [x] Ajouter l’icône du logo dans l’onglet et les métadonnées du site.
+- [x] Renommer le site publié en « Almaraii Prod ».
+- [x] Vérifier le lien de publication et indiquer le réglage nécessaire pour appliquer le préfixe « almaraii-prod ».
+- [x] Créer un checkpoint après les changements de favicon et de titre, puis publier la version Almaraii Prod.
+- [x] Indiquer que le préfixe de l’URL se règle dans les paramètres de domaine si aucune modification automatisée n’est disponible.
