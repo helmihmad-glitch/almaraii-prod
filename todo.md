@@ -123,3 +123,7 @@
 - [x] Protéger l’ajout et la modification des commentaires par le mot de passe fourni.
 - [x] Ajouter la colonne commentaire au fichier Excel synchronisé et régénérer l’export après modification.
 - [x] Tester l’accès refusé et autorisé, la persistance et l’export des commentaires, puis publier la fonctionnalité.
+- [x] Retirer le mot de passe du champ commentaire de la saisie de production.
+- [x] Exiger le mot de passe dans une fenêtre de confirmation avant toute modification de ligne.
+- [x] Exiger le mot de passe dans une fenêtre de confirmation avant toute suppression de ligne.
+- [x] Tester les refus et autorisations pour modifier ou supprimer, puis publier la nouvelle règle de protection.

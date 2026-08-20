@@ -21,19 +21,18 @@ export const recordInput = z.object({
   if (value.plannedStopsHours + value.unplannedStopsHours > value.totalProductionHours) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["unplannedStopsHours"], message: "Les arrêts cumulés ne peuvent pas dépasser le temps total." });
 });
 
-export function isCommentPasswordValid(password: string) {
+export function isActionPasswordValid(password: string) {
   return Boolean(process.env.COMMENT_EDIT_PASSWORD) && password === process.env.COMMENT_EDIT_PASSWORD;
 }
 
-export function assertCommentWriteAuthorized(password: string | undefined) {
-  if (!password || !isCommentPasswordValid(password)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour ajouter ou modifier un commentaire." });
+export function assertProductionActionAuthorized(password: string | undefined) {
+  if (!password || !isActionPasswordValid(password)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier ou supprimer une ligne." });
   }
 }
 
 const recordWithCommentInput = recordInput.safeExtend({
   comment: z.string().trim().max(1000, "Le commentaire ne peut pas dépasser 1 000 caractères.").optional(),
-  commentPassword: z.string().optional(),
 });
 
 export function calculateRecord(input: z.infer<typeof recordInput>) {
@@ -72,24 +71,24 @@ export const appRouter = router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
-    verifyCommentPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(({ input }) => ({
-      authorized: isCommentPasswordValid(input.password),
+    verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(({ input }) => ({
+      authorized: isActionPasswordValid(input.password),
     })),
     create: publicProcedure.input(recordWithCommentInput).mutation(async ({ input }) => {
-      const { comment, commentPassword, ...record } = input;
-      if (comment) assertCommentWriteAuthorized(commentPassword);
+      const { comment, ...record } = input;
       const created = await createProductionRecord({ ...calculateRecord(record), comment: comment || null, source: "manual" });
       await syncExcelFromRecords();
       return created;
     }),
-    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ input }) => {
-      const { id, comment, commentPassword, ...record } = input;
-      if (comment !== undefined) assertCommentWriteAuthorized(commentPassword);
+    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+      const { id, comment, actionPassword, ...record } = input;
+      assertProductionActionAuthorized(actionPassword);
       const updated = await updateProductionRecord(id, { ...calculateRecord(record), ...(comment !== undefined ? { comment } : {}) });
       await syncExcelFromRecords();
       return updated;
     }),
-    delete: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ input }) => {
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+      assertProductionActionAuthorized(input.actionPassword);
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;

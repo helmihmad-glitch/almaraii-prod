@@ -40,6 +40,12 @@ export default function Registry() {
       toast.success("Ligne supprimée du registre");
     },
   });
+  const requestDelete = (id: number) => {
+    const actionPassword = window.prompt("Saisissez le mot de passe pour supprimer cette ligne.");
+    if (actionPassword === null) return;
+    if (!actionPassword) { toast.error("Le mot de passe est requis pour supprimer une ligne."); return; }
+    removeLine.mutate({ id, actionPassword });
+  };
 
   const rows = useMemo(() => (registryQuery.data ?? [])
     .map((row) => ({ ...row, productionDate: row.productionDate.slice(0, 10) }) as RegistryRow)
@@ -88,7 +94,7 @@ export default function Registry() {
           <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter CSV</button><button className="registry-excel" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={15} />Excel synchronisé</button>
         </div>
         <div className="registry-table-wrap">
-          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(Number(row.productionTons))} T</td><td>{fmt(Number(row.wasteTons))} T</td><td>{pct(Number(row.availability))}</td><td>{pct(Number(row.performance))}</td><td><strong>{pct(Number(row.trs))}</strong></td><td>{fmt(Number(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><button className="registry-delete" onClick={() => { if (window.confirm("Supprimer cette ligne sauvegardée ?")) removeLine.mutate({ id: row.id }); }} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » pour ajouter une première ligne au registre.</span></td></tr>}</tbody></table>
+          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(Number(row.productionTons))} T</td><td>{fmt(Number(row.wasteTons))} T</td><td>{pct(Number(row.availability))}</td><td>{pct(Number(row.performance))}</td><td><strong>{pct(Number(row.trs))}</strong></td><td>{fmt(Number(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » pour ajouter une première ligne au registre.</span></td></tr>}</tbody></table>
         </div>
         <footer className="registry-foot"><span><Activity size={14} />Les lignes affichées sont sauvegardées de façon persistante.</span><span>{rows.length} résultat{rows.length > 1 ? "s" : ""}</span></footer>
       </section>
