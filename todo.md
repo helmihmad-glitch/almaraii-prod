@@ -166,3 +166,6 @@
 - [x] Retirer proprement le sous-titre « Actives et perdues » du graphique des heures quotidiennes.
 - [x] Vérifier le rendu du graphique sans sous-titre et publier la mise à jour.
 - [x] Vérifier explicitement que le logo fourni est déclaré comme favicon de l’onglet navigateur après publication.
+- [x] Aligner la hauteur de la carte Production J-1 et du graphique des heures quotidiennes.
+- [x] Réafficher la série des heures perdues dans le graphique quotidien.
+- [ ] Vérifier le rendu, les données et publier les corrections.

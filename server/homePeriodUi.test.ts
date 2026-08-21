@@ -36,4 +36,9 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain("Heures quotidiennes");
     expect(homePage).toContain("hours-legend");
   });
+
+  it("affiche de nouveau les heures perdues dans le graphique quotidien", () => {
+    expect(homePage).toContain('<Bar dataKey="lostHours" fill="#e8b53a"');
+    expect(homePage).toContain('<Bar dataKey="activeHours" fill="#4d7b40"');
+  });
 });
