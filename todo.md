@@ -171,3 +171,5 @@
 - [x] Vérifier le rendu, les données et publier les corrections.
 - [x] Vérifier que l’avatar de l’en-tête affiche les initiales HH.
 - [x] Valider le rendu et publier le changement d’initiales.
+- [x] Identifier et déplacer légèrement vers la droite l’élément ciblé dans le panneau Objectif mensuel.
+- [x] Vérifier le rendu responsive puis publier l’ajustement de position.
