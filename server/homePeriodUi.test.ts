@@ -41,4 +41,8 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain('<Bar dataKey="lostHours" fill="#e8b53a"');
     expect(homePage).toContain('<Bar dataKey="activeHours" fill="#4d7b40"');
   });
+
+  it("affiche les initiales HH dans l’avatar de l’en-tête", () => {
+    expect(homePage).toContain('className="avatar">HH</div>');
+  });
 });

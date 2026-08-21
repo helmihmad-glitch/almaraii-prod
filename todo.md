@@ -169,3 +169,5 @@
 - [x] Aligner la hauteur de la carte Production J-1 et du graphique des heures quotidiennes.
 - [x] Réafficher la série des heures perdues dans le graphique quotidien.
 - [x] Vérifier le rendu, les données et publier les corrections.
+- [x] Vérifier que l’avatar de l’en-tête affiche les initiales HH.
+- [ ] Valider le rendu et publier le changement d’initiales.
