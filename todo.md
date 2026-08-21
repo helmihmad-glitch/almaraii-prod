@@ -151,4 +151,6 @@
 - [x] Confirmer la publication du checkpoint contenant le retrait du titre des commentaires.
 - [x] Vérifier sur le domaine public que la carte J-1 conserve les commentaires sans afficher ce titre.
 - [x] Retirer les blocs de commentaires et leurs boutons de modification de la carte Production J-1.
-- [ ] Vérifier le rendu simplifié et publier la mise à jour.
+- [x] Vérifier le rendu simplifié et publier la mise à jour.
+- [x] Confirmer la publication du checkpoint contenant le retrait des blocs de commentaires J-1.
+- [x] Vérifier sur le domaine public que Production J-1 ne montre plus les blocs ni les boutons d’édition.
