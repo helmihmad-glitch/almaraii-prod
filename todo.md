@@ -168,4 +168,4 @@
 - [x] Vérifier explicitement que le logo fourni est déclaré comme favicon de l’onglet navigateur après publication.
 - [x] Aligner la hauteur de la carte Production J-1 et du graphique des heures quotidiennes.
 - [x] Réafficher la série des heures perdues dans le graphique quotidien.
-- [ ] Vérifier le rendu, les données et publier les corrections.
+- [x] Vérifier le rendu, les données et publier les corrections.
