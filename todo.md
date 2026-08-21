@@ -141,3 +141,6 @@
 - [x] Vérifier après ce checkpoint que la carte Production J-1 conserve son compactage CSS sans styles inline parasites.
 - [x] Vérifier l’état de publication du dernier checkpoint et corriger toute version non mise en ligne.
 - [x] Confirmer sur le domaine public que la dernière version est disponible.
+- [x] Examiner l’icône de référence et l’icône actuelle de la plateforme.
+- [x] Créer une icône de tableau de bord noir et blanc et l’intégrer à la plateforme.
+- [ ] Vérifier l’icône sur l’application et publier la mise à jour.
