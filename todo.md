@@ -145,4 +145,6 @@
 - [x] Créer une icône de tableau de bord noir et blanc et l’intégrer à la plateforme.
 - [x] Vérifier l’icône sur l’application et publier la mise à jour.
 - [x] Vérifier dans la page publiée que le favicon référence bien la nouvelle icône de tableau de bord.
-- [ ] Créer un checkpoint final après confirmation de la propagation publique de l’icône.
+- [x] Créer un checkpoint final après confirmation de la propagation publique de l’icône.
+- [x] Retirer le titre « Commentaires de la journée » de la carte Production J-1.
+- [ ] Conserver les commentaires et leurs actions de modification protégées, puis publier la simplification.

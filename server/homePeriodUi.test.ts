@@ -25,7 +25,7 @@ describe("sélection de période de la page d’accueil", () => {
   });
 
   it("affiche et protège l’édition des commentaires de Production J-1", () => {
-    expect(homePage).toContain("Commentaires de la journée");
+    expect(homePage).toContain('className="daily-comment-list"');
     expect(homePage).toContain('requestProtectedAction("editComment", row)');
     expect(homePage).toContain("Autoriser la modification du commentaire");
     expect(homePage).toContain("Modifier le commentaire");
