@@ -160,3 +160,9 @@
 - [x] Exécuter un scénario réel de création temporaire, suppression, réinitialisation et contrôle d’absence de la ligne.
 - [x] Vérifier que le fichier Excel synchronisé régénéré n’inclut plus la ligne de vérification supprimée.
 - [x] Contrôler la correction sur la version publique après publication.
+- [x] Préparer le logo fourni pour son utilisation comme favicon et icône d’application.
+- [x] Configurer le logo comme favicon, icône Apple et icône de plateforme.
+- [ ] Vérifier la publication de la nouvelle icône sur le domaine public.
+- [x] Retirer proprement le sous-titre « Actives et perdues » du graphique des heures quotidiennes.
+- [ ] Vérifier le rendu du graphique sans sous-titre et publier la mise à jour.
+- [ ] Vérifier explicitement que le logo fourni est déclaré comme favicon de l’onglet navigateur après publication.

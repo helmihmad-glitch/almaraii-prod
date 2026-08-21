@@ -30,4 +30,10 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain('className="comment-fields"');
     expect(homePage).toContain("Le commentaire est ajouté librement.");
   });
+
+  it("retire le sous-titre du graphique des heures quotidiennes sans retirer sa légende", () => {
+    expect(homePage).not.toContain("Actives et perdues");
+    expect(homePage).toContain("Heures quotidiennes");
+    expect(homePage).toContain("hours-legend");
+  });
 });
