@@ -175,3 +175,5 @@
 - [x] Vérifier le rendu responsive puis publier l’ajustement de position.
 - [x] Abaisser légèrement le donut du pourcentage du plan pour éviter le chevauchement avec le sélecteur de période.
 - [x] Vérifier le nouvel espacement sur ordinateur et mobile, puis publier la correction.
+- [x] Placer le sélecteur « Période observée » et le donut « % du plan » sur une même ligne sur grand écran.
+- [x] Vérifier le rendu sur ordinateur et mobile, puis publier la nouvelle disposition.
