@@ -156,7 +156,7 @@
 - [x] Vérifier sur le domaine public que Production J-1 ne montre plus les blocs ni les boutons d’édition.
 - [x] Reproduire la réapparition d’une ligne supprimée après actualisation du registre.
 - [x] Corriger la suppression persistante dans la base et le fichier Excel synchronisé.
-- [ ] Tester la suppression suivie d’un rechargement, puis publier la correction.
+- [x] Tester la suppression suivie d’un rechargement, puis publier la correction.
 - [x] Exécuter un scénario réel de création temporaire, suppression, réinitialisation et contrôle d’absence de la ligne.
 - [x] Vérifier que le fichier Excel synchronisé régénéré n’inclut plus la ligne de vérification supprimée.
-- [ ] Contrôler la correction sur la version publique après publication.
+- [x] Contrôler la correction sur la version publique après publication.
