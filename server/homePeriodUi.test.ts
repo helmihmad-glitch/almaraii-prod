@@ -24,11 +24,10 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain("Aucune donnée de production n’est disponible pour ce mois.");
   });
 
-  it("affiche et protège l’édition des commentaires de Production J-1", () => {
-    expect(homePage).toContain('className="daily-comment-list"');
-    expect(homePage).toContain('requestProtectedAction("editComment", row)');
-    expect(homePage).toContain("Autoriser la modification du commentaire");
-    expect(homePage).toContain("Modifier le commentaire");
-    expect(homePage).toContain("saveYesterdayComment");
+  it("retire les blocs de commentaires de Production J-1 sans retirer le champ commentaire du registre", () => {
+    expect(homePage).not.toContain('className="daily-comment-list"');
+    expect(homePage).not.toContain('className="daily-comment-row"');
+    expect(homePage).toContain('className="comment-fields"');
+    expect(homePage).toContain("Le commentaire est ajouté librement.");
   });
 });
