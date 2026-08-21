@@ -173,3 +173,5 @@
 - [x] Valider le rendu et publier le changement d’initiales.
 - [x] Identifier et déplacer légèrement vers la droite l’élément ciblé dans le panneau Objectif mensuel.
 - [x] Vérifier le rendu responsive puis publier l’ajustement de position.
+- [x] Abaisser légèrement le donut du pourcentage du plan pour éviter le chevauchement avec le sélecteur de période.
+- [x] Vérifier le nouvel espacement sur ordinateur et mobile, puis publier la correction.
