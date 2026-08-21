@@ -147,4 +147,6 @@
 - [x] Vérifier dans la page publiée que le favicon référence bien la nouvelle icône de tableau de bord.
 - [x] Créer un checkpoint final après confirmation de la propagation publique de l’icône.
 - [x] Retirer le titre « Commentaires de la journée » de la carte Production J-1.
-- [ ] Conserver les commentaires et leurs actions de modification protégées, puis publier la simplification.
+- [x] Conserver les commentaires et leurs actions de modification protégées, puis publier la simplification.
+- [x] Confirmer la publication du checkpoint contenant le retrait du titre des commentaires.
+- [x] Vérifier sur le domaine public que la carte J-1 conserve les commentaires sans afficher ce titre.
