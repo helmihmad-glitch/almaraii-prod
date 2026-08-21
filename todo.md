@@ -139,3 +139,5 @@
 - [x] Valider le rendu puis créer un checkpoint de cette correction visuelle.
 - [x] Créer un nouveau checkpoint après le nettoyage visuel de la carte Production J-1.
 - [x] Vérifier après ce checkpoint que la carte Production J-1 conserve son compactage CSS sans styles inline parasites.
+- [x] Vérifier l’état de publication du dernier checkpoint et corriger toute version non mise en ligne.
+- [x] Confirmer sur le domaine public que la dernière version est disponible.

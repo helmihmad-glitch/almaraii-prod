@@ -15,3 +15,5 @@ Une session fraîche ouverte après propagation confirme la version publiée : l
 Sur cette même version publiée, l’action « Modifier le commentaire de DG5 » a été ouverte sans modifier de donnée : elle affiche bien la fenêtre « Autoriser la modification du commentaire », avec champ de mot de passe, boutons Annuler et Continuer. La protection demandée est donc effective avant tout accès à l’éditeur.
 
 Le compactage visuel a été vérifié en local à 1440 × 900 et 375 × 812. La carte conserve la lecture du total, des articles, des commentaires et des actions d’édition ; la liste des commentaires reste défilable lorsque les trois lignes de la veille sont présentes. Les styles inline accidentellement diffusés par l’éditeur visuel ont été retirés au profit d’une seule règle CSS sur la carte.
+
+La dernière vérification du domaine public a confirmé la version publiée après chargement : elle affiche la carte Production J-1 compacte, les commentaires de la veille, y compris le commentaire renseigné de DG3, ainsi que les boutons de modification. La publication est active.
