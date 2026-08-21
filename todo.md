@@ -143,4 +143,6 @@
 - [x] Confirmer sur le domaine public que la dernière version est disponible.
 - [x] Examiner l’icône de référence et l’icône actuelle de la plateforme.
 - [x] Créer une icône de tableau de bord noir et blanc et l’intégrer à la plateforme.
-- [ ] Vérifier l’icône sur l’application et publier la mise à jour.
+- [x] Vérifier l’icône sur l’application et publier la mise à jour.
+- [x] Vérifier dans la page publiée que le favicon référence bien la nouvelle icône de tableau de bord.
+- [ ] Créer un checkpoint final après confirmation de la propagation publique de l’icône.
