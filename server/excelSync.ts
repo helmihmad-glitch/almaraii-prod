@@ -79,26 +79,25 @@ export function buildSeedRows() {
   return Array.from(unique.values());
 }
 
+export function shouldSeedExcelRecords(existingRecordCount: number, hasSynchronizedFile: boolean) {
+  return existingRecordCount === 0 && !hasSynchronizedFile;
+}
+
 export async function seedExcelRecordsIfNeeded() {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const existing = await db.select({
-    productionDate: productionRecords.productionDate,
-    article: productionRecords.article,
-    totalProductionHours: productionRecords.totalProductionHours,
-    productionTons: productionRecords.productionTons,
-  })
-    .from(productionRecords)
-    .where(eq(productionRecords.source, "excel"));
+  const existingRecords = await db.select({ id: productionRecords.id }).from(productionRecords).limit(1);
+  const currentFile = await getSynchronizedExcelFile();
+  if (!shouldSeedExcelRecords(existingRecords.length, Boolean(currentFile))) {
+    return { seeded: false, count: 0 };
+  }
 
   const rows = buildSeedRows();
-  const signatures = new Set(existing.map((row) => `${row.productionDate}::${row.article}::${row.totalProductionHours}::${row.productionTons}`));
-  const missingRows = rows.filter((row) => !signatures.has(`${row.productionDate}::${row.article}::${row.totalProductionHours}::${row.productionTons}`));
-  for (let start = 0; start < missingRows.length; start += 100) {
-    await db.insert(productionRecords).values(missingRows.slice(start, start + 100));
+  for (let start = 0; start < rows.length; start += 100) {
+    await db.insert(productionRecords).values(rows.slice(start, start + 100));
   }
-  return { seeded: missingRows.length > 0, count: missingRows.length };
+  return { seeded: true, count: rows.length };
 }
 
 export async function getSynchronizedExcelFile() {
