@@ -224,25 +224,10 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setDrawColor(...divider);
   doc.setLineWidth(.25);
   doc.line(86, dayY + 6, 86, dayY + 28);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.text(prettyDate(options.productionDate), 95, dayY + 10);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.3);
-  doc.text(`${dayRows.length} ligne(s) de production enregistrée(s)`, 95, dayY + 19);
   doc.setTextColor(...green);
-  doc.setFontSize(8.5);
-  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 62), 95, dayY + 28);
-  doc.setFillColor(...green);
-  doc.roundedRect(163, dayY + 8, 29, 19, 2.2, 2.2, "F");
-  doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.3);
-  doc.text("JOURNÉE", 177.5, dayY + 14, { align: "center" });
-  doc.setFontSize(10);
-  doc.text(pct(day.trs), 177.5, dayY + 22, { align: "center" });
+  doc.setFontSize(12);
+  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 92), 95, dayY + 20);
 
   const sectionY = 151;
   doc.setTextColor(...ink);

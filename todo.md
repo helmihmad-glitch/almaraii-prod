@@ -236,3 +236,5 @@
 - [x] Réduire légèrement la luminosité et la densité visuelle des surfaces du PDF, puis vérifier et publier.
 - [x] Retirer le bloc « Cumul arrêté au », sa date et le donut de progression du panneau objectif PDF.
 - [x] Étendre la barre de progression sur la largeur de la carte et agrandir ses libellés ainsi que la synthèse d’en-tête, puis vérifier et publier.
+- [x] Retirer la date secondaire, le pourcentage d’objectif, le bloc JOURNÉE et le nombre de lignes du PDF.
+- [x] Agrandir la liste des articles et tonnages de la journée, puis vérifier et publier le rapport allégé.
