@@ -215,3 +215,7 @@
 - [x] Conserver les lignes du même jour présentant des valeurs différentes, tester les deux cas et publier le correctif.
 - [x] Supprimer toutes les lignes de production après confirmation explicite de l’utilisateur.
 - [x] Réinitialiser le fichier Excel synchronisé et vérifier que le registre est vide avant le nouvel import.
+- [x] Ajouter au PDF le panneau Objectif mensuel de la période concernée avec sa progression et son pourcentage.
+- [x] Remplacer le cercle décoratif du PDF par le logo Almaraïi et renforcer l’affichage des heures actives et perdues.
+- [x] Demander un commentaire facultatif avant l’export PDF et l’ajouter au bas du document lorsqu’il est renseigné.
+- [x] Vérifier le PDF enrichi, le flux avec et sans commentaire, puis publier la mise à jour.

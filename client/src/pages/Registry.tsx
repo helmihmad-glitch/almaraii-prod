@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { generateDayPdf } from "@/lib/dayPdfReport";
 import "./registry-import-dialog.css";
 
 type RegistryRow = {
@@ -52,12 +53,14 @@ function toBase64(file: File) {
 }
 
 type PendingImport = { fileName: string; fileBase64: string };
+type PendingPdf = { productionDate: string; comment: string };
 
 export default function Registry() {
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [pendingPdf, setPendingPdf] = useState<PendingPdf | null>(null);
   const [importPassword, setImportPassword] = useState("");
   const hasInitializedExcel = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -129,153 +132,20 @@ export default function Registry() {
     if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }
     importExcel.mutate({ ...pendingImport, actionPassword: importPassword });
   };
-  const downloadDayPdf = async (productionDate: string) => {
-    const dayRows = allRows.filter((row) => row.productionDate === productionDate);
-    if (!dayRows.length) { toast.error("Aucune donnée n’est disponible pour cette journée."); return; }
-    const dayKpis = buildKpis(dayRows);
-    const { jsPDF } = await import("jspdf");
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const green: [number, number, number] = [29, 72, 38];
-    const gold: [number, number, number] = [232, 181, 58];
-    const paleGreen: [number, number, number] = [245, 250, 244];
-    const ink: [number, number, number] = [38, 61, 44];
-    const muted: [number, number, number] = [105, 123, 109];
-    const contentWidth = pageWidth - 30;
-
-    doc.setFillColor(...green);
-    doc.rect(0, 0, pageWidth, 38, "F");
-    doc.setFillColor(...gold);
-    doc.rect(0, 38, pageWidth, 2.2, "F");
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(.45);
-    doc.circle(pageWidth - 21, 18, 10, "S");
-    doc.setFillColor(...gold);
-    doc.circle(pageWidth - 21, 18, 6.3, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.text("Almaraïi", 15, 17);
-    doc.setFontSize(8);
-    doc.text("PRODUCTION PULSE", 15, 24);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.text("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION", 15, 31);
-    doc.text(`Généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}`, pageWidth - 35, 31, { align: "right" });
-
-    doc.setFillColor(...paleGreen);
-    doc.roundedRect(15, 51, contentWidth, 34, 4, 4, "F");
-    doc.setFillColor(...gold);
-    doc.roundedRect(15, 51, 4, 34, 2, 2, "F");
-    doc.setTextColor(...muted);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text("PRODUCTION DE LA JOURNÉE", 25, 61);
-    doc.setTextColor(...green);
-    doc.setFontSize(25);
-    doc.text(`${fmt(dayKpis.production)} T`, 25, 76);
-    doc.setTextColor(...ink);
-    doc.setFontSize(12);
-    doc.text(prettyDate(productionDate), pageWidth - 21, 62, { align: "right" });
-    doc.setTextColor(...muted);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.text(`${dayRows.length} ligne(s) de production enregistrée(s)`, pageWidth - 21, 70, { align: "right" });
-    const dayDetails = dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   ");
-    doc.text(doc.splitTextToSize(dayDetails, 104), pageWidth - 21, 77, { align: "right" });
-
-    doc.setTextColor(...ink);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text("Indicateurs de performance", 15, 99);
-    const kpiCards = [
-      ["TRS GLOBAL", pct(dayKpis.trs), "Efficacité globale"],
-      ["DISPONIBILITÉ", pct(dayKpis.availability), "Temps utile / planifié"],
-      ["PERFORMANCE", pct(dayKpis.performance), "Cadence réelle / standard"],
-    ];
-    const kpiWidth = (contentWidth - 12) / 3;
-    kpiCards.forEach(([label, value, detail], index) => {
-      const x = 15 + index * (kpiWidth + 6);
-      doc.setDrawColor(221, 231, 220);
-      doc.setFillColor(255, 254, 250);
-      doc.roundedRect(x, 104, kpiWidth, 27, 3, 3, "FD");
-      doc.setFillColor(...gold);
-      doc.roundedRect(x, 104, kpiWidth, 2.4, 2, 2, "F");
-      doc.setTextColor(...muted);
-      doc.setFontSize(7);
-      doc.text(label, x + 5, 114);
-      doc.setTextColor(...green);
-      doc.setFontSize(16);
-      doc.text(value, x + 5, 124);
-      doc.setTextColor(...muted);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.text(detail, x + 5, 129);
-      doc.setFont("helvetica", "bold");
-    });
-
-    doc.setFillColor(...green);
-    doc.roundedRect(15, 141, contentWidth, 27, 3, 3, "F");
-    doc.setFillColor(...gold);
-    doc.circle(25, 154, 4.5, "F");
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(8);
-    doc.text("REBUTS / DÉCHETS", 35, 150);
-    doc.setFontSize(15);
-    doc.text(`${fmt(dayKpis.waste)} T`, 35, 161);
-    doc.setDrawColor(255, 255, 255);
-    doc.setLineWidth(.25);
-    doc.line(pageWidth / 2, 147, pageWidth / 2, 163);
-    doc.setFontSize(8);
-    doc.text("TEMPS TOTAL DE PRODUCTION", pageWidth / 2 + 9, 150);
-    doc.setFontSize(15);
-    doc.text(`${fmt(dayKpis.totalHours)} h`, pageWidth / 2 + 9, 161);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text(`Actives ${fmt(dayKpis.activeHours)} h  ·  Perdues ${fmt(dayKpis.plannedStops + dayKpis.unplannedStops)} h`, pageWidth / 2 + 43, 161);
-
-    let tableY = 181;
-    doc.setTextColor(...ink);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text("Détail des lignes de production", 15, 181);
-    tableY += 8;
-    const columns = ["Article", "Production", "Rebuts", "H. réelles", "TRS", "Commentaire"];
-    const positions = [15, 41, 69, 91, 114, 132];
-    const drawTableHeader = (y: number) => {
-      doc.setFillColor(232, 241, 232);
-      doc.roundedRect(15, y - 5, contentWidth, 8, 1.8, 1.8, "F");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(...green);
-      columns.forEach((column, index) => doc.text(column.toUpperCase(), positions[index], y));
-    };
-    drawTableHeader(tableY);
-    tableY += 5;
-    dayRows.forEach((row, index) => {
-      const commentLines = doc.splitTextToSize(row.comment || "—", pageWidth - 137);
-      const lineHeight = Math.max(8, commentLines.length * 3.7 + 4);
-      if (tableY + lineHeight > 279) { doc.addPage(); doc.setFillColor(...green); doc.rect(0, 0, pageWidth, 13, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.text(`Almaraïi · Production du ${prettyDate(productionDate)}`, 15, 8); tableY = 25; drawTableHeader(tableY); tableY += 5; }
-      if (index % 2 === 0) { doc.setFillColor(250, 252, 249); doc.rect(15, tableY - 3, contentWidth, lineHeight, "F"); }
-      doc.setTextColor(...ink);
-      doc.setFont("helvetica", "normal");
-      doc.text(row.article, positions[0], tableY + 1);
-      doc.text(`${fmt(asNumber(row.productionTons))} T`, positions[1], tableY + 1);
-      doc.text(`${fmt(asNumber(row.wasteTons))} T`, positions[2], tableY + 1);
-      doc.text(`${fmt(asNumber(row.realHours))} h`, positions[3], tableY + 1);
-      doc.text(pct(asNumber(row.trs)), positions[4], tableY + 1);
-      doc.text(commentLines, positions[5], tableY + 1);
-      tableY += lineHeight;
-    });
-    doc.setTextColor(...muted);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text(`Almaraïi Production Pulse · ${dayRows.length} ligne(s) incluse(s) · ${prettyDate(productionDate)}`, 15, Math.min(tableY + 6, 288));
-    doc.save(`production-${productionDate}.pdf`);
-    toast.success("Rapport PDF journalier généré", { description: `Les données du ${prettyDate(productionDate)} sont téléchargées.` });
+  const requestDayPdf = (productionDate: string) => setPendingPdf({ productionDate, comment: "" });
+  const confirmDayPdf = async (commentOverride?: string) => {
+    if (!pendingPdf) return;
+    try {
+      await generateDayPdf({ productionDate: pendingPdf.productionDate, allRows, exportComment: commentOverride ?? pendingPdf.comment });
+      toast.success("Rapport PDF journalier généré", { description: `Les données du ${prettyDate(pendingPdf.productionDate)} sont téléchargées.` });
+      setPendingPdf(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Le rapport PDF ne peut pas être généré.");
+    }
   };
 
   return <div className="registry-screen">
+    {pendingPdf && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog registry-pdf-dialog" onSubmit={(event) => { event.preventDefault(); void confirmDayPdf(); }} role="dialog" aria-modal="true" aria-labelledby="pdf-dialog-title"><span className="registry-kicker"><FileText size={14} />Rapport journalier</span><h2 id="pdf-dialog-title">Ajouter un <em>commentaire</em> au PDF ?</h2><p>Ce commentaire est facultatif. S’il est renseigné, il apparaîtra en bas du rapport de production du {prettyDate(pendingPdf.productionDate)}.</p><label>Commentaire d’export<textarea value={pendingPdf.comment} onChange={(event) => setPendingPdf({ ...pendingPdf, comment: event.target.value })} autoFocus maxLength={1200} placeholder="Ex. Situation particulière, consigne de suivi…" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => setPendingPdf(null)}>Annuler</button><button type="button" className="registry-clear" onClick={() => void confirmDayPdf("")}>Exporter sans commentaire</button><button type="submit" className="registry-import">Exporter le PDF</button></div></form></div>}
     {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Les lignes seront ajoutées ou mises à jour dans le registre, puis le fichier Excel synchronisé sera régénéré.</p><label>Mot de passe d’action<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" placeholder="Saisissez le mot de passe" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={importExcel.isPending}>{importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
     <header className="registry-topbar">
       <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
@@ -299,7 +169,7 @@ export default function Registry() {
         </div>
         <p className="registry-import-note"><Upload size={13} />Formats reconnus : DATE, ARTICLE, TEMPS TOTAL PROD. (h) ou TEMPS OUV. (h), ARRÊTS PLAN. (h), ARRÊTS NON PL. (h), PROD. (T), REBUTS (T), CADENCE STD et H. RÉELLES. Les feuilles mensuelles sont prises en charge.</p>
         <div className="registry-table-wrap">
-          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th>Actions</th></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><div className="registry-row-actions"><button className="registry-day-pdf" onClick={() => void downloadDayPdf(row.productionDate)} aria-label={`Télécharger le PDF du ${row.productionDate}`} title="Exporter le PDF de cette journée"><FileText size={15} /></button><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></div></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></td></tr>}</tbody></table>
+          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th>Actions</th></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><div className="registry-row-actions"><button className="registry-day-pdf" onClick={() => requestDayPdf(row.productionDate)} aria-label={`Télécharger le PDF du ${row.productionDate}`} title="Exporter le PDF de cette journée"><FileText size={15} /></button><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></div></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></td></tr>}</tbody></table>
         </div>
         <footer className="registry-foot"><span><Activity size={14} />Les lignes affichées sont sauvegardées de façon persistante.</span><span>{rows.length} résultat{rows.length > 1 ? "s" : ""}</span></footer>
       </section>

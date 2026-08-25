@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const registryPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Registry.tsx", import.meta.url)), "utf8");
+const dayPdfReport = readFileSync(fileURLToPath(new URL("../client/src/lib/dayPdfReport.ts", import.meta.url)), "utf8");
 
 describe("import Excel et rapport PDF du registre", () => {
   it("propose un import Excel xlsx protégé par une confirmation de mot de passe accessible", () => {
@@ -15,19 +16,33 @@ describe("import Excel et rapport PDF du registre", () => {
   });
 
   it("construit un PDF journalier accessible depuis chaque ligne du registre", () => {
-    expect(registryPage).toContain('import("jspdf")');
-    expect(registryPage).toContain("downloadDayPdf");
-    expect(registryPage).toContain("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION");
-    expect(registryPage).toContain("PRODUCTION DE LA JOURNÉE");
-    expect(registryPage).toContain("Indicateurs de performance");
-    expect(registryPage).toContain("Détail des lignes de production");
-    expect(registryPage).toContain("Production du ${prettyDate(productionDate)}");
-    expect(registryPage).toContain("TRS GLOBAL");
-    expect(registryPage).toContain("DISPONIBILITÉ");
-    expect(registryPage).toContain("PERFORMANCE");
-    expect(registryPage).toContain("REBUTS / DÉCHETS");
-    expect(registryPage).toContain("TEMPS TOTAL DE PRODUCTION");
+    expect(registryPage).toContain("generateDayPdf");
+    expect(registryPage).toContain("requestDayPdf");
+    expect(dayPdfReport).toContain('import("jspdf")');
+    expect(dayPdfReport).toContain("RAPPORT JOURNALIER");
+    expect(dayPdfReport).toContain("PRODUCTION DE LA JOURNÉE");
+    expect(dayPdfReport).toContain("Indicateurs de performance");
+    expect(dayPdfReport).toContain("Détail des lignes de production");
+    expect(dayPdfReport).toContain("TRS GLOBAL");
+    expect(dayPdfReport).toContain("DISPONIBILITÉ");
+    expect(dayPdfReport).toContain("PERFORMANCE");
+    expect(dayPdfReport).toContain("REBUTS / DÉCHETS");
+    expect(dayPdfReport).toContain("TEMPS TOTAL PROD.");
     expect(registryPage).toContain("Exporter le PDF de cette journée");
     expect(registryPage).not.toContain("Télécharger PDF");
+  });
+
+  it("ajoute l’objectif mensuel, le logo et un commentaire facultatif au rapport", () => {
+    expect(dayPdfReport).toContain("OBJECTIF MENSUEL");
+    expect(dayPdfReport).toContain("PÉRIODE OBSERVÉE");
+    expect(dayPdfReport).toContain("Données disponibles");
+    expect(dayPdfReport).toContain("Progression réelle");
+    expect(dayPdfReport).toContain("ATTEINTE DU PLAN");
+    expect(dayPdfReport).toContain("almaraai-corn-logo");
+    expect(dayPdfReport).toContain("ACTIVES");
+    expect(dayPdfReport).toContain("PERDUES");
+    expect(dayPdfReport).toContain("COMMENTAIRE AJOUTÉ À L’EXPORT");
+    expect(registryPage).toContain("Ajouter un <em>commentaire</em> au PDF ?");
+    expect(registryPage).toContain("Exporter sans commentaire");
   });
 });
