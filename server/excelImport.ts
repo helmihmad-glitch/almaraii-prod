@@ -20,8 +20,8 @@ export type ImportedProductionRow = {
 type ParsedImport = { rows: ImportedProductionRow[]; errors: string[] };
 
 const requiredHeaders = {
-  date: ["DATE"],
-  article: ["ARTICLE"],
+  date: ["DATE", "DATEDEPRODUCTION", "JOUR"],
+  article: ["ARTICLE", "ARTICLES", "PRODUIT", "PRODUITS", "CODEARTICLE", "DESIGNATION"],
   totalProductionHours: ["TEMPSTOTALPRODH", "TEMPSTOTALPRODHPARARTICLE"],
   plannedStopsHours: ["ARRETSPLANH"],
   unplannedStopsHours: ["ARRETSNONPLH"],
@@ -32,6 +32,10 @@ const requiredHeaders = {
 
 function normalizeHeader(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function matchesHeader(header: string, aliases: readonly string[]) {
+  return aliases.some((alias) => header === alias || header.startsWith(alias) || (alias.length >= 5 && header.includes(alias)));
 }
 
 function readCellText(cell: ExcelJS.Cell) {
@@ -87,25 +91,28 @@ function calculateRow(row: ImportedProductionRow) {
 export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImport> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as never);
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) return { rows: [], errors: ["Le fichier Excel ne contient aucune feuille."] };
-
+  if (workbook.worksheets.length === 0) return { rows: [], errors: ["Le fichier Excel ne contient aucune feuille."] };
+  let worksheet: ExcelJS.Worksheet | undefined;
   let headerRow: ExcelJS.Row | undefined;
-  for (let rowNumber = 1; rowNumber <= Math.min(10, worksheet.rowCount); rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber);
-    const rowValues = Array.isArray(row.values) ? row.values : [];
-    const headers = rowValues.map((value: ExcelJS.CellValue) => normalizeHeader(String(value ?? "")));
-    if (headers.includes("DATE") && headers.includes("ARTICLE")) {
-      headerRow = row;
-      break;
+  for (const candidate of workbook.worksheets) {
+    for (let rowNumber = 1; rowNumber <= Math.min(100, candidate.rowCount); rowNumber += 1) {
+      const row = candidate.getRow(rowNumber);
+      const rowValues = Array.isArray(row.values) ? row.values : [];
+      const headers = rowValues.map((value: ExcelJS.CellValue) => normalizeHeader(String(value ?? "")));
+      if (headers.some((header) => matchesHeader(header, requiredHeaders.date)) && headers.some((header) => matchesHeader(header, requiredHeaders.article))) {
+        worksheet = candidate;
+        headerRow = row;
+        break;
+      }
     }
+    if (headerRow) break;
   }
-  if (!headerRow) return { rows: [], errors: ["Les en-têtes DATE et ARTICLE sont introuvables dans les dix premières lignes du fichier."] };
+  if (!worksheet || !headerRow) return { rows: [], errors: ["Les en-têtes de date et d’article sont introuvables dans les cent premières lignes de toutes les feuilles du fichier."] };
 
   const headerIndexes = new Map<string, number>();
   headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => headerIndexes.set(normalizeHeader(readCellText(cell)), columnNumber));
   const findColumn = (aliases: readonly string[]) => {
-    for (const [header, column] of Array.from(headerIndexes.entries())) if (aliases.some((alias) => header === alias || header.startsWith(alias))) return column;
+    for (const [header, column] of Array.from(headerIndexes.entries())) if (matchesHeader(header, aliases)) return column;
     return undefined;
   };
   const columns = Object.fromEntries(Object.entries(requiredHeaders).map(([key, aliases]) => [key, findColumn(aliases)])) as Record<keyof typeof requiredHeaders, number | undefined>;

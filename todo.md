@@ -188,3 +188,5 @@
 - [x] Ajouter un import Excel vers le registre journalier avec contrôle, rapprochement et synchronisation du fichier Excel.
 - [x] Ajouter un export PDF du registre contenant Production J-1 et les KPI demandés.
 - [x] Vérifier les imports valides et invalides, le rapport PDF, le registre et le rendu responsive, puis publier les nouveaux flux.
+- [x] Étendre la reconnaissance des en-têtes Excel pour les fichiers dont la ligne de colonnes est plus basse ou libellée différemment.
+- [x] Tester l’import avec les variantes d’en-têtes prises en charge puis publier le correctif.
