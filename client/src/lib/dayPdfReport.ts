@@ -25,22 +25,22 @@ export function getMonthlyRowsThroughExportDay<T extends { productionDate: strin
 type Rgb = [number, number, number];
 
 const palette = {
-  deepGreen: [55, 82, 64] as Rgb,
-  leaf: [103, 125, 100] as Rgb,
-  strongLeaf: [84, 112, 91] as Rgb,
-  gold: [192, 168, 105] as Rgb,
-  mutedGold: [228, 219, 187] as Rgb,
-  headerStripe: [97, 122, 91] as Rgb,
-  paleGreen: [246, 248, 244] as Rgb,
-  ink: [55, 72, 60] as Rgb,
-  muted: [112, 124, 115] as Rgb,
-  lightGreen: [145, 165, 145] as Rgb,
-  donutBase: [132, 151, 128] as Rgb,
-  progressTrack: [120, 145, 120] as Rgb,
-  divider: [215, 225, 215] as Rgb,
-  tableHeader: [234, 240, 232] as Rgb,
-  alternateRow: [251, 252, 249] as Rgb,
-  commentFill: [255, 252, 244] as Rgb,
+  deepGreen: [26, 68, 42] as Rgb,
+  leaf: [72, 108, 70] as Rgb,
+  strongLeaf: [58, 91, 65] as Rgb,
+  gold: [211, 166, 52] as Rgb,
+  mutedGold: [237, 220, 167] as Rgb,
+  headerStripe: [56, 97, 58] as Rgb,
+  paleGreen: [248, 250, 246] as Rgb,
+  ink: [35, 56, 41] as Rgb,
+  muted: [99, 117, 101] as Rgb,
+  lightGreen: [107, 142, 103] as Rgb,
+  donutBase: [88, 124, 80] as Rgb,
+  progressTrack: [68, 106, 64] as Rgb,
+  divider: [222, 230, 220] as Rgb,
+  tableHeader: [230, 239, 228] as Rgb,
+  alternateRow: [252, 253, 251] as Rgb,
+  commentFill: [255, 250, 239] as Rgb,
 };
 
 const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";

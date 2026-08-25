@@ -232,3 +232,5 @@
 - [x] Retirer la mention « Données disponibles » du panneau objectif du PDF, puis vérifier et publier.
 - [x] Réduire la saturation des couleurs du rapport PDF tout en préservant son contraste et sa hiérarchie.
 - [x] Vérifier visuellement la palette adoucie et publier la nouvelle version du PDF.
+- [x] Rapprocher la saturation du PDF de la version précédente sans réintroduire une palette trop vive.
+- [x] Réduire légèrement la luminosité et la densité visuelle des surfaces du PDF, puis vérifier et publier.
