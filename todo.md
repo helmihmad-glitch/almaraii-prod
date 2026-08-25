@@ -240,3 +240,4 @@
 - [x] Agrandir la liste des articles et tonnages de la journée, puis vérifier et publier le rapport allégé.
 - [x] Réintégrer le badge JOURNÉE et son pourcentage calculé dans la carte de production du PDF, puis vérifier et publier.
 - [x] Afficher chaque article et tonnage sur sa propre ligne dans la carte de production journalière du PDF, puis vérifier et publier.
+- [x] Espacer la liste d’articles du PDF et répartir les deux premiers à gauche, puis le troisième à droite, avant vérification et publication.

@@ -227,7 +227,9 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setTextColor(...green);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
-  doc.text(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`), 95, dayY + 15, { lineHeightFactor: 1.35 });
+  const dayArticleLabels = dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`);
+  doc.text(dayArticleLabels.slice(0, 2), 95, dayY + 14, { lineHeightFactor: 1.7 });
+  if (dayArticleLabels.length > 2) doc.text(dayArticleLabels.slice(2), 128, dayY + 14, { lineHeightFactor: 1.7 });
   doc.setFillColor(...green);
   doc.roundedRect(163, dayY + 8, 29, 19, 2.2, 2.2, "F");
   doc.setTextColor(255, 255, 255);
