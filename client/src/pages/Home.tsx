@@ -91,6 +91,7 @@ export default function Home() {
   const hasInitializedExcel = useRef(false);
   const monthForDate = (date: string) => date.slice(0, 7);
   const productionQuery = trpc.production.list.useQuery();
+  const configuredArticlesQuery = trpc.settings.listArticles.useQuery();
   const productionUtils = trpc.useUtils();
   type ProductionRecord = NonNullable<typeof productionQuery.data>[number];
   const toOptimisticRecord = (id: number, input: { productionDate: string; article: string; totalProductionHours: number; plannedStopsHours: number; unplannedStopsHours: number; productionTons: number; wasteTons: number; standardRate: number; comment?: string }): ProductionRecord => {
@@ -104,6 +105,28 @@ export default function Home() {
   const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => productionQuery.refetch() });
   const verifyActionPassword = trpc.production.verifyActionPassword.useMutation();
   useEffect(() => { if (!productionQuery.isLoading && !hasInitializedExcel.current) { hasInitializedExcel.current = true; initializeExcel.mutate(); } }, [productionQuery.isLoading, initializeExcel]);
+  useEffect(() => {
+    if (!isEntryOpen) return;
+    const articleInput = document.querySelector<HTMLInputElement>('input[placeholder="CM1, DG3…"]');
+    if (!articleInput) return;
+    const listId = "production-article-options";
+    let dataList = document.getElementById(listId) as HTMLDataListElement | null;
+    if (!dataList) {
+      dataList = document.createElement("datalist");
+      dataList.id = listId;
+      document.body.appendChild(dataList);
+    }
+    dataList.replaceChildren(...(configuredArticlesQuery.data ?? []).map((article) => {
+      const option = document.createElement("option");
+      option.value = article.code;
+      return option;
+    }));
+    articleInput.setAttribute("list", listId);
+    return () => {
+      articleInput.removeAttribute("list");
+      dataList?.remove();
+    };
+  }, [isEntryOpen, configuredArticlesQuery.data]);
   const createEntry = trpc.production.create.useMutation({
     onMutate: async (variables) => { await productionUtils.production.list.cancel(); const previous = productionUtils.production.list.getData(); const temporaryId = -Date.now(); replaceCachedRecord(toOptimisticRecord(temporaryId, variables)); return { previous, temporaryId }; },
     onError: (_error, _variables, context) => { productionUtils.production.list.setData(undefined, context?.previous); toast.error("La ligne n’a pas pu être enregistrée."); },
@@ -120,6 +143,7 @@ export default function Home() {
     onSuccess: () => { void productionUtils.production.syncFile.invalidate(); toast.success("Ligne supprimée"); },
   });
   const openRegistry = () => { setSidebarOpen(false); setLocation("/registre"); };
+  const openSettings = () => { setSidebarOpen(false); setLocation("/parametres"); };
   const month = months.find((item) => monthPrefixFromKey(item.key) === selectedPeriod) ?? ({ name: periodNameFromValue(selectedPeriod), target: 0 } as Month);
   const monthPrefix = selectedPeriod;
   const periodName = periodNameFromValue(selectedPeriod);
@@ -199,7 +223,7 @@ export default function Home() {
         </nav></div>
         <div className="rail-section"><span className="rail-label">Raccourcis</span><nav>
           <button className="rail-link" onClick={exportData}><Download size={17} />Exporter les données</button>
-          <button className="rail-link" onClick={() => toast.info("Les paramètres sont en préparation.")}><Settings2 size={17} />Paramètres</button>
+          <button className="rail-link" onClick={openSettings}><Settings2 size={17} />Paramètres</button>
         </nav></div>
         <div className="rail-footer"><div className="status-pulse"><span />Source synchronisée</div><small>Classeur : Dashboard_Production.xlsx<br />Dernière lecture · aujourd’hui</small></div>
       </aside>

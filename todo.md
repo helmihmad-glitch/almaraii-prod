@@ -177,3 +177,8 @@
 - [x] Vérifier le nouvel espacement sur ordinateur et mobile, puis publier la correction.
 - [x] Placer le sélecteur « Période observée » et le donut « % du plan » sur une même ligne sur grand écran.
 - [x] Vérifier le rendu sur ordinateur et mobile, puis publier la nouvelle disposition.
+- [x] Créer un espace Paramètres accessible depuis la navigation.
+- [x] Gérer une liste persistante d’articles utilisable dans le formulaire de production.
+- [x] Permettre l’ajout et la suppression contrôlée des articles sans invalider l’historique du registre.
+- [x] Permettre le remplacement sécurisé du mot de passe requis pour modifier ou supprimer une ligne.
+- [x] Tester les autorisations, les articles, le formulaire et l’affichage responsive, puis publier la mise à jour.

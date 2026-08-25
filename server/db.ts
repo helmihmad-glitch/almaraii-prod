@@ -1,11 +1,18 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertProductionRecord, InsertUser, productionRecords, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  InsertProductionRecord,
+  InsertUser,
+  productionArticles,
+  productionRecords,
+  productionSettings,
+  users,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
+import type { ActionPasswordDigest } from "./settingsSecurity";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -19,74 +26,45 @@ export async function getDb() {
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+  if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot upsert user: database not available");
     return;
   }
 
-  try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
-
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
+  const values: InsertUser = { openId: user.openId };
+  const updateSet: Record<string, unknown> = {};
+  const textFields = ["name", "email", "loginMethod"] as const;
+  textFields.forEach((field) => {
+    if (user[field] !== undefined) {
+      values[field] = user[field] ?? null;
+      updateSet[field] = user[field] ?? null;
     }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
+  });
 
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
+  if (user.lastSignedIn !== undefined) {
+    values.lastSignedIn = user.lastSignedIn;
+    updateSet.lastSignedIn = user.lastSignedIn;
   }
+  if (user.role !== undefined) {
+    values.role = user.role;
+    updateSet.role = user.role;
+  } else if (user.openId === ENV.ownerOpenId) {
+    values.role = "admin";
+    updateSet.role = "admin";
+  }
+  if (!values.lastSignedIn) values.lastSignedIn = new Date();
+  if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+
+  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
+  return result[0];
 }
 
 export async function listProductionRecords() {
@@ -116,4 +94,58 @@ export async function deleteProductionRecord(id: number) {
   if (!db) throw new Error("Database unavailable");
   await db.delete(productionRecords).where(eq(productionRecords.id, id));
   return { success: true } as const;
+}
+
+export async function initializeProductionArticles() {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await db.select({ id: productionArticles.id }).from(productionArticles).limit(1);
+  if (existing.length > 0) return;
+
+  const rows = await db.select({ article: productionRecords.article }).from(productionRecords);
+  const codes = Array.from(new Set(rows.map((row) => row.article.trim()).filter(Boolean)));
+  if (codes.length === 0) return;
+  await db.insert(productionArticles).values(codes.map((code) => ({ code, isActive: true }))).onDuplicateKeyUpdate({
+    set: { updatedAt: new Date() },
+  });
+}
+
+export async function listActiveProductionArticles() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productionArticles).where(eq(productionArticles.isActive, true)).orderBy(asc(productionArticles.code));
+}
+
+export async function addProductionArticle(code: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const normalizedCode = code.trim().toUpperCase();
+  await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onDuplicateKeyUpdate({
+    set: { isActive: true, updatedAt: new Date() },
+  });
+  const rows = await db.select().from(productionArticles).where(eq(productionArticles.code, normalizedCode)).limit(1);
+  return rows[0];
+}
+
+export async function archiveProductionArticle(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.update(productionArticles).set({ isActive: false }).where(eq(productionArticles.id, id));
+  return { success: true } as const;
+}
+
+export async function getProductionSettings() {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
+  return rows[0];
+}
+
+export async function saveActionPasswordDigest(digest: ActionPasswordDigest) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onDuplicateKeyUpdate({
+    set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: new Date() },
+  });
+  return getProductionSettings();
 }

@@ -1,4 +1,4 @@
-import { decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, decimal, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -42,8 +42,25 @@ export const synchronizedExcelFiles = mysqlTable("synchronized_excel_files", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const productionArticles = mysqlTable("production_articles", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 64 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [uniqueIndex("production_articles_code_unique").on(table.code)]);
+
+export const productionSettings = mysqlTable("production_settings", {
+  id: int("id").primaryKey(),
+  actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
+  actionPasswordSalt: varchar("actionPasswordSalt", { length: 64 }),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ProductionRecord = typeof productionRecords.$inferSelect;
 export type InsertProductionRecord = typeof productionRecords.$inferInsert;
 export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;
+export type ProductionArticle = typeof productionArticles.$inferSelect;
+export type ProductionSettings = typeof productionSettings.$inferSelect;

@@ -4,8 +4,20 @@ import { TRPCError } from "@trpc/server";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { createProductionRecord, deleteProductionRecord, listProductionRecords, updateProductionRecord } from "./db";
+import {
+  addProductionArticle,
+  archiveProductionArticle,
+  createProductionRecord,
+  deleteProductionRecord,
+  getProductionSettings,
+  initializeProductionArticles,
+  listActiveProductionArticles,
+  listProductionRecords,
+  saveActionPasswordDigest,
+  updateProductionRecord,
+} from "./db";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
+import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
@@ -21,13 +33,17 @@ export const recordInput = z.object({
   if (value.plannedStopsHours + value.unplannedStopsHours > value.totalProductionHours) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["unplannedStopsHours"], message: "Les arrêts cumulés ne peuvent pas dépasser le temps total." });
 });
 
-export function isActionPasswordValid(password: string) {
+export async function isActionPasswordValid(password: string) {
+  const settings = await getProductionSettings();
+  if (settings?.actionPasswordHash && settings.actionPasswordSalt) {
+    return verifyActionPasswordDigest(password, { hash: settings.actionPasswordHash, salt: settings.actionPasswordSalt });
+  }
   return Boolean(process.env.COMMENT_EDIT_PASSWORD) && password === process.env.COMMENT_EDIT_PASSWORD;
 }
 
-export function assertProductionActionAuthorized(password: string | undefined) {
-  if (!password || !isActionPasswordValid(password)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier ou supprimer une ligne." });
+export async function assertProductionActionAuthorized(password: string | undefined) {
+  if (!password || !(await isActionPasswordValid(password))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou gérer les paramètres." });
   }
 }
 
@@ -60,10 +76,29 @@ export function calculateRecord(input: z.infer<typeof recordInput>) {
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      return { success: true } as const;
+    }),
+  }),
+  settings: router({
+    listArticles: publicProcedure.query(async () => {
+      await initializeProductionArticles();
+      return listActiveProductionArticles();
+    }),
+    addArticle: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un article.").max(64), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return addProductionArticle(input.code);
+    }),
+    archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return archiveProductionArticle(input.id);
+    }),
+    changeActionPassword: publicProcedure.input(z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.currentPassword);
+      await saveActionPasswordDigest(createActionPasswordDigest(input.newPassword));
       return { success: true } as const;
     }),
   }),
@@ -71,8 +106,8 @@ export const appRouter = router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
-    verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(({ input }) => ({
-      authorized: isActionPasswordValid(input.password),
+    verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(async ({ input }) => ({
+      authorized: await isActionPasswordValid(input.password),
     })),
     create: publicProcedure.input(recordWithCommentInput).mutation(async ({ input }) => {
       const { comment, ...record } = input;
@@ -82,13 +117,13 @@ export const appRouter = router({
     }),
     update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       const { id, comment, actionPassword, ...record } = input;
-      assertProductionActionAuthorized(actionPassword);
+      await assertProductionActionAuthorized(actionPassword);
       const updated = await updateProductionRecord(id, { ...calculateRecord(record), ...(comment !== undefined ? { comment } : {}) });
       await syncExcelFromRecords();
       return updated;
     }),
     delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      assertProductionActionAuthorized(input.actionPassword);
+      await assertProductionActionAuthorized(input.actionPassword);
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;
