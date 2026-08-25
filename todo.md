@@ -213,3 +213,5 @@
 - [x] Pousser le correctif Vercel vers GitHub et confirmer la révision.
 - [x] Ignorer les lignes Excel strictement identiques à une ligne déjà présente dans le registre.
 - [x] Conserver les lignes du même jour présentant des valeurs différentes, tester les deux cas et publier le correctif.
+- [x] Supprimer toutes les lignes de production après confirmation explicite de l’utilisateur.
+- [x] Réinitialiser le fichier Excel synchronisé et vérifier que le registre est vide avant le nouvel import.
