@@ -182,3 +182,5 @@
 - [x] Permettre l’ajout et la suppression contrôlée des articles sans invalider l’historique du registre.
 - [x] Permettre le remplacement sécurisé du mot de passe requis pour modifier ou supprimer une ligne.
 - [x] Tester les autorisations, les articles, le formulaire et l’affichage responsive, puis publier la mise à jour.
+- [x] Retirer le bouton « Réinitialiser Excel » de l’interface du registre.
+- [x] Vérifier le registre puis publier la simplification.
