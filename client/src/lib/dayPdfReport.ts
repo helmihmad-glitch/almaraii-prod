@@ -226,8 +226,8 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.line(86, dayY + 6, 86, dayY + 28);
   doc.setTextColor(...green);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 61), 95, dayY + 20);
+  doc.setFontSize(10.5);
+  doc.text(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`), 95, dayY + 15, { lineHeightFactor: 1.35 });
   doc.setFillColor(...green);
   doc.roundedRect(163, dayY + 8, 29, 19, 2.2, 2.2, "F");
   doc.setTextColor(255, 255, 255);
