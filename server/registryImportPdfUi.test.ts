@@ -14,14 +14,17 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(registryPage).not.toContain("window.prompt(\"Saisissez le mot de passe pour importer");
   });
 
-  it("construit un PDF de la production J-1 et des cinq indicateurs demandés", () => {
+  it("construit un PDF journalier accessible depuis chaque ligne du registre", () => {
     expect(registryPage).toContain('import("jspdf")');
-    expect(registryPage).toContain("Production J-1");
+    expect(registryPage).toContain("downloadDayPdf");
+    expect(registryPage).toContain("Rapport journalier du registre");
+    expect(registryPage).toContain("Production du ${prettyDate(productionDate)}");
     expect(registryPage).toContain("TRS global");
     expect(registryPage).toContain("Disponibilité");
     expect(registryPage).toContain("Performance");
     expect(registryPage).toContain("Rebuts / déchets");
-    expect(registryPage).toContain("Temps total prod. (h) / Mois");
-    expect(registryPage).toContain("Télécharger PDF");
+    expect(registryPage).toContain("Temps total prod. (h)");
+    expect(registryPage).toContain("Exporter le PDF de cette journée");
+    expect(registryPage).not.toContain("Télécharger PDF");
   });
 });

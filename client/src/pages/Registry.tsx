@@ -3,7 +3,6 @@ import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { getPreviousCalendarDate } from "@/lib/registryOrdering";
 import "./registry-import-dialog.css";
 
 type RegistryRow = {
@@ -96,9 +95,6 @@ export default function Registry() {
       && (!dateTo || row.productionDate <= dateTo))
     .sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id), [allRows, query, dateFrom, dateTo]);
   const kpis = useMemo(() => buildKpis(rows), [rows]);
-  const j1Date = useMemo(() => getPreviousCalendarDate(), []);
-  const j1Rows = useMemo(() => allRows.filter((row) => row.productionDate === j1Date), [allRows, j1Date]);
-  const j1Production = useMemo(() => j1Rows.reduce((sum, row) => sum + asNumber(row.productionTons), 0), [j1Rows]);
 
   const exportRows = () => {
     const csv = ["Date;Article;Production (T);Rebuts (T);Disponibilité (%);TRS (%);Commentaire", ...rows.map((row) => `${row.productionDate};${row.article};${row.productionTons};${row.wasteTons};${Math.round(asNumber(row.availability) * 100)};${Math.round(asNumber(row.trs) * 100)};${String(row.comment ?? "").replace(/[\r\n;]+/g, " ")}`)].join("\n");
@@ -133,7 +129,10 @@ export default function Registry() {
     if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }
     importExcel.mutate({ ...pendingImport, actionPassword: importPassword });
   };
-  const downloadPdf = async () => {
+  const downloadDayPdf = async (productionDate: string) => {
+    const dayRows = allRows.filter((row) => row.productionDate === productionDate);
+    if (!dayRows.length) { toast.error("Aucune donnée n’est disponible pour cette journée."); return; }
+    const dayKpis = buildKpis(dayRows);
     const { jsPDF } = await import("jspdf");
     const doc = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -147,42 +146,42 @@ export default function Registry() {
     doc.text("Almaraïi Production Pulse", 15, 16);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text("Synthèse du registre journalier", 15, 24);
+    doc.text("Rapport journalier du registre", 15, 24);
     doc.text(`Généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}`, pageWidth - 15, 24, { align: "right" });
     doc.setTextColor(29, 72, 38);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text("Production J-1", 15, 46);
+    doc.text(`Production du ${prettyDate(productionDate)}`, 15, 46);
     doc.setFillColor(247, 251, 244);
-    doc.roundedRect(15, 51, pageWidth - 30, 32, 3, 3, "F");
+    doc.roundedRect(15, 51, pageWidth - 30, 28, 3, 3, "F");
     doc.setFontSize(10);
     doc.setTextColor(89, 104, 91);
-    doc.text(prettyDate(j1Date), 21, 61);
+    doc.text(`${dayRows.length} ligne(s) enregistrée(s)`, 21, 61);
     doc.setTextColor(...green);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(20);
-    doc.text(j1Rows.length ? `${fmt(j1Production)} T` : "Aucune production", 21, 73);
+    doc.text(`${fmt(dayKpis.production)} T`, 21, 71);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    const j1Details = j1Rows.length ? j1Rows.map((row) => `${row.article} : ${fmt(asNumber(row.productionTons))} T`).join("  |  ") : "Aucune ligne enregistrée la veille.";
-    doc.text(doc.splitTextToSize(j1Details, pageWidth - 72), 76, 61);
+    const dayDetails = dayRows.map((row) => `${row.article} : ${fmt(asNumber(row.productionTons))} T`).join("  |  ");
+    doc.text(doc.splitTextToSize(dayDetails, pageWidth - 72), 76, 61);
     doc.setTextColor(29, 72, 38);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
-    doc.text("Indicateurs de la période exportée", 15, 97);
+    doc.text("Indicateurs de la journée", 15, 93);
     const cards = [
-      ["TRS global", rows.length ? pct(kpis.trs) : "—", "Disponibilité × performance × qualité"],
-      ["Disponibilité", rows.length ? pct(kpis.availability) : "—", "Temps utile sur temps planifié"],
-      ["Performance", rows.length ? pct(kpis.performance) : "—", "Cadence réelle vs standard"],
-      ["Rebuts / déchets", rows.length ? `${fmt(kpis.waste)} T` : "—", "Total des rebuts"],
-      ["Temps total prod. (h) / Mois", rows.length ? `${fmt(kpis.totalHours)} h` : "—", `Perdues : ${fmt(kpis.plannedStops + kpis.unplannedStops)} h · Actives : ${fmt(kpis.activeHours)} h`],
+      ["TRS global", pct(dayKpis.trs), "Disponibilité × performance × qualité"],
+      ["Disponibilité", pct(dayKpis.availability), "Temps utile sur temps planifié"],
+      ["Performance", pct(dayKpis.performance), "Cadence réelle vs standard"],
+      ["Rebuts / déchets", `${fmt(dayKpis.waste)} T`, "Total des rebuts"],
+      ["Temps total prod. (h)", `${fmt(dayKpis.totalHours)} h`, `Perdues : ${fmt(dayKpis.plannedStops + dayKpis.unplannedStops)} h · Actives : ${fmt(dayKpis.activeHours)} h`],
     ];
     const cardWidth = (pageWidth - 36) / 2;
     cards.forEach(([label, value, detail], index) => {
       const col = index % 2;
       const row = Math.floor(index / 2);
       const x = 15 + col * (cardWidth + 6);
-      const y = 102 + row * 35;
+      const y = 98 + row * 35;
       doc.setDrawColor(226, 232, 223);
       doc.setFillColor(255, 254, 250);
       doc.roundedRect(x, y, cardWidth, 29, 3, 3, "FD");
@@ -200,11 +199,39 @@ export default function Registry() {
       doc.setFontSize(7);
       doc.text(doc.splitTextToSize(detail, cardWidth - 10), x + 5, y + 24);
     });
+    let tableY = 208;
+    doc.setTextColor(...green);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("Détail des lignes de production", 15, 208);
+    tableY += 8;
+    const columns = ["Article", "Production", "Rebuts", "H. réelles", "TRS", "Commentaire"];
+    const positions = [15, 41, 69, 91, 114, 132];
+    doc.setFontSize(7);
+    doc.setTextColor(96, 112, 99);
+    columns.forEach((column, index) => doc.text(column, positions[index], tableY));
+    tableY += 5;
+    dayRows.forEach((row) => {
+      const commentLines = doc.splitTextToSize(row.comment || "—", pageWidth - 137);
+      const lineHeight = Math.max(7, commentLines.length * 3.5 + 3);
+      if (tableY + lineHeight > 282) { doc.addPage(); tableY = 20; }
+      doc.setDrawColor(226, 232, 223);
+      doc.line(15, tableY - 3, pageWidth - 15, tableY - 3);
+      doc.setTextColor(70, 88, 76);
+      doc.setFont("helvetica", "normal");
+      doc.text(row.article, positions[0], tableY + 1);
+      doc.text(`${fmt(asNumber(row.productionTons))} T`, positions[1], tableY + 1);
+      doc.text(`${fmt(asNumber(row.wasteTons))} T`, positions[2], tableY + 1);
+      doc.text(`${fmt(asNumber(row.realHours))} h`, positions[3], tableY + 1);
+      doc.text(pct(asNumber(row.trs)), positions[4], tableY + 1);
+      doc.text(commentLines, positions[5], tableY + 1);
+      tableY += lineHeight;
+    });
     doc.setTextColor(110, 125, 107);
     doc.setFontSize(8);
-    doc.text(`${rows.length} ligne(s) de registre incluse(s) dans cette synthèse.`, 15, 212);
-    doc.save(`synthese-production-${new Date().toISOString().slice(0, 10)}.pdf`);
-    toast.success("Rapport PDF généré", { description: "La synthèse est téléchargée sur votre appareil." });
+    doc.text(`${dayRows.length} ligne(s) de registre incluse(s) pour cette journée.`, 15, Math.min(tableY + 5, 288));
+    doc.save(`production-${productionDate}.pdf`);
+    toast.success("Rapport PDF journalier généré", { description: `Les données du ${prettyDate(productionDate)} sont téléchargées.` });
   };
 
   return <div className="registry-screen">
@@ -227,12 +254,11 @@ export default function Registry() {
           {(query || dateFrom || dateTo) && <button className="registry-clear" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); }}>Effacer les filtres</button>}
           <button className="registry-import" onClick={() => importInputRef.current?.click()} disabled={importExcel.isPending}><Upload size={15} />{importExcel.isPending ? "Import…" : "Importer Excel"}</button>
           <input ref={importInputRef} className="registry-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleImportFile} aria-label="Choisir un fichier Excel à importer" />
-          <button className="registry-pdf" onClick={() => void downloadPdf()} disabled={rows.length === 0}><FileText size={15} />Télécharger PDF</button>
           <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter CSV</button><button className="registry-excel" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={15} />Excel synchronisé</button>
         </div>
         <p className="registry-import-note"><Upload size={13} />Formats reconnus : DATE, ARTICLE, TEMPS TOTAL PROD. (h) ou TEMPS OUV. (h), ARRÊTS PLAN. (h), ARRÊTS NON PL. (h), PROD. (T), REBUTS (T), CADENCE STD et H. RÉELLES. Les feuilles mensuelles sont prises en charge.</p>
         <div className="registry-table-wrap">
-          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></td></tr>}</tbody></table>
+          <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th>Actions</th></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><div className="registry-row-actions"><button className="registry-day-pdf" onClick={() => void downloadDayPdf(row.productionDate)} aria-label={`Télécharger le PDF du ${row.productionDate}`} title="Exporter le PDF de cette journée"><FileText size={15} /></button><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></div></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></td></tr>}</tbody></table>
         </div>
         <footer className="registry-foot"><span><Activity size={14} />Les lignes affichées sont sauvegardées de façon persistante.</span><span>{rows.length} résultat{rows.length > 1 ? "s" : ""}</span></footer>
       </section>

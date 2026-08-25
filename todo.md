@@ -201,3 +201,6 @@
 - [x] Tester l’import du fichier joint, les lignes importées et les diagnostics éventuels, puis publier le correctif.
 - [x] Préserver une entrée distincte pour chaque ligne Excel, même lorsque plusieurs lignes portent la même date.
 - [x] Tester l’import de plusieurs lignes de même date puis publier le correctif.
+- [x] Retirer le bouton global de téléchargement PDF du registre.
+- [x] Ajouter sur chaque ligne une action PDF contenant les données de la journée correspondante.
+- [x] Tester les exports PDF journaliers et publier la nouvelle action de ligne.

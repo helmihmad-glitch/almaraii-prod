@@ -30,6 +30,10 @@
 .registry-import-dialog input:focus { outline: 3px solid rgba(232, 181, 58, .35); border-color: #a87916; }
 .registry-import-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
+.registry-row-actions { display: inline-flex; align-items: center; gap: 6px; }
+.registry-day-pdf { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid #cfe0d0; border-radius: 6px; background: #f6fbf4; color: #356a40; }
+.registry-day-pdf:hover { border-color: #4d7b40; background: #eaf5e8; }
+
 @media (max-width: 520px) {
   .registry-import-dialog { padding: 22px 18px; }
   .registry-import-dialog-actions { display: grid; grid-template-columns: 1fr 1.35fr; }
