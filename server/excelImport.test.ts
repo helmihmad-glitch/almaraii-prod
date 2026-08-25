@@ -133,4 +133,19 @@ describe("parseImportedWorkbook", () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows[0]).toEqual(expect.objectContaining({ productionDate: "2026-07-01" }));
   });
+
+  it("préserve plusieurs lignes source portant la même date comme des entrées distinctes", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Aout2026");
+    worksheet.addRow(["DATE", "ARTICLE", "TEMPS OUV. (h)", "ARRÊTS PLAN. (h)", "ARRÊTS NON PL.(h)", "PROD. (T)", "REBUTS (T)", "CADENCE STD", "H. RÉELLES"]);
+    worksheet.addRow(["5-août", "DG3", 6, 0, 0.5, 50, 0, 15, 5.5]);
+    worksheet.addRow(["5-août", "CG3", 7, 0, 1, 60, 0, 15, 6]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+    const augustFifth = parsed.rows.filter((row) => row.productionDate === "2026-08-05");
+
+    expect(parsed.errors).toEqual([]);
+    expect(augustFifth).toHaveLength(2);
+    expect(augustFifth.map((row) => row.article)).toEqual(["DG3", "CG3"]);
+  });
 });

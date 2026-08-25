@@ -199,3 +199,5 @@
 - [x] Analyser le fichier Dashboard_Production.xlsx joint et adapter son mapping au registre.
 - [x] Remplacer la demande native de mot de passe par une confirmation d’import claire et fiable.
 - [x] Tester l’import du fichier joint, les lignes importées et les diagnostics éventuels, puis publier le correctif.
+- [x] Préserver une entrée distincte pour chaque ligne Excel, même lorsque plusieurs lignes portent la même date.
+- [x] Tester l’import de plusieurs lignes de même date puis publier le correctif.

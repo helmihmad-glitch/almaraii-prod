@@ -192,12 +192,11 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
   if (!db) throw new Error("Database unavailable");
   const existing = await db.select().from(productionRecords);
   const byId = new Map(existing.map((record) => [record.id, record]));
-  const byDateAndArticle = new Map(existing.map((record) => [`${record.productionDate}::${record.article.toUpperCase()}`, record]));
   let created = 0;
   let updated = 0;
   for (const row of rows) {
     const values = calculateRow(row);
-    const existingRecord = (row.id ? byId.get(row.id) : undefined) ?? byDateAndArticle.get(`${row.productionDate}::${row.article.toUpperCase()}`);
+    const existingRecord = row.id ? byId.get(row.id) : undefined;
     if (existingRecord) {
       await db.update(productionRecords).set(values).where(eq(productionRecords.id, existingRecord.id));
       updated += 1;
@@ -206,7 +205,6 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
       byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
       created += 1;
     }
-    byDateAndArticle.set(`${row.productionDate}::${row.article.toUpperCase()}`, { ...values, id: existingRecord?.id ?? 0, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
     await addProductionArticle(row.article);
   }
   return { created, updated, total: rows.length };
