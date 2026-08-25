@@ -206,3 +206,4 @@
 - [x] Tester les exports PDF journaliers et publier la nouvelle action de ligne.
 - [x] Améliorer la hiérarchie visuelle, les cartes KPI et le tableau du rapport PDF journalier.
 - [x] Vérifier le rendu du PDF amélioré et publier la mise à jour.
+- [x] Créer et pousser la révision GitHub V1.2 correspondant à la version actuelle publiée.
