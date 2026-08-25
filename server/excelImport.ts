@@ -30,6 +30,10 @@ const requiredHeaders = {
   standardRate: ["CADENCESTD", "CADENCESTDDARTICLE"],
 } as const;
 
+const optionalHeaders = {
+  realHours: ["HRELLES", "HREELLES", "HEURESRELLES", "HEUREREELLES", "TEMPSREEL", "TEMPSREELH"],
+} as const;
+
 function normalizeHeader(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -116,7 +120,8 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
     return undefined;
   };
   const columns = Object.fromEntries(Object.entries(requiredHeaders).map(([key, aliases]) => [key, findColumn(aliases)])) as Record<keyof typeof requiredHeaders, number | undefined>;
-  const missingHeaders = Object.entries(columns).filter(([, column]) => !column).map(([key]) => key);
+  const realHoursColumn = findColumn(optionalHeaders.realHours);
+  const missingHeaders = Object.entries(columns).filter(([key, column]) => !column && !(key === "totalProductionHours" && realHoursColumn)).map(([key]) => key);
   if (missingHeaders.length) return { rows: [], errors: [`Colonnes obligatoires manquantes : ${missingHeaders.join(", ")}.`] };
 
   const idColumn = findColumn(["ID"]);
@@ -130,10 +135,15 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
     if (!article && row.cellCount === 0) continue;
     const dateCell = row.getCell(columns.date!);
     const productionDate = toIsoDate(dateCell.value, readCellText(dateCell));
+    const plannedStopsHours = parseNumeric(row.getCell(columns.plannedStopsHours!).value, readCellText(row.getCell(columns.plannedStopsHours!)));
+    const unplannedStopsHours = parseNumeric(row.getCell(columns.unplannedStopsHours!).value, readCellText(row.getCell(columns.unplannedStopsHours!)));
+    const importedRealHours = realHoursColumn ? parseNumeric(row.getCell(realHoursColumn).value, readCellText(row.getCell(realHoursColumn))) : Number.NaN;
     const values = {
-      totalProductionHours: parseNumeric(row.getCell(columns.totalProductionHours!).value, readCellText(row.getCell(columns.totalProductionHours!))),
-      plannedStopsHours: parseNumeric(row.getCell(columns.plannedStopsHours!).value, readCellText(row.getCell(columns.plannedStopsHours!))),
-      unplannedStopsHours: parseNumeric(row.getCell(columns.unplannedStopsHours!).value, readCellText(row.getCell(columns.unplannedStopsHours!))),
+      totalProductionHours: columns.totalProductionHours
+        ? parseNumeric(row.getCell(columns.totalProductionHours).value, readCellText(row.getCell(columns.totalProductionHours)))
+        : importedRealHours + plannedStopsHours + unplannedStopsHours,
+      plannedStopsHours,
+      unplannedStopsHours,
       productionTons: parseNumeric(row.getCell(columns.productionTons!).value, readCellText(row.getCell(columns.productionTons!))),
       wasteTons: parseNumeric(row.getCell(columns.wasteTons!).value, readCellText(row.getCell(columns.wasteTons!))),
       standardRate: parseNumeric(row.getCell(columns.standardRate!).value, readCellText(row.getCell(columns.standardRate!))),

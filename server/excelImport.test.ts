@@ -65,4 +65,22 @@ describe("parseImportedWorkbook", () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows[0]).toEqual(expect.objectContaining({ totalProductionHours: 9, article: "CM1" }));
   });
+
+  it("accepte le mapping Date, article, prod(T), rebuts(t) et h.relles en déduisant le temps total", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Import");
+    worksheet.addRow(["Date", "article", "h.relles", "arrêts plan.(h)", "arrêts non pl.(h)", "prod(T)", "rebuts(t)", "cadence std"]);
+    worksheet.addRow(["24/08/2026", "CG3", 8.5, 1, 0.5, 100, 1, 15]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]).toEqual(expect.objectContaining({
+      productionDate: "2026-08-24",
+      article: "CG3",
+      totalProductionHours: 10,
+      productionTons: 100,
+      wasteTons: 1,
+    }));
+  });
 });

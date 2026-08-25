@@ -192,3 +192,5 @@
 - [x] Tester l’import avec les variantes d’en-têtes prises en charge puis publier le correctif.
 - [x] Étendre la reconnaissance de la colonne de temps total de production dans les fichiers Excel importés.
 - [x] Tester le nouveau mapping de colonne puis publier le correctif.
+- [x] Adapter l’import Excel aux libellés Date, article, prod(T), rebuts(t) et h.relles fournis.
+- [x] Tester le format Excel correspondant puis publier le correctif.
