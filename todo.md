@@ -190,3 +190,5 @@
 - [x] Vérifier les imports valides et invalides, le rapport PDF, le registre et le rendu responsive, puis publier les nouveaux flux.
 - [x] Étendre la reconnaissance des en-têtes Excel pour les fichiers dont la ligne de colonnes est plus basse ou libellée différemment.
 - [x] Tester l’import avec les variantes d’en-têtes prises en charge puis publier le correctif.
+- [x] Étendre la reconnaissance de la colonne de temps total de production dans les fichiers Excel importés.
+- [x] Tester le nouveau mapping de colonne puis publier le correctif.

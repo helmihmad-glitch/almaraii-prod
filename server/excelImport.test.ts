@@ -53,4 +53,16 @@ describe("parseImportedWorkbook", () => {
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toEqual([expect.objectContaining({ productionDate: "2026-08-24", article: "DG3" })]);
   });
+
+  it("reconnaît le temps total libellé Temps de production (heures)", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Import");
+    worksheet.addRow(["Date", "Produit", "Temps de production (heures)", "Arrêts plan. (h)", "Arrêts non pl. (h)", "Production (T)", "Rebuts (T)", "Cadence std"]);
+    worksheet.addRow(["24/08/2026", "CM1", 9, 1, 0, 75, 0, 15]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]).toEqual(expect.objectContaining({ totalProductionHours: 9, article: "CM1" }));
+  });
 });
