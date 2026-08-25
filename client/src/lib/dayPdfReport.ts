@@ -21,7 +21,7 @@ type Rgb = [number, number, number];
 
 const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";
 const asNumber = (value: number | string) => Number(value);
-const fmt = (value: number, digits = 1) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+const fmt = (value: number, digits = 1) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value).replace(/[\u00A0\u202F]/g, " ");
 const pct = (value: number) => `${Math.round(value * 100)}%`;
 const prettyDate = (value: string) => new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(`${value}T00:00:00`));
 const prettyMonth = (value: string) => {
@@ -108,9 +108,8 @@ function addPageHeader(doc: JsPDF, pageWidth: number, date: string, logo: string
 
 function drawMetricCard(doc: JsPDF, options: { x: number; y: number; width: number; label: string; value: string; detail: string; ratio: number; accent: Rgb; green: Rgb; muted: Rgb }) {
   const { x, y, width, label, value, detail, ratio, accent, green, muted } = options;
-  doc.setDrawColor(222, 231, 220);
   doc.setFillColor(255, 254, 251);
-  doc.roundedRect(x, y, width, 29, 3.4, 3.4, "FD");
+  doc.roundedRect(x, y, width, 29, 3.4, 3.4, "F");
   doc.setFillColor(...accent);
   doc.roundedRect(x, y, width, 2.3, 2, 2, "F");
   doc.setTextColor(...muted);
@@ -163,11 +162,24 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
   doc.text(`OBJECTIF MENSUEL · ${prettyMonth(period).toUpperCase()}`, 25, objectiveY + 10);
-  doc.setFontSize(24);
-  doc.text(`${fmt(month.production)} T`, 25, objectiveY + 25);
+  doc.setTextColor(246, 226, 165);
+  doc.setFontSize(5.9);
+  doc.text("RÉEL", 25, objectiveY + 16);
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(22);
+  doc.text(`${fmt(month.production)} T`, 25, objectiveY + 26);
+  doc.setDrawColor(111, 148, 101);
+  doc.setLineWidth(.25);
+  doc.line(76, objectiveY + 13, 76, objectiveY + 29);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.text(`/ ${fmt(target)} T`, 72, objectiveY + 25);
+  doc.setTextColor(246, 226, 165);
+  doc.setFontSize(5.9);
+  doc.text("PLAN", 82, objectiveY + 16);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text(`${fmt(target)} T`, 82, objectiveY + 25);
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(7.3);
   doc.text(remaining > 0 ? `${fmt(remaining)} T restent à produire pour atteindre le plan.` : "Objectif dépassé — la production du mois est au-dessus du plan.", 25, objectiveY + 33);
   doc.setDrawColor(111, 148, 101);
@@ -208,9 +220,8 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.text(`Plan  ${fmt(target)} T`, 125, objectiveY + 49, { align: "right" });
 
   const dayY = 112;
-  doc.setDrawColor(221, 231, 220);
   doc.setFillColor(...paleGreen);
-  doc.roundedRect(15, dayY, contentWidth, 29, 4, 4, "FD");
+  doc.roundedRect(15, dayY, contentWidth, 29, 4, 4, "F");
   doc.setFillColor(...gold);
   doc.roundedRect(15, dayY, 4.2, 29, 2.2, 2.2, "F");
   doc.setTextColor(...muted);
@@ -335,8 +346,7 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
       tableY = 45;
     }
     doc.setFillColor(255, 250, 235);
-    doc.setDrawColor(...gold);
-    doc.roundedRect(15, tableY + 5, contentWidth, height, 3, 3, "FD");
+    doc.roundedRect(15, tableY + 5, contentWidth, height, 3, 3, "F");
     doc.setFillColor(...gold);
     doc.roundedRect(15, tableY + 5, 3, height, 1.5, 1.5, "F");
     doc.setTextColor(...green);

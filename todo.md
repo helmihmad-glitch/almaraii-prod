@@ -221,3 +221,5 @@
 - [x] Vérifier le PDF enrichi, le flux avec et sans commentaire, puis publier la mise à jour.
 - [x] Rehausser la composition visuelle, la hiérarchie éditoriale et les finitions du PDF journalier Almaraïi.
 - [x] Vérifier le nouveau rendu du PDF et publier la version raffinée.
+- [x] Recomposer l’affichage production / plan dans la carte objectif du PDF pour une lecture sans ambiguïté.
+- [x] Retirer les ombres de toutes les cartes du PDF et vérifier le nouveau rendu.
