@@ -34,7 +34,9 @@ describe("import Excel et rapport PDF du registre", () => {
 
   it("ajoute l’objectif mensuel, le logo et un commentaire facultatif au rapport", () => {
     expect(dayPdfReport).toContain("OBJECTIF MENSUEL");
-    expect(dayPdfReport).toContain("PÉRIODE OBSERVÉE");
+    expect(dayPdfReport).toContain("JUSQU’AU");
+    expect(dayPdfReport).toContain("CUMUL ARRÊTÉ AU");
+    expect(dayPdfReport).toContain("row.productionDate <= exportDate");
     expect(dayPdfReport).toContain("Données disponibles");
     expect(dayPdfReport).toContain("Progression réelle");
     expect(dayPdfReport).toContain("ATTEINTE DU PLAN");

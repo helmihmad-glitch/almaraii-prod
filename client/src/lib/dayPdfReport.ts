@@ -17,6 +17,11 @@ export type PdfProductionRow = {
   comment: string | null;
 };
 
+export function getMonthlyRowsThroughExportDay<T extends { productionDate: string }>(rows: T[], exportDate: string) {
+  const period = exportDate.slice(0, 7);
+  return rows.filter((row) => row.productionDate.startsWith(period) && row.productionDate <= exportDate);
+}
+
 type Rgb = [number, number, number];
 
 const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";
@@ -134,9 +139,9 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   if (!dayRows.length) throw new Error("Aucune donnée n’est disponible pour cette journée.");
 
   const period = options.productionDate.slice(0, 7);
-  const monthRows = options.allRows.filter((row) => row.productionDate.startsWith(period));
+  const monthRowsUpToExportDay = getMonthlyRowsThroughExportDay(options.allRows, options.productionDate);
   const day = calculateKpis(dayRows);
-  const month = calculateKpis(monthRows);
+  const month = calculateKpis(monthRowsUpToExportDay);
   const target = monthlyTarget(period);
   const progress = target > 0 ? month.production / target : 0;
   const remaining = Math.max(target - month.production, 0);
@@ -161,7 +166,7 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
-  doc.text(`OBJECTIF MENSUEL · ${prettyMonth(period).toUpperCase()}`, 25, objectiveY + 10);
+  doc.text(`OBJECTIF MENSUEL JUSQU’AU ${prettyDate(options.productionDate).toUpperCase()}`, 25, objectiveY + 10);
   doc.setTextColor(246, 226, 165);
   doc.setFontSize(5.9);
   doc.text("RÉEL", 25, objectiveY + 16);
@@ -187,10 +192,10 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.line(105, objectiveY + 9, 105, objectiveY + 35);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(6.8);
-  doc.text("PÉRIODE OBSERVÉE", 113, objectiveY + 11);
+  doc.text("CUMUL ARRÊTÉ AU", 113, objectiveY + 11);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(prettyMonth(period), 113, objectiveY + 19);
+  doc.text(prettyDate(options.productionDate), 113, objectiveY + 19);
   doc.setFillColor(...gold);
   doc.circle(115, objectiveY + 26, 1.6, "F");
   doc.setTextColor(245, 249, 245);

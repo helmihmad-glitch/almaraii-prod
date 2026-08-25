@@ -223,3 +223,5 @@
 - [x] Vérifier le nouveau rendu du PDF et publier la version raffinée.
 - [x] Recomposer l’affichage production / plan dans la carte objectif du PDF pour une lecture sans ambiguïté.
 - [x] Retirer les ombres de toutes les cartes du PDF et vérifier le nouveau rendu.
+- [x] Calculer le cumul de l’objectif mensuel du PDF uniquement jusqu’à la date de la journée exportée.
+- [x] Afficher explicitement dans la carte objectif la date de fin utilisée pour le cumul, puis vérifier et publier la correction.
