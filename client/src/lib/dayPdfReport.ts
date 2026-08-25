@@ -226,8 +226,16 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.line(86, dayY + 6, 86, dayY + 28);
   doc.setTextColor(...green);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 92), 95, dayY + 20);
+  doc.setFontSize(11);
+  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 61), 95, dayY + 20);
+  doc.setFillColor(...green);
+  doc.roundedRect(163, dayY + 8, 29, 19, 2.2, 2.2, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.3);
+  doc.text("JOURNÉE", 177.5, dayY + 14, { align: "center" });
+  doc.setFontSize(10);
+  doc.text(pct(day.trs), 177.5, dayY + 22, { align: "center" });
 
   const sectionY = 151;
   doc.setTextColor(...ink);

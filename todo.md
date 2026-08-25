@@ -238,3 +238,4 @@
 - [x] Étendre la barre de progression sur la largeur de la carte et agrandir ses libellés ainsi que la synthèse d’en-tête, puis vérifier et publier.
 - [x] Retirer la date secondaire, le pourcentage d’objectif, le bloc JOURNÉE et le nombre de lignes du PDF.
 - [x] Agrandir la liste des articles et tonnages de la journée, puis vérifier et publier le rapport allégé.
+- [x] Réintégrer le badge JOURNÉE et son pourcentage calculé dans la carte de production du PDF, puis vérifier et publier.

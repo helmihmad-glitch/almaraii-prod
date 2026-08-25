@@ -41,7 +41,7 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).not.toContain("CUMUL ARRÊTÉ AU");
     expect(dayPdfReport).not.toContain("d'objectif");
     expect(dayPdfReport).not.toContain("ligne(s) de production enregistrée(s)");
-    expect(dayPdfReport).not.toContain('doc.text("JOURNÉE"');
+    expect(dayPdfReport).toContain('doc.text("JOURNÉE"');
     expect(dayPdfReport).not.toContain("ATTEINTE DU PLAN");
     expect(dayPdfReport).toContain("almaraai-corn-logo");
     expect(dayPdfReport).toContain("ACTIVES");
