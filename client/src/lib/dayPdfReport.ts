@@ -196,11 +196,6 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.text(prettyDate(options.productionDate), 113, objectiveY + 19);
-  doc.setFillColor(...gold);
-  doc.circle(115, objectiveY + 26, 1.6, "F");
-  doc.setTextColor(245, 249, 245);
-  doc.setFontSize(7.2);
-  doc.text("Données disponibles", 120, objectiveY + 28);
   doc.setDrawColor(93, 135, 84);
   doc.setLineWidth(2.3);
   doc.circle(176, objectiveY + 26, 14, "S");

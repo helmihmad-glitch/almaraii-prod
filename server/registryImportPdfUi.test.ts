@@ -37,7 +37,7 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).toContain("JUSQU’AU");
     expect(dayPdfReport).toContain("CUMUL ARRÊTÉ AU");
     expect(dayPdfReport).toContain("row.productionDate <= exportDate");
-    expect(dayPdfReport).toContain("Données disponibles");
+    expect(dayPdfReport).not.toContain("Données disponibles");
     expect(dayPdfReport).toContain("Progression réelle");
     expect(dayPdfReport).toContain("d'objectif");
     expect(dayPdfReport).not.toContain("ATTEINTE DU PLAN");

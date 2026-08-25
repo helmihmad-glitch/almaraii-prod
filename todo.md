@@ -229,3 +229,4 @@
 - [x] Agrandir et renforcer le résumé du nombre de lignes et des articles produits dans la carte journalière, puis vérifier et publier.
 - [x] Diagnostiquer les contrôles de filtre et de période de la table Dernières productions.
 - [x] Rendre fonctionnels le filtre et la sélection de période de la table, puis vérifier et publier la correction.
+- [x] Retirer la mention « Données disponibles » du panneau objectif du PDF, puis vérifier et publier.
