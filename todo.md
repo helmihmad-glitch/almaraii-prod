@@ -194,3 +194,5 @@
 - [x] Tester le nouveau mapping de colonne puis publier le correctif.
 - [x] Adapter l’import Excel aux libellés Date, article, prod(T), rebuts(t) et h.relles fournis.
 - [x] Tester le format Excel correspondant puis publier le correctif.
+- [x] Permettre l’import des lignes Excel valides même si certaines lignes du fichier sont rejetées.
+- [x] Fournir un résumé clair des lignes importées et rejetées, puis publier le correctif.

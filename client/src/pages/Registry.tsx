@@ -64,6 +64,7 @@ export default function Registry() {
     onSuccess: async (result) => {
       await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
       toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s) et ${result.updated} ligne(s) mise(s) à jour.` });
+      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
     },
     onError: (error) => toast.error(error.message || "L’import Excel a échoué."),
   });

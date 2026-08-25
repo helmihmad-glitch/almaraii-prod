@@ -83,4 +83,19 @@ describe("parseImportedWorkbook", () => {
       wasteTons: 1,
     }));
   });
+
+  it("conserve les lignes valides et isole les lignes incohérentes dans le diagnostic", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Import");
+    worksheet.addRow(["Date", "article", "Temps total prod. (h)", "arrêts plan.(h)", "arrêts non pl.(h)", "prod(T)", "rebuts(t)", "cadence std"]);
+    worksheet.addRow(["24/08/2026", "CM1", 10, 1, 0, 80, 0, 15]);
+    worksheet.addRow(["25/08/2026", "CM1", 4, 3, 2, 30, 0, 15]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0]).toEqual(expect.objectContaining({ productionDate: "2026-08-24" }));
+    expect(parsed.errors).toHaveLength(1);
+    expect(parsed.errors[0]).toContain("Ligne 3");
+  });
 });
