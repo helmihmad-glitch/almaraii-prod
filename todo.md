@@ -230,3 +230,5 @@
 - [x] Diagnostiquer les contrôles de filtre et de période de la table Dernières productions.
 - [x] Rendre fonctionnels le filtre et la sélection de période de la table, puis vérifier et publier la correction.
 - [x] Retirer la mention « Données disponibles » du panneau objectif du PDF, puis vérifier et publier.
+- [x] Réduire la saturation des couleurs du rapport PDF tout en préservant son contraste et sa hiérarchie.
+- [x] Vérifier visuellement la palette adoucie et publier la nouvelle version du PDF.
