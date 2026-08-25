@@ -1,0 +1,23 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const vercelConfig = readFileSync(`${root}vercel.json`, "utf8");
+const vercelFunction = readFileSync(`${root}api/[...path].ts`, "utf8");
+const appFactory = readFileSync(`${root}server/_core/app.ts`, "utf8");
+
+describe("configuration de déploiement Vercel", () => {
+  it("sert le frontend Vite compilé plutôt que le bundle serveur", () => {
+    expect(vercelConfig).toContain('"outputDirectory": "dist/public"');
+    expect(vercelConfig).toContain('"buildCommand": "pnpm build"');
+    expect(vercelConfig).not.toContain('"outputDirectory": "dist"');
+  });
+
+  it("préserve les routes tRPC et le proxy de stockage derrière une fonction Express", () => {
+    expect(vercelFunction).toContain("createApp");
+    expect(vercelFunction).toContain("/api/manus-storage/");
+    expect(appFactory).toContain('"/api/trpc"');
+    expect(appFactory).toContain("registerStorageProxy");
+  });
+});

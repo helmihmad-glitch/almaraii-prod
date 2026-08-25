@@ -207,3 +207,7 @@
 - [x] Améliorer la hiérarchie visuelle, les cartes KPI et le tableau du rapport PDF journalier.
 - [x] Vérifier le rendu du PDF amélioré et publier la mise à jour.
 - [x] Créer et pousser la révision GitHub V1.2 correspondant à la version actuelle publiée.
+- [x] Diagnostiquer pourquoi Vercel sert le bundle serveur au lieu de l’application frontend.
+- [x] Ajouter une configuration Vercel pour servir le frontend construit et acheminer l’API tRPC.
+- [x] Documenter les variables d’environnement requises pour Vercel et valider la sortie construite.
+- [x] Pousser le correctif Vercel vers GitHub et confirmer la révision.
