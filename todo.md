@@ -227,3 +227,5 @@
 - [x] Afficher explicitement dans la carte objectif la date de fin utilisée pour le cumul, puis vérifier et publier la correction.
 - [x] Retirer « Atteinte du plan » et remplacer « Du plan » par « d’objectif » dans le donut du PDF.
 - [x] Agrandir et renforcer le résumé du nombre de lignes et des articles produits dans la carte journalière, puis vérifier et publier.
+- [x] Diagnostiquer les contrôles de filtre et de période de la table Dernières productions.
+- [x] Rendre fonctionnels le filtre et la sélection de période de la table, puis vérifier et publier la correction.

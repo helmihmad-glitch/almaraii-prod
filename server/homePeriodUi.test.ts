@@ -45,4 +45,11 @@ describe("sélection de période de la page d’accueil", () => {
   it("affiche les initiales HH dans l’avatar de l’en-tête", () => {
     expect(homePage).toContain('className="avatar">HH</div>');
   });
+
+  it("propose des filtres actifs et une période directement dans Dernières productions", () => {
+    expect(homePage).toContain('aria-label="Filtrer par article"');
+    expect(homePage).toContain('aria-label="Choisir la période de la table"');
+    expect(homePage).toContain("setDateTo(event.target.value)");
+    expect(homePage).toContain("clearRegistryFilters");
+  });
 });
