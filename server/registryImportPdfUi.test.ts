@@ -39,7 +39,8 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).toContain("row.productionDate <= exportDate");
     expect(dayPdfReport).toContain("Données disponibles");
     expect(dayPdfReport).toContain("Progression réelle");
-    expect(dayPdfReport).toContain("ATTEINTE DU PLAN");
+    expect(dayPdfReport).toContain("d'objectif");
+    expect(dayPdfReport).not.toContain("ATTEINTE DU PLAN");
     expect(dayPdfReport).toContain("almaraai-corn-logo");
     expect(dayPdfReport).toContain("ACTIVES");
     expect(dayPdfReport).toContain("PERDUES");

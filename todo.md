@@ -225,3 +225,5 @@
 - [x] Retirer les ombres de toutes les cartes du PDF et vérifier le nouveau rendu.
 - [x] Calculer le cumul de l’objectif mensuel du PDF uniquement jusqu’à la date de la journée exportée.
 - [x] Afficher explicitement dans la carte objectif la date de fin utilisée pour le cumul, puis vérifier et publier la correction.
+- [x] Retirer « Atteinte du plan » et remplacer « Du plan » par « d’objectif » dans le donut du PDF.
+- [x] Agrandir et renforcer le résumé du nombre de lignes et des articles produits dans la carte journalière, puis vérifier et publier.
