@@ -35,11 +35,11 @@ describe("import Excel et rapport PDF du registre", () => {
   it("ajoute l’objectif mensuel, le logo et un commentaire facultatif au rapport", () => {
     expect(dayPdfReport).toContain("OBJECTIF MENSUEL");
     expect(dayPdfReport).toContain("JUSQU’AU");
-    expect(dayPdfReport).toContain("CUMUL ARRÊTÉ AU");
     expect(dayPdfReport).toContain("row.productionDate <= exportDate");
     expect(dayPdfReport).not.toContain("Données disponibles");
     expect(dayPdfReport).toContain("Progression réelle");
-    expect(dayPdfReport).toContain("d'objectif");
+    expect(dayPdfReport).not.toContain("CUMUL ARRÊTÉ AU");
+    expect(dayPdfReport).not.toContain("d'objectif");
     expect(dayPdfReport).not.toContain("ATTEINTE DU PLAN");
     expect(dayPdfReport).toContain("almaraai-corn-logo");
     expect(dayPdfReport).toContain("ACTIVES");

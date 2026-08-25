@@ -117,15 +117,15 @@ function addPageHeader(doc: JsPDF, pageWidth: number, date: string, logo: string
   doc.text("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION", 34, 28);
   doc.setTextColor(...mutedGold);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.5);
+  doc.setFontSize(9);
   doc.text("SYNTHÈSE OPÉRATIONNELLE", pageWidth - 15, 15, { align: "right" });
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.text(prettyDate(date), pageWidth - 15, 23, { align: "right" });
+  doc.setFontSize(10.5);
+  doc.text(prettyDate(date), pageWidth - 15, 24, { align: "right" });
   doc.setDrawColor(...gold);
-  doc.setLineWidth(.35);
-  doc.line(pageWidth - 63, 28, pageWidth - 15, 28);
+  doc.setLineWidth(.45);
+  doc.line(pageWidth - 72, 30, pageWidth - 15, 30);
 }
 
 function drawMetricCard(doc: JsPDF, options: { x: number; y: number; width: number; label: string; value: string; detail: string; ratio: number; accent: Rgb; green: Rgb; muted: Rgb }) {
@@ -166,7 +166,7 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const contentWidth = pageWidth - 30;
-  const { deepGreen: green, leaf: leafy, strongLeaf, gold, mutedGold, paleGreen, ink, muted, lightGreen, donutBase, progressTrack, divider, tableHeader, alternateRow, commentFill } = palette;
+  const { deepGreen: green, leaf: leafy, strongLeaf, gold, mutedGold, paleGreen, ink, muted, lightGreen, progressTrack, divider, tableHeader, alternateRow, commentFill } = palette;
   const logo = await loadLogo();
   addPageHeader(doc, pageWidth, options.productionDate, logo);
 
@@ -199,35 +199,15 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.3);
   doc.text(remaining > 0 ? `${fmt(remaining)} T restent à produire pour atteindre le plan.` : "Objectif dépassé — la production du mois est au-dessus du plan.", 25, objectiveY + 33);
-  doc.setDrawColor(...lightGreen);
-  doc.setLineWidth(.25);
-  doc.line(105, objectiveY + 9, 105, objectiveY + 35);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.8);
-  doc.text("CUMUL ARRÊTÉ AU", 113, objectiveY + 11);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.text(prettyDate(options.productionDate), 113, objectiveY + 19);
-  doc.setDrawColor(...donutBase);
-  doc.setLineWidth(2.3);
-  doc.circle(176, objectiveY + 26, 14, "S");
-  doc.setDrawColor(...gold);
-  doc.setLineWidth(3.2);
-  doc.circle(176, objectiveY + 26, 14, "S");
+  doc.setFillColor(...progressTrack);
+  doc.roundedRect(25, objectiveY + 39, contentWidth - 20, 4.5, 2.2, 2.2, "F");
+  doc.setFillColor(...gold);
+  doc.roundedRect(25, objectiveY + 39, Math.min(progress, 1) * (contentWidth - 20), 4.5, 2.2, 2.2, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(15);
-  doc.text(pct(progress), 176, objectiveY + 28, { align: "center" });
-  doc.setFontSize(6.1);
-  doc.text("d'objectif", 176, objectiveY + 33, { align: "center" });
-  doc.setFillColor(...progressTrack);
-  doc.roundedRect(25, objectiveY + 39, 100, 3.5, 1.7, 1.7, "F");
-  doc.setFillColor(...gold);
-  doc.roundedRect(25, objectiveY + 39, Math.min(progress, 1) * 100, 3.5, 1.7, 1.7, "F");
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.text(`Progression réelle  ${pct(progress)}`, 25, objectiveY + 49);
-  doc.text(`Plan  ${fmt(target)} T`, 125, objectiveY + 49, { align: "right" });
+  doc.setFontSize(9.5);
+  doc.text(`Progression réelle  ${pct(progress)}`, 25, objectiveY + 50);
+  doc.text(`Plan  ${fmt(target)} T`, pageWidth - 25, objectiveY + 50, { align: "right" });
 
   const dayY = 110;
   doc.setFillColor(...paleGreen);

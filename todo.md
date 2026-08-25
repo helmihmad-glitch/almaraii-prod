@@ -234,3 +234,5 @@
 - [x] Vérifier visuellement la palette adoucie et publier la nouvelle version du PDF.
 - [x] Rapprocher la saturation du PDF de la version précédente sans réintroduire une palette trop vive.
 - [x] Réduire légèrement la luminosité et la densité visuelle des surfaces du PDF, puis vérifier et publier.
+- [x] Retirer le bloc « Cumul arrêté au », sa date et le donut de progression du panneau objectif PDF.
+- [x] Étendre la barre de progression sur la largeur de la carte et agrandir ses libellés ainsi que la synthèse d’en-tête, puis vérifier et publier.
