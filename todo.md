@@ -196,3 +196,6 @@
 - [x] Tester le format Excel correspondant puis publier le correctif.
 - [x] Permettre l’import des lignes Excel valides même si certaines lignes du fichier sont rejetées.
 - [x] Fournir un résumé clair des lignes importées et rejetées, puis publier le correctif.
+- [x] Analyser le fichier Dashboard_Production.xlsx joint et adapter son mapping au registre.
+- [x] Remplacer la demande native de mot de passe par une confirmation d’import claire et fiable.
+- [x] Tester l’import du fichier joint, les lignes importées et les diagnostics éventuels, puis publier le correctif.

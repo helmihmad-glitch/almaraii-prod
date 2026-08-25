@@ -1,0 +1,37 @@
+.registry-import-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(14, 42, 20, .58);
+  backdrop-filter: blur(4px);
+}
+
+.registry-import-dialog {
+  width: min(100%, 500px);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid rgba(232, 181, 58, .38);
+  border-radius: 22px;
+  background: #fffefa;
+  box-shadow: 0 26px 74px rgba(11, 36, 17, .32);
+}
+
+.registry-import-dialog h2,
+.registry-import-dialog p { margin: 0; }
+.registry-import-dialog h2 { color: var(--ink); font: 600 1.42rem 'Space Grotesk', sans-serif; }
+.registry-import-dialog h2 em { color: #a87916; font-style: normal; overflow-wrap: anywhere; }
+.registry-import-dialog p { color: #68776c; font-size: .9rem; line-height: 1.55; }
+.registry-import-dialog label { display: grid; gap: 7px; color: var(--ink); font-size: .8rem; font-weight: 700; }
+.registry-import-dialog input { width: 100%; min-height: 44px; padding: 0 13px; border: 1px solid #d7e2d8; border-radius: 10px; background: #fff; color: var(--ink); }
+.registry-import-dialog input:focus { outline: 3px solid rgba(232, 181, 58, .35); border-color: #a87916; }
+.registry-import-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+@media (max-width: 520px) {
+  .registry-import-dialog { padding: 22px 18px; }
+  .registry-import-dialog-actions { display: grid; grid-template-columns: 1fr 1.35fr; }
+  .registry-import-dialog-actions button { justify-content: center; }
+}

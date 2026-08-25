@@ -96,6 +96,41 @@ describe("parseImportedWorkbook", () => {
     expect(parsed.rows).toHaveLength(1);
     expect(parsed.rows[0]).toEqual(expect.objectContaining({ productionDate: "2026-08-24" }));
     expect(parsed.errors).toHaveLength(1);
-    expect(parsed.errors[0]).toContain("Ligne 3");
+    expect(parsed.errors[0]).toContain("ligne 3");
+  });
+
+  it("importe les feuilles mensuelles au format du Dashboard Production avec dates françaises et arrêts vides", async () => {
+    const workbook = new ExcelJS.Workbook();
+    for (const [sheetName, day, article] of [["Avril 2026", "1-avr.", "CG3"], ["Aout2026", "3-août", "CM1"]] as const) {
+      const worksheet = workbook.addWorksheet(sheetName);
+      worksheet.addRow([`TABLEAU DE BORD DE PERFORMANCE (${sheetName})`]);
+      worksheet.addRow([]);
+      worksheet.addRow(["REGISTRE DE PRODUCTION JOURNALIER"]);
+      worksheet.addRow(["DATE", "ARTICLE", "TEMPS OUV. (h)", "ARRÊTS PLAN. (h)", "ARRÊTS NON PL.(h)", "PROD. (T)", "REBUTS (T)", "CADENCE STD", "H. RÉELLES"]);
+      worksheet.addRow([day, article, 4, "", 0.5, 40, "", 15, 3.5]);
+    }
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ productionDate: "2026-04-01", article: "CG3", plannedStopsHours: 0, wasteTons: 0 }),
+      expect.objectContaining({ productionDate: "2026-08-03", article: "CM1", plannedStopsHours: 0, wasteTons: 0 }),
+    ]));
+  });
+
+  it("ignore sans erreur les cellules fusionnées vides autour de la ligne d’en-têtes", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Juillet 2026");
+    worksheet.mergeCells("A1:B1");
+    worksheet.getCell("A1").value = "Tableau de bord";
+    worksheet.addRow([]);
+    worksheet.addRow(["DATE", "ARTICLE", "TEMPS OUV. (h)", "ARRÊTS PLAN. (h)", "ARRÊTS NON PL.(h)", "PROD. (T)", "REBUTS (T)", "CADENCE STD", "H. RÉELLES"]);
+    worksheet.addRow(["1-juil.", "CM1", 10, 0, 1, 70, 0, 10, 9]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]).toEqual(expect.objectContaining({ productionDate: "2026-07-01" }));
   });
 });

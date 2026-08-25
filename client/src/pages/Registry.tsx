@@ -4,6 +4,7 @@ import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileTex
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { getPreviousCalendarDate } from "@/lib/registryOrdering";
+import "./registry-import-dialog.css";
 
 type RegistryRow = {
   id: number;
@@ -51,10 +52,14 @@ function toBase64(file: File) {
   });
 }
 
+type PendingImport = { fileName: string; fileBase64: string };
+
 export default function Registry() {
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [importPassword, setImportPassword] = useState("");
   const hasInitializedExcel = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const registryQuery = trpc.production.list.useQuery();
@@ -65,6 +70,8 @@ export default function Registry() {
       await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
       toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s) et ${result.updated} ligne(s) mise(s) à jour.` });
       if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
+      setPendingImport(null);
+      setImportPassword("");
     },
     onError: (error) => toast.error(error.message || "L’import Excel a échoué."),
   });
@@ -114,14 +121,17 @@ export default function Registry() {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".xlsx")) { toast.error("Sélectionnez un fichier Excel au format .xlsx."); return; }
     if (file.size > 5_700_000) { toast.error("Le fichier Excel dépasse la limite de 5,7 Mo."); return; }
-    const actionPassword = window.prompt("Saisissez le mot de passe pour importer les lignes dans le registre.");
-    if (actionPassword === null) return;
-    if (!actionPassword) { toast.error("Le mot de passe est requis pour importer un fichier."); return; }
     try {
-      importExcel.mutate({ fileName: file.name, fileBase64: await toBase64(file), actionPassword });
+      setPendingImport({ fileName: file.name, fileBase64: await toBase64(file) });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Le fichier ne peut pas être lu.");
     }
+  };
+  const submitImport = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!pendingImport) return;
+    if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }
+    importExcel.mutate({ ...pendingImport, actionPassword: importPassword });
   };
   const downloadPdf = async () => {
     const { jsPDF } = await import("jspdf");
@@ -198,6 +208,7 @@ export default function Registry() {
   };
 
   return <div className="registry-screen">
+    {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Les lignes seront ajoutées ou mises à jour dans le registre, puis le fichier Excel synchronisé sera régénéré.</p><label>Mot de passe d’action<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" placeholder="Saisissez le mot de passe" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={importExcel.isPending}>{importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
     <header className="registry-topbar">
       <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
       <div className="registry-brand"><span className="registry-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
@@ -219,7 +230,7 @@ export default function Registry() {
           <button className="registry-pdf" onClick={() => void downloadPdf()} disabled={rows.length === 0}><FileText size={15} />Télécharger PDF</button>
           <button className="registry-export" onClick={exportRows}><Download size={15} />Exporter CSV</button><button className="registry-excel" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={15} />Excel synchronisé</button>
         </div>
-        <p className="registry-import-note"><Upload size={13} />Format attendu : DATE, ARTICLE, TEMPS TOTAL PROD. (h), ARRÊTS PLAN. (h), ARRÊTS NON PL. (h), PROD. (T), REBUTS (T), CADENCE STD. Une ligne existante est mise à jour si son ID ou sa combinaison date–article correspond.</p>
+        <p className="registry-import-note"><Upload size={13} />Formats reconnus : DATE, ARTICLE, TEMPS TOTAL PROD. (h) ou TEMPS OUV. (h), ARRÊTS PLAN. (h), ARRÊTS NON PL. (h), PROD. (T), REBUTS (T), CADENCE STD et H. RÉELLES. Les feuilles mensuelles sont prises en charge.</p>
         <div className="registry-table-wrap">
           <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th /></tr></thead><tbody>{registryQuery.isLoading ? <tr><td colSpan={10} className="registry-empty">Chargement des lignes sauvegardées…</td></tr> : rows.length ? rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></td></tr>) : <tr><td colSpan={10} className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></td></tr>}</tbody></table>
         </div>
