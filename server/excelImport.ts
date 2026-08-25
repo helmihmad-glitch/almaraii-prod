@@ -19,6 +19,18 @@ export type ImportedProductionRow = {
 
 type ParsedImport = { rows: ImportedProductionRow[]; errors: string[] };
 
+type ProductionFingerprintInput = {
+  productionDate: string;
+  article: string;
+  totalProductionHours: number | string;
+  plannedStopsHours: number | string;
+  unplannedStopsHours: number | string;
+  productionTons: number | string;
+  wasteTons: number | string;
+  standardRate: number | string;
+  comment?: string | null;
+};
+
 const requiredHeaders = {
   date: ["DATE", "DATEDEPRODUCTION", "JOUR"],
   article: ["ARTICLE", "ARTICLES", "PRODUIT", "PRODUITS", "CODEARTICLE", "DESIGNATION"],
@@ -123,6 +135,23 @@ function calculateRow(row: ImportedProductionRow) {
   };
 }
 
+/** Empreinte stable des données métier : source et indicateurs recalculés sont volontairement exclus. */
+export function productionRowFingerprint(row: ProductionFingerprintInput) {
+  const number = (value: number | string) => Number(value).toFixed(2);
+  const comment = (row.comment ?? "").trim().replace(/\s+/g, " ");
+  return [
+    row.productionDate,
+    row.article.trim().toUpperCase(),
+    number(row.totalProductionHours),
+    number(row.plannedStopsHours),
+    number(row.unplannedStopsHours),
+    number(row.productionTons),
+    number(row.wasteTons),
+    number(row.standardRate),
+    comment,
+  ].join("|");
+}
+
 export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImport> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as never);
@@ -192,20 +221,33 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
   if (!db) throw new Error("Database unavailable");
   const existing = await db.select().from(productionRecords);
   const byId = new Map(existing.map((record) => [record.id, record]));
+  const existingFingerprints = new Set(existing.map(productionRowFingerprint));
   let created = 0;
   let updated = 0;
+  let skipped = 0;
   for (const row of rows) {
     const values = calculateRow(row);
     const existingRecord = row.id ? byId.get(row.id) : undefined;
+    const fingerprint = productionRowFingerprint(values);
     if (existingRecord) {
+      if (productionRowFingerprint(existingRecord) === fingerprint) {
+        skipped += 1;
+        continue;
+      }
       await db.update(productionRecords).set(values).where(eq(productionRecords.id, existingRecord.id));
+      existingFingerprints.delete(productionRowFingerprint(existingRecord));
+      existingFingerprints.add(fingerprint);
       updated += 1;
+    } else if (existingFingerprints.has(fingerprint)) {
+      skipped += 1;
+      continue;
     } else {
       const result = await db.insert(productionRecords).values(values);
       byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
+      existingFingerprints.add(fingerprint);
       created += 1;
     }
     await addProductionArticle(row.article);
   }
-  return { created, updated, total: rows.length };
+  return { created, updated, skipped, total: rows.length };
 }

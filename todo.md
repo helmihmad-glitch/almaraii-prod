@@ -211,3 +211,5 @@
 - [x] Ajouter une configuration Vercel pour servir le frontend construit et acheminer l’API tRPC.
 - [x] Documenter les variables d’environnement requises pour Vercel et valider la sortie construite.
 - [x] Pousser le correctif Vercel vers GitHub et confirmer la révision.
+- [x] Ignorer les lignes Excel strictement identiques à une ligne déjà présente dans le registre.
+- [x] Conserver les lignes du même jour présentant des valeurs différentes, tester les deux cas et publier le correctif.

@@ -67,7 +67,7 @@ export default function Registry() {
   const importExcel = trpc.production.importExcel.useMutation({
     onSuccess: async (result) => {
       await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
-      toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s) et ${result.updated} ligne(s) mise(s) à jour.` });
+      toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s), ${result.updated} ligne(s) mise(s) à jour et ${result.skipped} doublon(s) identique(s) ignoré(s).` });
       if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
       setPendingImport(null);
       setImportPassword("");

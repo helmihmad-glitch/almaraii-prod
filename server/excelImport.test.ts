@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { parseImportedWorkbook } from "./excelImport";
+import { parseImportedWorkbook, productionRowFingerprint } from "./excelImport";
 
 async function buildWorkbook(values: unknown[]) {
   const workbook = new ExcelJS.Workbook();
@@ -11,6 +11,15 @@ async function buildWorkbook(values: unknown[]) {
 }
 
 describe("parseImportedWorkbook", () => {
+  it("reconnaît une ligne strictement identique mais distingue une production différente le même jour", () => {
+    const base = { productionDate: "2026-08-05", article: "CG3", totalProductionHours: 7, plannedStopsHours: 0, unplannedStopsHours: 1, productionTons: 60, wasteTons: 0, standardRate: 15, comment: "RAS" };
+    const equivalent = { ...base, totalProductionHours: "7.00", productionTons: "60.00" };
+    const distinct = { ...base, productionTons: 65 };
+
+    expect(productionRowFingerprint(equivalent)).toBe(productionRowFingerprint(base));
+    expect(productionRowFingerprint(distinct)).not.toBe(productionRowFingerprint(base));
+  });
+
   it("lit les colonnes du registre, convertit la date et prépare une ligne importable", async () => {
     const buffer = await buildWorkbook([new Date(2026, 7, 24), "CM1", 12, 1, 0.5, 90, 2, 15, "Import validé"]);
 
