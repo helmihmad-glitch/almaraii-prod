@@ -138,86 +138,126 @@ export default function Registry() {
     const pageWidth = doc.internal.pageSize.getWidth();
     const green: [number, number, number] = [29, 72, 38];
     const gold: [number, number, number] = [232, 181, 58];
+    const paleGreen: [number, number, number] = [245, 250, 244];
+    const ink: [number, number, number] = [38, 61, 44];
+    const muted: [number, number, number] = [105, 123, 109];
+    const contentWidth = pageWidth - 30;
+
     doc.setFillColor(...green);
-    doc.rect(0, 0, pageWidth, 34, "F");
+    doc.rect(0, 0, pageWidth, 38, "F");
+    doc.setFillColor(...gold);
+    doc.rect(0, 38, pageWidth, 2.2, "F");
+    doc.setDrawColor(255, 255, 255);
+    doc.setLineWidth(.45);
+    doc.circle(pageWidth - 21, 18, 10, "S");
+    doc.setFillColor(...gold);
+    doc.circle(pageWidth - 21, 18, 6.3, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(19);
-    doc.text("Almaraïi Production Pulse", 15, 16);
+    doc.setFontSize(18);
+    doc.text("Almaraïi", 15, 17);
+    doc.setFontSize(8);
+    doc.text("PRODUCTION PULSE", 15, 24);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text("Rapport journalier du registre", 15, 24);
-    doc.text(`Généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}`, pageWidth - 15, 24, { align: "right" });
-    doc.setTextColor(29, 72, 38);
+    doc.setFontSize(8);
+    doc.text("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION", 15, 31);
+    doc.text(`Généré le ${new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}`, pageWidth - 35, 31, { align: "right" });
+
+    doc.setFillColor(...paleGreen);
+    doc.roundedRect(15, 51, contentWidth, 34, 4, 4, "F");
+    doc.setFillColor(...gold);
+    doc.roundedRect(15, 51, 4, 34, 2, 2, "F");
+    doc.setTextColor(...muted);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text(`Production du ${prettyDate(productionDate)}`, 15, 46);
-    doc.setFillColor(247, 251, 244);
-    doc.roundedRect(15, 51, pageWidth - 30, 28, 3, 3, "F");
-    doc.setFontSize(10);
-    doc.setTextColor(89, 104, 91);
-    doc.text(`${dayRows.length} ligne(s) enregistrée(s)`, 21, 61);
+    doc.setFontSize(8);
+    doc.text("PRODUCTION DE LA JOURNÉE", 25, 61);
     doc.setTextColor(...green);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(20);
-    doc.text(`${fmt(dayKpis.production)} T`, 21, 71);
+    doc.setFontSize(25);
+    doc.text(`${fmt(dayKpis.production)} T`, 25, 76);
+    doc.setTextColor(...ink);
+    doc.setFontSize(12);
+    doc.text(prettyDate(productionDate), pageWidth - 21, 62, { align: "right" });
+    doc.setTextColor(...muted);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const dayDetails = dayRows.map((row) => `${row.article} : ${fmt(asNumber(row.productionTons))} T`).join("  |  ");
-    doc.text(doc.splitTextToSize(dayDetails, pageWidth - 72), 76, 61);
-    doc.setTextColor(29, 72, 38);
+    doc.setFontSize(8);
+    doc.text(`${dayRows.length} ligne(s) de production enregistrée(s)`, pageWidth - 21, 70, { align: "right" });
+    const dayDetails = dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   ");
+    doc.text(doc.splitTextToSize(dayDetails, 104), pageWidth - 21, 77, { align: "right" });
+
+    doc.setTextColor(...ink);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("Indicateurs de la journée", 15, 93);
-    const cards = [
-      ["TRS global", pct(dayKpis.trs), "Disponibilité × performance × qualité"],
-      ["Disponibilité", pct(dayKpis.availability), "Temps utile sur temps planifié"],
-      ["Performance", pct(dayKpis.performance), "Cadence réelle vs standard"],
-      ["Rebuts / déchets", `${fmt(dayKpis.waste)} T`, "Total des rebuts"],
-      ["Temps total prod. (h)", `${fmt(dayKpis.totalHours)} h`, `Perdues : ${fmt(dayKpis.plannedStops + dayKpis.unplannedStops)} h · Actives : ${fmt(dayKpis.activeHours)} h`],
+    doc.setFontSize(12);
+    doc.text("Indicateurs de performance", 15, 99);
+    const kpiCards = [
+      ["TRS GLOBAL", pct(dayKpis.trs), "Efficacité globale"],
+      ["DISPONIBILITÉ", pct(dayKpis.availability), "Temps utile / planifié"],
+      ["PERFORMANCE", pct(dayKpis.performance), "Cadence réelle / standard"],
     ];
-    const cardWidth = (pageWidth - 36) / 2;
-    cards.forEach(([label, value, detail], index) => {
-      const col = index % 2;
-      const row = Math.floor(index / 2);
-      const x = 15 + col * (cardWidth + 6);
-      const y = 98 + row * 35;
-      doc.setDrawColor(226, 232, 223);
+    const kpiWidth = (contentWidth - 12) / 3;
+    kpiCards.forEach(([label, value, detail], index) => {
+      const x = 15 + index * (kpiWidth + 6);
+      doc.setDrawColor(221, 231, 220);
       doc.setFillColor(255, 254, 250);
-      doc.roundedRect(x, y, cardWidth, 29, 3, 3, "FD");
+      doc.roundedRect(x, 104, kpiWidth, 27, 3, 3, "FD");
       doc.setFillColor(...gold);
-      doc.rect(x, y, cardWidth, 2, "F");
-      doc.setTextColor(96, 112, 99);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.text(label, x + 5, y + 9);
+      doc.roundedRect(x, 104, kpiWidth, 2.4, 2, 2, "F");
+      doc.setTextColor(...muted);
+      doc.setFontSize(7);
+      doc.text(label, x + 5, 114);
       doc.setTextColor(...green);
-      doc.setFontSize(15);
-      doc.text(value, x + 5, y + 18);
-      doc.setTextColor(106, 120, 109);
+      doc.setFontSize(16);
+      doc.text(value, x + 5, 124);
+      doc.setTextColor(...muted);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(7);
-      doc.text(doc.splitTextToSize(detail, cardWidth - 10), x + 5, y + 24);
+      doc.text(detail, x + 5, 129);
+      doc.setFont("helvetica", "bold");
     });
-    let tableY = 208;
-    doc.setTextColor(...green);
+
+    doc.setFillColor(...green);
+    doc.roundedRect(15, 141, contentWidth, 27, 3, 3, "F");
+    doc.setFillColor(...gold);
+    doc.circle(25, 154, 4.5, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(8);
+    doc.text("REBUTS / DÉCHETS", 35, 150);
+    doc.setFontSize(15);
+    doc.text(`${fmt(dayKpis.waste)} T`, 35, 161);
+    doc.setDrawColor(255, 255, 255);
+    doc.setLineWidth(.25);
+    doc.line(pageWidth / 2, 147, pageWidth / 2, 163);
+    doc.setFontSize(8);
+    doc.text("TEMPS TOTAL DE PRODUCTION", pageWidth / 2 + 9, 150);
+    doc.setFontSize(15);
+    doc.text(`${fmt(dayKpis.totalHours)} h`, pageWidth / 2 + 9, 161);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(`Actives ${fmt(dayKpis.activeHours)} h  ·  Perdues ${fmt(dayKpis.plannedStops + dayKpis.unplannedStops)} h`, pageWidth / 2 + 43, 161);
+
+    let tableY = 181;
+    doc.setTextColor(...ink);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("Détail des lignes de production", 15, 208);
+    doc.setFontSize(12);
+    doc.text("Détail des lignes de production", 15, 181);
     tableY += 8;
     const columns = ["Article", "Production", "Rebuts", "H. réelles", "TRS", "Commentaire"];
     const positions = [15, 41, 69, 91, 114, 132];
-    doc.setFontSize(7);
-    doc.setTextColor(96, 112, 99);
-    columns.forEach((column, index) => doc.text(column, positions[index], tableY));
+    const drawTableHeader = (y: number) => {
+      doc.setFillColor(232, 241, 232);
+      doc.roundedRect(15, y - 5, contentWidth, 8, 1.8, 1.8, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(...green);
+      columns.forEach((column, index) => doc.text(column.toUpperCase(), positions[index], y));
+    };
+    drawTableHeader(tableY);
     tableY += 5;
-    dayRows.forEach((row) => {
+    dayRows.forEach((row, index) => {
       const commentLines = doc.splitTextToSize(row.comment || "—", pageWidth - 137);
-      const lineHeight = Math.max(7, commentLines.length * 3.5 + 3);
-      if (tableY + lineHeight > 282) { doc.addPage(); tableY = 20; }
-      doc.setDrawColor(226, 232, 223);
-      doc.line(15, tableY - 3, pageWidth - 15, tableY - 3);
-      doc.setTextColor(70, 88, 76);
+      const lineHeight = Math.max(8, commentLines.length * 3.7 + 4);
+      if (tableY + lineHeight > 279) { doc.addPage(); doc.setFillColor(...green); doc.rect(0, 0, pageWidth, 13, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.text(`Almaraïi · Production du ${prettyDate(productionDate)}`, 15, 8); tableY = 25; drawTableHeader(tableY); tableY += 5; }
+      if (index % 2 === 0) { doc.setFillColor(250, 252, 249); doc.rect(15, tableY - 3, contentWidth, lineHeight, "F"); }
+      doc.setTextColor(...ink);
       doc.setFont("helvetica", "normal");
       doc.text(row.article, positions[0], tableY + 1);
       doc.text(`${fmt(asNumber(row.productionTons))} T`, positions[1], tableY + 1);
@@ -227,9 +267,10 @@ export default function Registry() {
       doc.text(commentLines, positions[5], tableY + 1);
       tableY += lineHeight;
     });
-    doc.setTextColor(110, 125, 107);
-    doc.setFontSize(8);
-    doc.text(`${dayRows.length} ligne(s) de registre incluse(s) pour cette journée.`, 15, Math.min(tableY + 5, 288));
+    doc.setTextColor(...muted);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(`Almaraïi Production Pulse · ${dayRows.length} ligne(s) incluse(s) · ${prettyDate(productionDate)}`, 15, Math.min(tableY + 6, 288));
     doc.save(`production-${productionDate}.pdf`);
     toast.success("Rapport PDF journalier généré", { description: `Les données du ${prettyDate(productionDate)} sont téléchargées.` });
   };

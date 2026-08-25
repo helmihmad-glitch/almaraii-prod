@@ -204,3 +204,5 @@
 - [x] Retirer le bouton global de téléchargement PDF du registre.
 - [x] Ajouter sur chaque ligne une action PDF contenant les données de la journée correspondante.
 - [x] Tester les exports PDF journaliers et publier la nouvelle action de ligne.
+- [x] Améliorer la hiérarchie visuelle, les cartes KPI et le tableau du rapport PDF journalier.
+- [x] Vérifier le rendu du PDF amélioré et publier la mise à jour.

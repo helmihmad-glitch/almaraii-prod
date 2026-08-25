@@ -17,13 +17,16 @@ describe("import Excel et rapport PDF du registre", () => {
   it("construit un PDF journalier accessible depuis chaque ligne du registre", () => {
     expect(registryPage).toContain('import("jspdf")');
     expect(registryPage).toContain("downloadDayPdf");
-    expect(registryPage).toContain("Rapport journalier du registre");
+    expect(registryPage).toContain("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION");
+    expect(registryPage).toContain("PRODUCTION DE LA JOURNÉE");
+    expect(registryPage).toContain("Indicateurs de performance");
+    expect(registryPage).toContain("Détail des lignes de production");
     expect(registryPage).toContain("Production du ${prettyDate(productionDate)}");
-    expect(registryPage).toContain("TRS global");
-    expect(registryPage).toContain("Disponibilité");
-    expect(registryPage).toContain("Performance");
-    expect(registryPage).toContain("Rebuts / déchets");
-    expect(registryPage).toContain("Temps total prod. (h)");
+    expect(registryPage).toContain("TRS GLOBAL");
+    expect(registryPage).toContain("DISPONIBILITÉ");
+    expect(registryPage).toContain("PERFORMANCE");
+    expect(registryPage).toContain("REBUTS / DÉCHETS");
+    expect(registryPage).toContain("TEMPS TOTAL DE PRODUCTION");
     expect(registryPage).toContain("Exporter le PDF de cette journée");
     expect(registryPage).not.toContain("Télécharger PDF");
   });
