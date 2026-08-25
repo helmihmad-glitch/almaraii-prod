@@ -184,3 +184,7 @@
 - [x] Tester les autorisations, les articles, le formulaire et l’affichage responsive, puis publier la mise à jour.
 - [x] Retirer le bouton « Réinitialiser Excel » de l’interface du registre.
 - [x] Vérifier le registre puis publier la simplification.
+- [x] Définir le modèle d’import Excel du registre et les règles de validation des lignes.
+- [x] Ajouter un import Excel vers le registre journalier avec contrôle, rapprochement et synchronisation du fichier Excel.
+- [x] Ajouter un export PDF du registre contenant Production J-1 et les KPI demandés.
+- [x] Vérifier les imports valides et invalides, le rapport PDF, le registre et le rendu responsive, puis publier les nouveaux flux.

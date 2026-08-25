@@ -17,6 +17,7 @@ import {
   updateProductionRecord,
 } from "./db";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
+import { importProductionRows, parseImportedWorkbook } from "./excelImport";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
 
 export const recordInput = z.object({
@@ -105,6 +106,16 @@ export const appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
+    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
+      await assertProductionActionAuthorized(input.actionPassword);
+      const parsed = await parseImportedWorkbook(Buffer.from(input.fileBase64, "base64"));
+      if (parsed.errors.length) throw new TRPCError({ code: "BAD_REQUEST", message: parsed.errors.slice(0, 5).join(" ") });
+      if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Aucune ligne de production valide n’a été trouvée dans le fichier." });
+      const result = await importProductionRows(parsed.rows);
+      await syncExcelFromRecords();
+      return result;
+    }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
     verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(async ({ input }) => ({
       authorized: await isActionPasswordValid(input.password),
