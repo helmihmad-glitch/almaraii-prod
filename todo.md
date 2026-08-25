@@ -219,3 +219,5 @@
 - [x] Remplacer le cercle décoratif du PDF par le logo Almaraïi et renforcer l’affichage des heures actives et perdues.
 - [x] Demander un commentaire facultatif avant l’export PDF et l’ajouter au bas du document lorsqu’il est renseigné.
 - [x] Vérifier le PDF enrichi, le flux avec et sans commentaire, puis publier la mise à jour.
+- [x] Rehausser la composition visuelle, la hiérarchie éditoriale et les finitions du PDF journalier Almaraïi.
+- [x] Vérifier le nouveau rendu du PDF et publier la version raffinée.

@@ -17,6 +17,8 @@ export type PdfProductionRow = {
   comment: string | null;
 };
 
+type Rgb = [number, number, number];
+
 const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";
 const asNumber = (value: number | string) => Number(value);
 const fmt = (value: number, digits = 1) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
@@ -47,7 +49,7 @@ function monthlyTarget(period: string) {
     const target = Number(stored[period]);
     if (Number.isFinite(target) && target > 0) return target;
   } catch {
-    // La valeur standard reste utilisable si le stockage local est indisponible.
+    // Le paramètre par défaut du tableau de bord demeure disponible hors navigateur.
   }
   const configuredMonth = data.months.find((month) => month.daily.some((entry) => entry.date.startsWith(period)));
   return configuredMonth?.target ?? 2500;
@@ -70,22 +72,62 @@ async function loadLogo() {
 }
 
 function addPageHeader(doc: JsPDF, pageWidth: number, date: string, logo: string | null) {
-  const green: [number, number, number] = [29, 72, 38];
-  const gold: [number, number, number] = [232, 181, 58];
+  const green: Rgb = [24, 71, 37];
+  const gold: Rgb = [232, 181, 58];
+  const mutedGold: Rgb = [246, 226, 165];
   doc.setFillColor(...green);
-  doc.rect(0, 0, pageWidth, 29, "F");
+  doc.rect(0, 0, pageWidth, 38, "F");
   doc.setFillColor(...gold);
-  doc.rect(0, 29, pageWidth, 1.8, "F");
-  if (logo) doc.addImage(logo, "PNG", pageWidth - 29, 4.5, 18, 18);
+  doc.rect(0, 38, pageWidth, 2, "F");
+  doc.setFillColor(68, 112, 64);
+  doc.rect(0, 0, 5, 38, "F");
+  if (logo) doc.addImage(logo, "PNG", 15, 6, 12.7, 22);
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text("Almaraïi", 15, 13);
-  doc.setFontSize(7);
-  doc.text("PRODUCTION PULSE", 15, 19);
+  doc.text("Almaraïi", 34, 15);
+  doc.setTextColor(...mutedGold);
+  doc.setFontSize(6.8);
+  doc.text("PRODUCTION PULSE", 34, 21);
+  doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
-  doc.text(`RAPPORT JOURNALIER · ${prettyDate(date)}`, 15, 24.5);
+  doc.text("RAPPORT JOURNALIER · REGISTRE DE PRODUCTION", 34, 28);
+  doc.setTextColor(...mutedGold);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.5);
+  doc.text("SYNTHÈSE OPÉRATIONNELLE", pageWidth - 15, 15, { align: "right" });
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text(prettyDate(date), pageWidth - 15, 23, { align: "right" });
+  doc.setDrawColor(...gold);
+  doc.setLineWidth(.35);
+  doc.line(pageWidth - 63, 28, pageWidth - 15, 28);
+}
+
+function drawMetricCard(doc: JsPDF, options: { x: number; y: number; width: number; label: string; value: string; detail: string; ratio: number; accent: Rgb; green: Rgb; muted: Rgb }) {
+  const { x, y, width, label, value, detail, ratio, accent, green, muted } = options;
+  doc.setDrawColor(222, 231, 220);
+  doc.setFillColor(255, 254, 251);
+  doc.roundedRect(x, y, width, 29, 3.4, 3.4, "FD");
+  doc.setFillColor(...accent);
+  doc.roundedRect(x, y, width, 2.3, 2, 2, "F");
+  doc.setTextColor(...muted);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.7);
+  doc.text(label, x + 5, y + 10);
+  doc.setTextColor(...green);
+  doc.setFontSize(16);
+  doc.text(value, x + 5, y + 20);
+  doc.setTextColor(...muted);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.2);
+  doc.text(detail, x + 5, y + 25);
+  doc.setFillColor(231, 239, 229);
+  doc.roundedRect(x + 5, y + 26.5, width - 10, 1.45, .7, .7, "F");
+  doc.setFillColor(...accent);
+  doc.roundedRect(x + 5, y + 26.5, Math.max(0, Math.min(ratio, 1)) * (width - 10), 1.45, .7, .7, "F");
 }
 
 export async function generateDayPdf(options: { productionDate: string; allRows: PdfProductionRow[]; exportComment?: string; save?: boolean }) {
@@ -103,150 +145,157 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const contentWidth = pageWidth - 30;
-  const green: [number, number, number] = [29, 72, 38];
-  const leafy: [number, number, number] = [78, 123, 69];
-  const gold: [number, number, number] = [232, 181, 58];
-  const paleGreen: [number, number, number] = [242, 248, 241];
-  const ink: [number, number, number] = [38, 61, 44];
-  const muted: [number, number, number] = [105, 123, 109];
+  const green: Rgb = [24, 71, 37];
+  const leafy: Rgb = [77, 123, 64];
+  const gold: Rgb = [232, 181, 58];
+  const paleGreen: Rgb = [242, 248, 241];
+  const ink: Rgb = [38, 61, 44];
+  const muted: Rgb = [105, 123, 109];
   const logo = await loadLogo();
   addPageHeader(doc, pageWidth, options.productionDate, logo);
 
-  const objectiveY = 39;
+  const objectiveY = 47;
   doc.setFillColor(...green);
-  doc.roundedRect(15, objectiveY, contentWidth, 58, 4, 4, "F");
+  doc.roundedRect(15, objectiveY, contentWidth, 54, 4.5, 4.5, "F");
+  doc.setFillColor(...gold);
+  doc.roundedRect(15, objectiveY, 4, 54, 2.2, 2.2, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text(`OBJECTIF MENSUEL · ${prettyMonth(period).toUpperCase()}`, 23, objectiveY + 10);
-  doc.setFontSize(22);
-  doc.text(`${fmt(month.production)} T`, 23, objectiveY + 25);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(12);
-  doc.text(`/ ${fmt(target)} T`, 67, objectiveY + 25);
   doc.setFontSize(7.5);
-  doc.text(remaining > 0 ? `${fmt(remaining)} T restent à produire pour atteindre le plan.` : "Objectif dépassé — la production du mois est au-dessus du plan.", 23, objectiveY + 34);
+  doc.text(`OBJECTIF MENSUEL · ${prettyMonth(period).toUpperCase()}`, 25, objectiveY + 10);
+  doc.setFontSize(24);
+  doc.text(`${fmt(month.production)} T`, 25, objectiveY + 25);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.text(`/ ${fmt(target)} T`, 72, objectiveY + 25);
+  doc.setFontSize(7.3);
+  doc.text(remaining > 0 ? `${fmt(remaining)} T restent à produire pour atteindre le plan.` : "Objectif dépassé — la production du mois est au-dessus du plan.", 25, objectiveY + 33);
+  doc.setDrawColor(111, 148, 101);
+  doc.setLineWidth(.25);
+  doc.line(105, objectiveY + 9, 105, objectiveY + 35);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7);
-  doc.text("PÉRIODE OBSERVÉE", 112, objectiveY + 10);
+  doc.setFontSize(6.8);
+  doc.text("PÉRIODE OBSERVÉE", 113, objectiveY + 11);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text(prettyMonth(period), 112, objectiveY + 18);
+  doc.text(prettyMonth(period), 113, objectiveY + 19);
   doc.setFillColor(...gold);
-  doc.circle(114, objectiveY + 26, 1.5, "F");
-  doc.setFontSize(7.5);
-  doc.text("Données disponibles", 119, objectiveY + 28);
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(2.6);
-  doc.circle(177, objectiveY + 27, 14, "S");
+  doc.circle(115, objectiveY + 26, 1.6, "F");
+  doc.setTextColor(245, 249, 245);
+  doc.setFontSize(7.2);
+  doc.text("Données disponibles", 120, objectiveY + 28);
+  doc.setDrawColor(93, 135, 84);
+  doc.setLineWidth(2.3);
+  doc.circle(176, objectiveY + 26, 14, "S");
   doc.setDrawColor(...gold);
   doc.setLineWidth(3.2);
-  doc.circle(177, objectiveY + 27, 14, "S");
+  doc.circle(176, objectiveY + 26, 14, "S");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text(pct(progress), 177, objectiveY + 29, { align: "center" });
-  doc.setFontSize(6.5);
-  doc.text("DU PLAN", 177, objectiveY + 34, { align: "center" });
-  doc.setFontSize(7);
-  doc.text("ATTEINTE DU PLAN", 177, objectiveY + 46, { align: "center" });
-  doc.setFillColor(...leafy);
-  doc.roundedRect(23, objectiveY + 42, 102, 3.1, 1.5, 1.5, "F");
+  doc.text(pct(progress), 176, objectiveY + 28, { align: "center" });
+  doc.setFontSize(6.1);
+  doc.text("DU PLAN", 176, objectiveY + 33, { align: "center" });
+  doc.setFontSize(6.7);
+  doc.text("ATTEINTE DU PLAN", 176, objectiveY + 43, { align: "center" });
+  doc.setFillColor(74, 115, 66);
+  doc.roundedRect(25, objectiveY + 39, 100, 3.5, 1.7, 1.7, "F");
   doc.setFillColor(...gold);
-  doc.roundedRect(23, objectiveY + 42, Math.min(progress, 1) * 102, 3.1, 1.5, 1.5, "F");
+  doc.roundedRect(25, objectiveY + 39, Math.min(progress, 1) * 100, 3.5, 1.7, 1.7, "F");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
-  doc.text(`Progression réelle  ${pct(progress)}`, 23, objectiveY + 52);
-  doc.text(`Plan  ${fmt(target)} T`, 125, objectiveY + 52, { align: "right" });
+  doc.text(`Progression réelle  ${pct(progress)}`, 25, objectiveY + 49);
+  doc.text(`Plan  ${fmt(target)} T`, 125, objectiveY + 49, { align: "right" });
 
-  const dayY = 108;
+  const dayY = 112;
+  doc.setDrawColor(221, 231, 220);
   doc.setFillColor(...paleGreen);
-  doc.roundedRect(15, dayY, contentWidth, 29, 4, 4, "F");
+  doc.roundedRect(15, dayY, contentWidth, 29, 4, 4, "FD");
   doc.setFillColor(...gold);
-  doc.roundedRect(15, dayY, 4, 29, 2, 2, "F");
+  doc.roundedRect(15, dayY, 4.2, 29, 2.2, 2.2, "F");
   doc.setTextColor(...muted);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.text("PRODUCTION DE LA JOURNÉE", 25, dayY + 10);
+  doc.setFontSize(7.2);
+  doc.text("PRODUCTION DE LA JOURNÉE", 25, dayY + 9);
   doc.setTextColor(...green);
-  doc.setFontSize(20);
-  doc.text(`${fmt(day.production)} T`, 25, dayY + 22);
+  doc.setFontSize(22);
+  doc.text(`${fmt(day.production)} T`, 25, dayY + 21);
+  doc.setDrawColor(205, 221, 204);
+  doc.setLineWidth(.25);
+  doc.line(86, dayY + 6, 86, dayY + 23);
   doc.setTextColor(...ink);
-  doc.setFontSize(10);
-  doc.text(prettyDate(options.productionDate), pageWidth - 21, dayY + 10, { align: "right" });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+  doc.text(prettyDate(options.productionDate), 95, dayY + 10);
   doc.setTextColor(...muted);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.5);
-  doc.text(`${dayRows.length} ligne(s) de production`, pageWidth - 21, dayY + 18, { align: "right" });
-  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 102), pageWidth - 21, dayY + 24, { align: "right" });
+  doc.setFontSize(7);
+  doc.text(`${dayRows.length} ligne(s) de production enregistrée(s)`, 95, dayY + 17);
+  doc.text(doc.splitTextToSize(dayRows.map((row) => `${row.article} · ${fmt(asNumber(row.productionTons))} T`).join("   "), 87), 95, dayY + 23);
+  doc.setFillColor(...green);
+  doc.roundedRect(163, dayY + 6, 29, 17, 2.2, 2.2, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.3);
+  doc.text("JOURNÉE", 177.5, dayY + 12, { align: "center" });
+  doc.setFontSize(10);
+  doc.text(pct(day.trs), 177.5, dayY + 19, { align: "center" });
 
+  const sectionY = 151;
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Indicateurs de performance", 15, 150);
-  const cards = [["TRS GLOBAL", pct(day.trs), "Efficacité globale"], ["DISPONIBILITÉ", pct(day.availability), "Temps utile / planifié"], ["PERFORMANCE", pct(day.performance), "Cadence réelle / standard"]];
+  doc.setFontSize(10.5);
+  doc.text("Indicateurs de performance", 15, sectionY);
+  doc.setTextColor(...muted);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.8);
+  doc.text("Lecture instantanée des résultats du jour", pageWidth - 15, sectionY, { align: "right" });
   const cardWidth = (contentWidth - 12) / 3;
-  cards.forEach(([label, value, detail], index) => {
-    const x = 15 + index * (cardWidth + 6);
-    doc.setDrawColor(221, 231, 220);
-    doc.setFillColor(255, 254, 250);
-    doc.roundedRect(x, 155, cardWidth, 25, 3, 3, "FD");
-    doc.setFillColor(...gold);
-    doc.roundedRect(x, 155, cardWidth, 2.2, 2, 2, "F");
-    doc.setTextColor(...muted);
-    doc.setFontSize(7);
-    doc.text(label, x + 5, 164);
-    doc.setTextColor(...green);
-    doc.setFontSize(15);
-    doc.text(value, x + 5, 174);
-    doc.setTextColor(...muted);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
-    doc.text(detail, x + 5, 178);
+  drawMetricCard(doc, { x: 15, y: 156, width: cardWidth, label: "TRS GLOBAL", value: pct(day.trs), detail: "Efficacité globale", ratio: day.trs, accent: gold, green, muted });
+  drawMetricCard(doc, { x: 15 + cardWidth + 6, y: 156, width: cardWidth, label: "DISPONIBILITÉ", value: pct(day.availability), detail: "Temps utile / planifié", ratio: day.availability, accent: leafy, green, muted });
+  drawMetricCard(doc, { x: 15 + (cardWidth + 6) * 2, y: 156, width: cardWidth, label: "PERFORMANCE", value: pct(day.performance), detail: "Cadence réelle / standard", ratio: day.performance, accent: [49, 103, 62], green, muted });
+
+  const operationY = 195;
+  doc.setFillColor(...green);
+  doc.roundedRect(15, operationY, contentWidth, 30, 3.5, 3.5, "F");
+  doc.setFillColor(...gold);
+  doc.roundedRect(15, operationY, 3.1, 30, 1.6, 1.6, "F");
+  const operationMetrics = [
+    { label: "REBUTS / DÉCHETS", value: `${fmt(day.waste)} T`, x: 25, color: [255, 255, 255] as Rgb },
+    { label: "TEMPS TOTAL PROD.", value: `${fmt(day.totalHours)} h`, x: 76, color: [255, 255, 255] as Rgb },
+    { label: "ACTIVES", value: `${fmt(day.activeHours)} h`, x: 128, color: gold },
+    { label: "PERDUES", value: `${fmt(day.plannedStops + day.unplannedStops)} h`, x: 165, color: gold },
+  ];
+  operationMetrics.forEach((metric, index) => {
+    if (index > 0) { doc.setDrawColor(94, 136, 86); doc.setLineWidth(.25); doc.line(metric.x - 9, operationY + 7, metric.x - 9, operationY + 24); }
+    doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.text(metric.label, metric.x, operationY + 11);
+    doc.setTextColor(...metric.color);
+    doc.setFontSize(index > 1 ? 13.5 : 15);
+    doc.text(metric.value, metric.x, operationY + 22);
   });
 
-  doc.setFillColor(...green);
-  doc.roundedRect(15, 189, contentWidth, 31, 3, 3, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(7);
-  doc.text("REBUTS / DÉCHETS", 25, 199);
-  doc.setFontSize(15);
-  doc.text(`${fmt(day.waste)} T`, 25, 211);
-  doc.setDrawColor(255, 255, 255);
-  doc.setLineWidth(.25);
-  doc.line(77, 195, 77, 215);
-  doc.setFontSize(7);
-  doc.text("TEMPS TOTAL PROD.", 87, 199);
-  doc.setFontSize(14);
-  doc.text(`${fmt(day.totalHours)} h`, 87, 209);
-  doc.setFontSize(8.5);
-  doc.text(`ACTIVES  ${fmt(day.activeHours)} h`, 132, 200);
-  doc.setTextColor(...gold);
-  doc.setFontSize(13);
-  doc.text(`${fmt(day.activeHours)} h`, 132, 210);
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(8.5);
-  doc.text(`PERDUES  ${fmt(day.plannedStops + day.unplannedStops)} h`, 166, 200);
-  doc.setTextColor(...gold);
-  doc.setFontSize(13);
-  doc.text(`${fmt(day.plannedStops + day.unplannedStops)} h`, 166, 210);
-
-  let tableY = 233;
+  let tableY = 240;
   const columns = ["Article", "Production", "Rebuts", "H. réelles", "TRS", "Commentaire"];
   const positions = [15, 41, 69, 91, 114, 132];
   const drawTableHeader = (y: number) => {
-    doc.setFillColor(232, 241, 232);
+    doc.setFillColor(225, 238, 224);
     doc.roundedRect(15, y - 5, contentWidth, 8, 1.8, 1.8, "F");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7);
+    doc.setFontSize(6.8);
     doc.setTextColor(...green);
     columns.forEach((column, index) => doc.text(column.toUpperCase(), positions[index], y));
   };
   doc.setTextColor(...ink);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Détail des lignes de production", 15, 228);
+  doc.setFontSize(10.5);
+  doc.text("Détail des lignes de production", 15, 235);
+  doc.setTextColor(...muted);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
+  doc.text(`${dayRows.length} saisie(s) incluses dans ce rapport`, pageWidth - 15, 235, { align: "right" });
   drawTableHeader(tableY);
   tableY += 5;
   dayRows.forEach((row, index) => {
@@ -255,14 +304,18 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
     if (tableY + lineHeight > 279) {
       doc.addPage();
       addPageHeader(doc, pageWidth, options.productionDate, logo);
-      tableY = 41;
+      doc.setTextColor(...ink);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.text("Détail des lignes de production", 15, 48);
+      tableY = 54;
       drawTableHeader(tableY);
       tableY += 5;
     }
     if (index % 2 === 0) { doc.setFillColor(250, 252, 249); doc.rect(15, tableY - 3, contentWidth, lineHeight, "F"); }
     doc.setTextColor(...ink);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
+    doc.setFontSize(7.4);
     doc.text(row.article, positions[0], tableY + 1);
     doc.text(`${fmt(asNumber(row.productionTons))} T`, positions[1], tableY + 1);
     doc.text(`${fmt(asNumber(row.wasteTons))} T`, positions[2], tableY + 1);
@@ -276,25 +329,35 @@ export async function generateDayPdf(options: { productionDate: string; allRows:
   if (exportComment) {
     const lines = doc.splitTextToSize(exportComment, contentWidth - 16);
     const height = Math.max(19, lines.length * 4 + 11);
-    if (tableY + height > 280) { doc.addPage(); addPageHeader(doc, pageWidth, options.productionDate, logo); tableY = 42; }
-    doc.setFillColor(255, 249, 229);
+    if (tableY + height > 280) {
+      doc.addPage();
+      addPageHeader(doc, pageWidth, options.productionDate, logo);
+      tableY = 45;
+    }
+    doc.setFillColor(255, 250, 235);
     doc.setDrawColor(...gold);
     doc.roundedRect(15, tableY + 5, contentWidth, height, 3, 3, "FD");
+    doc.setFillColor(...gold);
+    doc.roundedRect(15, tableY + 5, 3, height, 1.5, 1.5, "F");
     doc.setTextColor(...green);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text("COMMENTAIRE AJOUTÉ À L’EXPORT", 23, tableY + 15);
+    doc.setFontSize(7.5);
+    doc.text("COMMENTAIRE AJOUTÉ À L’EXPORT", 24, tableY + 15);
     doc.setTextColor(...ink);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    doc.text(lines, 23, tableY + 22);
+    doc.text(lines, 24, tableY + 22);
     tableY += height + 8;
   }
 
+  doc.setDrawColor(221, 231, 220);
+  doc.setLineWidth(.22);
+  doc.line(15, Math.min(tableY + 4, 285), pageWidth - 15, Math.min(tableY + 4, 285));
   doc.setTextColor(...muted);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.text(`Almaraïi Production Pulse · ${dayRows.length} ligne(s) incluse(s) · ${prettyDate(options.productionDate)}`, 15, Math.min(tableY + 6, 288));
+  doc.setFontSize(6.5);
+  doc.text("Almaraïi Production Pulse", 15, Math.min(tableY + 9, 289));
+  doc.text(`${dayRows.length} ligne(s) · ${prettyDate(options.productionDate)}`, pageWidth - 15, Math.min(tableY + 9, 289), { align: "right" });
   if (options.save !== false) doc.save(`production-${options.productionDate}.pdf`);
   return doc;
 }
