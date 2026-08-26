@@ -8,6 +8,7 @@ const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf
 const home = readFileSync(new URL("../client/src/pages/Home.tsx", import.meta.url), "utf8");
 const dailyProgram = readFileSync(new URL("../client/src/pages/DailyProgram.tsx", import.meta.url), "utf8");
 const dailyProgramData = readFileSync(new URL("../client/src/pages/DailyProgramData.tsx", import.meta.url), "utf8");
+const settings = readFileSync(new URL("../client/src/pages/Settings.tsx", import.meta.url), "utf8");
 
 describe("Programme journalier", () => {
   it("déclare un stockage persistant pour les en-têtes et lignes planifiées", () => {
@@ -37,5 +38,18 @@ describe("Programme journalier", () => {
     expect(dailyProgram).toContain("Quantité (tonne)");
     expect(dailyProgramData).toContain("Créer le programme");
     expect(dailyProgramData).toContain("Ajouter la ligne");
+  });
+
+  it("gère les pupitreurs et les articles depuis les paramètres", () => {
+    expect(schema).toContain('mysqlTable("production_operators"');
+    expect(db).toContain("listActiveProductionOperators");
+    expect(routers).toContain("listOperators:");
+    expect(routers).toContain("addOperator:");
+    expect(routers).toContain("archiveOperator:");
+    expect(settings).toContain("Liste des pupitreurs");
+    expect(dailyProgramData).toContain('type="checkbox"');
+    expect(dailyProgramData).toContain("selectedOperatorNames.join");
+    expect(dailyProgramData).toContain("articlesQuery");
+    expect(dailyProgramData).toContain("<select");
   });
 });

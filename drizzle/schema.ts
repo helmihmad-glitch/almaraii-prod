@@ -50,6 +50,14 @@ export const productionArticles = mysqlTable("production_articles", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => [uniqueIndex("production_articles_code_unique").on(table.code)]);
 
+export const productionOperators = mysqlTable("production_operators", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
+
 export const productionSettings = mysqlTable("production_settings", {
   id: int("id").primaryKey(),
   actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
@@ -86,6 +94,7 @@ export type ProductionRecord = typeof productionRecords.$inferSelect;
 export type InsertProductionRecord = typeof productionRecords.$inferInsert;
 export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;
 export type ProductionArticle = typeof productionArticles.$inferSelect;
+export type ProductionOperator = typeof productionOperators.$inferSelect;
 export type ProductionSettings = typeof productionSettings.$inferSelect;
 export type DailyProgram = typeof dailyPrograms.$inferSelect;
 export type InsertDailyProgram = typeof dailyPrograms.$inferInsert;

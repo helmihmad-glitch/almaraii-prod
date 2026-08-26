@@ -6,7 +6,9 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import {
   addProductionArticle,
+  addProductionOperator,
   archiveProductionArticle,
+  archiveProductionOperator,
   createDailyProgram,
   createDailyProgramLine,
   createProductionRecord,
@@ -17,6 +19,7 @@ import {
   getProductionSettings,
   initializeProductionArticles,
   listActiveProductionArticles,
+  listActiveProductionOperators,
   listDailyPrograms,
   listProductionRecords,
   saveActionPasswordDigest,
@@ -122,6 +125,15 @@ export const appRouter = router({
     archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return archiveProductionArticle(input.id);
+    }),
+    listOperators: publicProcedure.query(() => listActiveProductionOperators()),
+    addOperator: publicProcedure.input(z.object({ name: z.string().trim().min(1, "Saisissez un pupitreur.").max(128), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return addProductionOperator(input.name);
+    }),
+    archiveOperator: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return archiveProductionOperator(input.id);
     }),
     changeActionPassword: publicProcedure.input(z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128) })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.currentPassword);

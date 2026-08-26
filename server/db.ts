@@ -8,6 +8,7 @@ import {
   InsertProductionRecord,
   InsertUser,
   productionArticles,
+  productionOperators,
   productionRecords,
   productionSettings,
   users,
@@ -198,6 +199,30 @@ export async function archiveProductionArticle(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
   await db.update(productionArticles).set({ isActive: false }).where(eq(productionArticles.id, id));
+  return { success: true } as const;
+}
+
+export async function listActiveProductionOperators() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(productionOperators).where(eq(productionOperators.isActive, true)).orderBy(asc(productionOperators.name));
+}
+
+export async function addProductionOperator(name: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const normalizedName = name.trim();
+  await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onDuplicateKeyUpdate({
+    set: { isActive: true, updatedAt: new Date() },
+  });
+  const rows = await db.select().from(productionOperators).where(eq(productionOperators.name, normalizedName)).limit(1);
+  return rows[0];
+}
+
+export async function archiveProductionOperator(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.update(productionOperators).set({ isActive: false }).where(eq(productionOperators.id, id));
   return { success: true } as const;
 }
 

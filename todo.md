@@ -247,3 +247,7 @@
 - [x] Ajouter « Programme journalier donnée » dans la navigation avec un espace CRUD de gestion des programmes.
 - [x] Tester les flux Programme journalier sur desktop/mobile, puis publier le module.
 - [x] Corriger la requête Programme journalier pour qu’une date sans programme ne renvoie jamais undefined, puis ajouter un test de régression et publier.
+- [x] Ajouter un stockage persistant pour les pupitreurs configurables et leurs opérations CRUD sécurisées.
+- [x] Ajouter dans Paramètres la gestion de la liste des pupitreurs.
+- [x] Permettre la sélection multiple de pupitreurs dans le programme journalier.
+- [x] Alimenter la sélection d’article du programme journalier depuis les articles configurés, puis tester et publier.
