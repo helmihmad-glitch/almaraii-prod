@@ -19,3 +19,9 @@ Ne renseignez pas `dist` ou `dist/index.js` comme **Output Directory**. Après l
 Ajoutez dans Vercel les mêmes variables que celles du projet actuel, sans jamais committer leurs valeurs : `DATABASE_URL`, `JWT_SECRET`, `COMMENT_EDIT_PASSWORD`, `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY`, `OAUTH_SERVER_URL`, `VITE_APP_ID`, `VITE_OAUTH_PORTAL_URL`, `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY`, `OWNER_OPEN_ID` et `OWNER_NAME`.
 
 Les chemins `/api/trpc/*`, `/api/oauth/callback` et `/manus-storage/*` sont pris en charge par la fonction Vercel. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
+
+## Import Excel et logo
+
+L’import Excel téléverse désormais le fichier directement vers le stockage avant son traitement : le fichier ne passe donc plus dans le corps de la fonction Vercel, limité à 4,5 Mo. Les variables `BUILT_IN_FORGE_API_URL` et `BUILT_IN_FORGE_API_KEY` restent indispensables dans Vercel pour générer ces liens temporaires de téléversement et synchroniser le fichier Excel.
+
+Le logo et le favicon utilisent une URL publique dédiée afin d’être visibles depuis Vercel, sans dépendre d’un chemin relatif `/manus-storage` sur votre domaine Vercel.

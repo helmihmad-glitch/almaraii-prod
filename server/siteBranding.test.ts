@@ -13,5 +13,6 @@ describe("configuration de marque publiée", () => {
     expect(indexHtml).toContain("<title>Almaraii Prod</title>");
     expect(indexHtml).toContain('rel="icon"');
     expect(indexHtml).toContain("almaraii-logo-favicon_964405f8.png");
+    expect(indexHtml).toContain("https://dashprod-fdptenze.manus.space/manus-storage/");
   });
 });

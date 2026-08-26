@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { generateDailyProgramPdf } from "@/lib/dailyProgramPdf";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const formatDate = (value: string) => new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(`${value}T00:00:00`));
@@ -31,7 +32,7 @@ export default function DailyProgram() {
     <main className="daily-program-screen">
       <header className="daily-program-topbar">
         <Link href="/" className="daily-program-back"><ArrowLeft size={16} />Retour au tableau de bord</Link>
-        <div className="daily-program-brand"><div className="daily-program-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
+        <div className="daily-program-brand"><div className="daily-program-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
       </header>
 
       <section className="daily-program-page">

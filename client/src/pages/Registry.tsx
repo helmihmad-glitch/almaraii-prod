@@ -4,6 +4,7 @@ import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileTex
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { generateDayPdf } from "@/lib/dayPdfReport";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 import "./registry-import-dialog.css";
 
 type RegistryRow = {
@@ -43,16 +44,7 @@ function buildKpis(rows: RegistryRow[]) {
   return { totalHours, plannedStops, unplannedStops, activeHours: realHours, production, waste, availability, performance, quality, trs: availability * performance * quality };
 }
 
-function toBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Le fichier ne peut pas être lu."));
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.readAsDataURL(file);
-  });
-}
-
-type PendingImport = { fileName: string; fileBase64: string };
+type PendingImport = { file: File; fileName: string };
 type PendingPdf = { productionDate: string; comment: string };
 
 export default function Registry() {
@@ -67,16 +59,8 @@ export default function Registry() {
   const registryQuery = trpc.production.list.useQuery();
   const synchronizedFileQuery = trpc.production.syncFile.useQuery();
   const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]) });
-  const importExcel = trpc.production.importExcel.useMutation({
-    onSuccess: async (result) => {
-      await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
-      toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s), ${result.updated} ligne(s) mise(s) à jour et ${result.skipped} doublon(s) identique(s) ignoré(s).` });
-      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
-      setPendingImport(null);
-      setImportPassword("");
-    },
-    onError: (error) => toast.error(error.message || "L’import Excel a échoué."),
-  });
+  const prepareExcelUpload = trpc.production.prepareExcelUpload.useMutation();
+  const importExcel = trpc.production.importExcelFromStorage.useMutation();
   useEffect(() => { if (!registryQuery.isLoading && !hasInitializedExcel.current) { hasInitializedExcel.current = true; initializeExcel.mutate(); } }, [registryQuery.isLoading, initializeExcel]);
   const removeLine = trpc.production.delete.useMutation({
     onSuccess: async () => {
@@ -120,17 +104,25 @@ export default function Registry() {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".xlsx")) { toast.error("Sélectionnez un fichier Excel au format .xlsx."); return; }
     if (file.size > 5_700_000) { toast.error("Le fichier Excel dépasse la limite de 5,7 Mo."); return; }
-    try {
-      setPendingImport({ fileName: file.name, fileBase64: await toBase64(file) });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Le fichier ne peut pas être lu.");
-    }
+    setPendingImport({ file, fileName: file.name });
   };
-  const submitImport = (event: React.FormEvent<HTMLFormElement>) => {
+  const submitImport = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!pendingImport) return;
     if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }
-    importExcel.mutate({ ...pendingImport, actionPassword: importPassword });
+    try {
+      const prepared = await prepareExcelUpload.mutateAsync({ fileName: pendingImport.fileName, actionPassword: importPassword });
+      const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": pendingImport.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: pendingImport.file });
+      if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");
+      const result = await importExcel.mutateAsync({ storageKey: prepared.key, actionPassword: importPassword });
+      await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
+      toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s), ${result.updated} ligne(s) mise(s) à jour et ${result.skipped} doublon(s) identique(s) ignoré(s).` });
+      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
+      setPendingImport(null);
+      setImportPassword("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’import Excel a échoué.");
+    }
   };
   const requestDayPdf = (productionDate: string) => setPendingPdf({ productionDate, comment: "" });
   const confirmDayPdf = async (commentOverride?: string) => {
@@ -146,10 +138,10 @@ export default function Registry() {
 
   return <div className="registry-screen">
     {pendingPdf && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog registry-pdf-dialog" onSubmit={(event) => { event.preventDefault(); void confirmDayPdf(); }} role="dialog" aria-modal="true" aria-labelledby="pdf-dialog-title"><span className="registry-kicker"><FileText size={14} />Rapport journalier</span><h2 id="pdf-dialog-title">Ajouter un <em>commentaire</em> au PDF ?</h2><p>Ce commentaire est facultatif. S’il est renseigné, il apparaîtra en bas du rapport de production du {prettyDate(pendingPdf.productionDate)}.</p><label>Commentaire d’export<textarea value={pendingPdf.comment} onChange={(event) => setPendingPdf({ ...pendingPdf, comment: event.target.value })} autoFocus maxLength={1200} placeholder="Ex. Situation particulière, consigne de suivi…" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => setPendingPdf(null)}>Annuler</button><button type="button" className="registry-clear" onClick={() => void confirmDayPdf("")}>Exporter sans commentaire</button><button type="submit" className="registry-import">Exporter le PDF</button></div></form></div>}
-    {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Les lignes seront ajoutées ou mises à jour dans le registre, puis le fichier Excel synchronisé sera régénéré.</p><label>Mot de passe d’action<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" placeholder="Saisissez le mot de passe" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={importExcel.isPending}>{importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
+    {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Le fichier est téléversé directement et ne traverse pas la limite de requête de Vercel. Les lignes seront ensuite ajoutées ou mises à jour dans le registre.</p><label>Mot de passe d’action<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" placeholder="Saisissez le mot de passe" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={prepareExcelUpload.isPending || importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={prepareExcelUpload.isPending || importExcel.isPending}>{prepareExcelUpload.isPending || importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
     <header className="registry-topbar">
       <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
-      <div className="registry-brand"><span className="registry-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
+      <div className="registry-brand"><span className="registry-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
       <Link href="/?entry=1" className="registry-add"><Plus size={16} />Saisir une production</Link>
     </header>
     <main className="registry-page">

@@ -11,6 +11,7 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Too
 import { toast } from "sonner";
 import data from "@/data/app-data.json";
 import { trpc } from "@/lib/trpc";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 import { calculateDailyHoursSummaries, calculateHoursSummary, calculateMonthlyProductionStats, getDailyHoursSummary, getPreviousCalendarDate, orderProductionRows } from "@/lib/registryOrdering";
 import { useLocation } from "wouter";
 
@@ -219,7 +220,7 @@ export default function Home() {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <div className="brand"><div className="brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></div><div><strong>Almaraïi</strong><span>Production Pulse</span></div><button className="mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu"><X size={18} /></button></div>
+          <div className="brand"><div className="brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><div><strong>Almaraïi</strong><span>Production Pulse</span></div><button className="mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu"><X size={18} /></button></div>
         <div className="rail-section"><span className="rail-label">Espace opérationnel</span><nav>
           <button className="rail-link active"><LayoutDashboard size={17} />Vue d’ensemble</button>
           <button className="rail-link" onClick={openRegistry}><ClipboardList size={17} />Registre journalier</button>

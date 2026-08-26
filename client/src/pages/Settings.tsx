@@ -3,6 +3,7 @@ import { ArrowLeft, BookOpen, KeyRound, Plus, Settings2, ShieldCheck, Trash2, Us
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 
 export default function Settings() {
   const utils = trpc.useUtils();
@@ -60,7 +61,7 @@ export default function Settings() {
     <main className="settings-screen">
       <header className="settings-topbar">
         <Link href="/" className="settings-back"><ArrowLeft size={16} />Retour au tableau de bord</Link>
-        <div className="settings-brand"><div className="settings-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
+        <div className="settings-brand"><div className="settings-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
       </header>
       <section className="settings-page">
         <div className="settings-hero">

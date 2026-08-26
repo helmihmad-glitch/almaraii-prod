@@ -4,10 +4,17 @@ import { describe, expect, it } from "vitest";
 
 const registryPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Registry.tsx", import.meta.url)), "utf8");
 const dayPdfReport = readFileSync(fileURLToPath(new URL("../client/src/lib/dayPdfReport.ts", import.meta.url)), "utf8");
+const routers = readFileSync(fileURLToPath(new URL("./routers.ts", import.meta.url)), "utf8");
 
 describe("import Excel et rapport PDF du registre", () => {
   it("propose un import Excel xlsx protégé par une confirmation de mot de passe accessible", () => {
-    expect(registryPage).toContain("trpc.production.importExcel.useMutation");
+    expect(registryPage).toContain("trpc.production.prepareExcelUpload.useMutation");
+    expect(registryPage).toContain("trpc.production.importExcelFromStorage.useMutation");
+    expect(registryPage).toContain("prepared.uploadUrl");
+    expect(registryPage).not.toContain("fileBase64");
+    expect(routers).toContain("prepareExcelUpload:");
+    expect(routers).toContain("importExcelFromStorage:");
+    expect(routers).toContain("storageCreatePresignedUpload");
     expect(registryPage).toContain("Importer Excel");
     expect(registryPage).toContain("accept=\".xlsx");
     expect(registryPage).toContain("Confirmation d’import");
@@ -46,7 +53,7 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).toContain("dayArticleLabels.slice(0, 2)");
     expect(dayPdfReport).toContain("dayArticleLabels.slice(2)");
     expect(dayPdfReport).not.toContain("ATTEINTE DU PLAN");
-    expect(dayPdfReport).toContain("almaraai-corn-logo");
+    expect(dayPdfReport).toContain("BRAND_LOGO_URL");
     expect(dayPdfReport).toContain("ACTIVES");
     expect(dayPdfReport).toContain("PERDUES");
     expect(dayPdfReport).toContain("COMMENTAIRE AJOUTÉ À L’EXPORT");

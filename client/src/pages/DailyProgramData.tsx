@@ -3,6 +3,7 @@ import { ArrowLeft, CalendarDays, Clock, Database, Pencil, Plus, Save, ShieldChe
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 
 type LineDraft = { sequence: string; article: string; version: string; bagQuantity: string; bulkQuantity: string; plannedStart: string; plannedEnd: string; observation: string };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -73,7 +74,7 @@ export default function DailyProgramData() {
 
   return (
     <main className="daily-program-screen">
-      <header className="daily-program-topbar"><Link href="/programme-journalier" className="daily-program-back"><ArrowLeft size={16} />Voir le programme</Link><div className="daily-program-brand"><div className="daily-program-brand-mark"><img src="/manus-storage/almaraai-corn-logo_37c73384.png" alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div></header>
+      <header className="daily-program-topbar"><Link href="/programme-journalier" className="daily-program-back"><ArrowLeft size={16} />Voir le programme</Link><div className="daily-program-brand"><div className="daily-program-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div></header>
       <section className="daily-program-page">
         <div className="daily-program-hero daily-program-data-hero"><div><span className="daily-program-kicker"><Database size={14} />Administration</span><h1>Programme journalier <em>donnée</em></h1></div><label className="daily-program-date"><span>Date à gérer</span><div><CalendarDays size={16} /><input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Choisir la date à gérer" /></div></label></div>
         <div className="daily-program-data-layout">

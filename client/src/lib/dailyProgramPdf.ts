@@ -1,4 +1,5 @@
 import type { jsPDF as JsPDF } from "jspdf";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 
 export type DailyProgramPdfLine = {
   sequence: number;
@@ -19,7 +20,7 @@ export type DailyProgramPdfData = {
 
 type Rgb = [number, number, number];
 const palette = { green: [29, 72, 38] as Rgb, gold: [232, 181, 58] as Rgb, ink: [20, 28, 22] as Rgb, muted: [92, 103, 94] as Rgb, header: [247, 249, 244] as Rgb, grid: [39, 47, 41] as Rgb };
-const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";
+const logoUrl = BRAND_LOGO_URL;
 const prettyDate = (value: string) => new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${value}T00:00:00`));
 
 async function loadLogo() {

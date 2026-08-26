@@ -1,5 +1,6 @@
 import type { jsPDF as JsPDF } from "jspdf";
 import data from "@/data/app-data.json";
+import { BRAND_LOGO_URL } from "@/lib/brand";
 
 export type PdfProductionRow = {
   productionDate: string;
@@ -43,7 +44,7 @@ const palette = {
   commentFill: [255, 250, 239] as Rgb,
 };
 
-const logoUrl = "/manus-storage/almaraai-corn-logo_37c73384.png";
+const logoUrl = BRAND_LOGO_URL;
 const asNumber = (value: number | string) => Number(value);
 const fmt = (value: number, digits = 1) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value).replace(/[\u00A0\u202F]/g, " ");
 const pct = (value: number) => `${Math.round(value * 100)}%`;

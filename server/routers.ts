@@ -30,6 +30,7 @@ import {
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
 import { importProductionRows, parseImportedWorkbook } from "./excelImport";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
+import { storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
@@ -80,6 +81,16 @@ const dailyProgramLineInput = z.object({
   plannedEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "L’heure de fin doit être au format HH:MM"),
   observation: optionalProgramText(4000),
 });
+const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
+const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
+
+async function importWorkbookBuffer(buffer: Buffer) {
+  const parsed = await parseImportedWorkbook(buffer);
+  if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
+  const result = await importProductionRows(parsed.rows);
+  await syncExcelFromRecords();
+  return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+}
 
 export function calculateRecord(input: z.infer<typeof recordInput>) {
   const realHours = Math.max(input.totalProductionHours - input.plannedStopsHours - input.unplannedStopsHours, 0);
@@ -179,11 +190,19 @@ export const appRouter = router({
     importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
       await assertProductionActionAuthorized(input.actionPassword);
-      const parsed = await parseImportedWorkbook(Buffer.from(input.fileBase64, "base64"));
-      if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
-      const result = await importProductionRows(parsed.rows);
-      await syncExcelFromRecords();
-      return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+      return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
+    }),
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return storageCreatePresignedUpload(`production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`);
+    }),
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith("production-import/"), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const response = await fetch(await storageGetSignedUrl(input.storageKey));
+      if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Le fichier Excel téléversé est indisponible. Réessayez l’import." });
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });
+      return importWorkbookBuffer(buffer);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
     verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(async ({ input }) => ({
