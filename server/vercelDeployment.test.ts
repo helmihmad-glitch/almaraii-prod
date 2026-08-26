@@ -19,5 +19,8 @@ describe("configuration de déploiement Vercel", () => {
     expect(vercelFunction).toContain("/api/manus-storage/");
     expect(appFactory).toContain('"/api/trpc"');
     expect(appFactory).toContain("registerStorageProxy");
+    expect(vercelConfig).toContain('"api/[...path].ts"');
+    expect(vercelConfig).toContain('"source": "/:path((?!api/|manus-storage/).*)"');
+    expect(vercelConfig).not.toContain('"source": "/api/(.*)"');
   });
 });

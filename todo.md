@@ -258,3 +258,4 @@
 - [x] Corriger la réponse d’import Excel afin qu’elle reste valide et exploitable en déploiement Vercel.
 - [x] Rendre le logo Almaraïi disponible dans les déploiements externes, dont Vercel.
 - [x] Pousser les correctifs Vercel d’import Excel et de logo vers GitHub sous la version V1.4.
+- [x] Corriger le routage Vercel qui renvoie 405 aux mutations POST tRPC d’import Excel.

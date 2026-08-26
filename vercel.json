@@ -3,17 +3,18 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm build",
   "outputDirectory": "dist/public",
+  "functions": {
+    "api/[...path].ts": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
-      "source": "/manus-storage/(.*)",
-      "destination": "/api/manus-storage/$1"
+      "source": "/manus-storage/:path*",
+      "destination": "/api/manus-storage/:path*"
     },
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    },
-    {
-      "source": "/(.*)",
+      "source": "/:path((?!api/|manus-storage/).*)",
       "destination": "/index.html"
     }
   ]
