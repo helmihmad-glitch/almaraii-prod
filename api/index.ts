@@ -1,12 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Express } from "express";
+import { createApp } from "../server/_core/app";
 
-let appPromise: Promise<Express> | undefined;
-
-async function getApp() {
-  appPromise ??= import("../server/_core/app").then(({ createApp }) => createApp());
-  return appPromise;
-}
+const app = createApp();
 
 function sendStartupError(res: ServerResponse, error: unknown) {
   const message = error instanceof Error ? error.message : "Initialisation de l’API impossible.";
@@ -29,7 +24,7 @@ function sendStartupError(res: ServerResponse, error: unknown) {
  * Point d’entrée Vercel stable. Les réécritures de vercel.json conservent le
  * chemin API demandé dans `__path`, puis ce handler le restitue à Express.
  */
-export default async function vercelApiHandler(req: IncomingMessage, res: ServerResponse) {
+export default function vercelApiHandler(req: IncomingMessage, res: ServerResponse) {
   const requestUrl = new URL(req.url ?? "/", "http://localhost");
   const routedPath = requestUrl.searchParams.get("__path");
   if (routedPath) {
@@ -41,7 +36,6 @@ export default async function vercelApiHandler(req: IncomingMessage, res: Server
     req.url = req.url.replace(/^\/api/, "");
   }
   try {
-    const app = await getApp();
     return app(req as never, res as never);
   } catch (error) {
     return sendStartupError(res, error);

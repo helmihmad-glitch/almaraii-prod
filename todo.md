@@ -263,3 +263,4 @@
 - [x] Corriger le 404 Vercel des routes tRPC d’import Excel et pousser le redéploiement GitHub.
 - [x] Corriger l’erreur 500 Vercel de préparation du téléversement Excel et pousser le redéploiement GitHub.
 - [x] Corriger l’erreur 500 générale des requêtes tRPC Vercel et pousser le redéploiement GitHub.
+- [x] Intégrer statiquement l’application Express au bundle Vercel et pousser le correctif GitHub.

@@ -22,7 +22,8 @@ describe("configuration de déploiement Vercel", () => {
   });
 
   it("préserve les routes tRPC et le proxy de stockage derrière une fonction Express", () => {
-    expect(vercelApiEntry).toContain('import("../server/_core/app")');
+    expect(vercelApiEntry).toContain('import { createApp } from "../server/_core/app"');
+    expect(vercelApiEntry).toContain("const app = createApp()");
     expect(vercelApiEntry).toContain("__path");
     expect(vercelApiEntry).toContain("application/json; charset=utf-8");
     expect(vercelApiEntry).toContain("INTERNAL_SERVER_ERROR");
