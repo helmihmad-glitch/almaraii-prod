@@ -262,3 +262,4 @@
 - [x] Pousser le correctif de routage Vercel vers GitHub sous la version V1.5.
 - [x] Corriger le 404 Vercel des routes tRPC d’import Excel et pousser le redéploiement GitHub.
 - [x] Corriger l’erreur 500 Vercel de préparation du téléversement Excel et pousser le redéploiement GitHub.
+- [x] Corriger l’erreur 500 générale des requêtes tRPC Vercel et pousser le redéploiement GitHub.

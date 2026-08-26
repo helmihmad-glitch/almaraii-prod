@@ -5,17 +5,18 @@
   "outputDirectory": "dist/public",
   "functions": {
     "api/index.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "{server,shared,drizzle}/**/*"
     }
   },
   "rewrites": [
     {
       "source": "/manus-storage/:path*",
-      "destination": "/api?__path=manus-storage/:path*"
+      "destination": "/api/index?__path=manus-storage/:path*"
     },
     {
       "source": "/api/:path*",
-      "destination": "/api?__path=:path*"
+      "destination": "/api/index?__path=:path*"
     },
     {
       "source": "/:path((?!api/|manus-storage/).*)",
