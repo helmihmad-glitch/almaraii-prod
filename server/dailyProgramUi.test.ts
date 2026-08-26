@@ -15,6 +15,7 @@ describe("Programme journalier", () => {
     expect(schema).toContain('mysqlTable("daily_program_lines"');
     expect(schema).toContain('uniqueIndex("daily_programs_date_unique")');
     expect(db).toContain("getDailyProgramByDate");
+    expect(db).toContain("if (!program) return null;");
     expect(db).toContain("createDailyProgramLine");
   });
 

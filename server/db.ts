@@ -108,10 +108,10 @@ export async function listDailyPrograms() {
 
 export async function getDailyProgramByDate(programDate: string) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return null;
   const programs = await db.select().from(dailyPrograms).where(eq(dailyPrograms.programDate, programDate)).limit(1);
   const program = programs[0];
-  if (!program) return undefined;
+  if (!program) return null;
   const lines = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.programId, program.id)).orderBy(asc(dailyProgramLines.sequence), asc(dailyProgramLines.id));
   return { ...program, lines };
 }

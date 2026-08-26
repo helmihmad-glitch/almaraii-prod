@@ -246,3 +246,4 @@
 - [x] Remplacer « Analyse des lignes » par « Programme journalier » et proposer la consultation du programme par date.
 - [x] Ajouter « Programme journalier donnée » dans la navigation avec un espace CRUD de gestion des programmes.
 - [x] Tester les flux Programme journalier sur desktop/mobile, puis publier le module.
+- [x] Corriger la requête Programme journalier pour qu’une date sans programme ne renvoie jamais undefined, puis ajouter un test de régression et publier.
