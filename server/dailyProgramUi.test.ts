@@ -63,4 +63,9 @@ describe("Programme journalier", () => {
     expect(dailyProgramPdf).toContain("Quantité (tonne)");
     expect(dailyProgramPdf).toContain("programme-production-");
   });
+
+  it("retire les descriptions introductives du programme et de son espace de gestion", () => {
+    expect(dailyProgram).not.toContain("Consultez le programme de fabrication prévu pour une journée");
+    expect(dailyProgramData).not.toContain("Créez les programmes quotidiens, attribuez les pupitreurs");
+  });
 });

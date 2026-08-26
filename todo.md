@@ -253,3 +253,4 @@
 - [x] Alimenter la sélection d’article du programme journalier depuis les articles configurés, puis tester et publier.
 - [x] Créer un modèle PDF du Programme journalier avec en-tête Almaraïi, références, date, pupitreurs et tableau planifié.
 - [x] Ajouter une action d’export PDF à la page Programme journalier et valider le rendu du document.
+- [x] Retirer les deux textes descriptifs des pages Programme journalier et Programme journalier donnée.

@@ -36,7 +36,7 @@ export default function DailyProgram() {
 
       <section className="daily-program-page">
         <div className="daily-program-hero">
-          <div><span className="daily-program-kicker"><ClipboardList size={14} />Planification de production</span><h1>Programme <em>journalier</em></h1><p>Consultez le programme de fabrication prévu pour une journée et naviguez simplement vers les jours précédents.</p></div>
+          <div><span className="daily-program-kicker"><ClipboardList size={14} />Planification de production</span><h1>Programme <em>journalier</em></h1></div>
           <label className="daily-program-date"><span>Date du programme</span><div><CalendarDays size={16} /><input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Choisir la date du programme" /></div></label>
         </div>
 
