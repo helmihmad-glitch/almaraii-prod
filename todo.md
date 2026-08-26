@@ -257,3 +257,4 @@
 - [x] Pousser les dernières améliorations du Programme journalier vers GitHub sous la version V1.3.
 - [x] Corriger la réponse d’import Excel afin qu’elle reste valide et exploitable en déploiement Vercel.
 - [x] Rendre le logo Almaraïi disponible dans les déploiements externes, dont Vercel.
+- [x] Pousser les correctifs Vercel d’import Excel et de logo vers GitHub sous la version V1.4.
