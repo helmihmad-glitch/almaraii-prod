@@ -7,13 +7,21 @@ import { publicProcedure, router } from "./_core/trpc";
 import {
   addProductionArticle,
   archiveProductionArticle,
+  createDailyProgram,
+  createDailyProgramLine,
   createProductionRecord,
+  deleteDailyProgram,
+  deleteDailyProgramLine,
   deleteProductionRecord,
+  getDailyProgramByDate,
   getProductionSettings,
   initializeProductionArticles,
   listActiveProductionArticles,
+  listDailyPrograms,
   listProductionRecords,
   saveActionPasswordDigest,
+  updateDailyProgram,
+  updateDailyProgramLine,
   updateProductionRecord,
 } from "./db";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
@@ -50,6 +58,24 @@ export async function assertProductionActionAuthorized(password: string | undefi
 
 const recordWithCommentInput = recordInput.safeExtend({
   comment: z.string().trim().max(1000, "Le commentaire ne peut pas dépasser 1 000 caractères.").optional(),
+});
+
+const dateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ");
+const optionalProgramText = (maxLength: number) => z.string().trim().max(maxLength).optional().transform((value) => value || undefined);
+const dailyProgramInput = z.object({
+  programDate: dateInput,
+  operatorName: z.string().trim().min(1, "Indiquez le pupitreur.").max(1000),
+});
+const dailyProgramLineInput = z.object({
+  programId: z.number().int().positive(),
+  sequence: z.number().int().min(1).max(999),
+  article: optionalProgramText(64),
+  version: optionalProgramText(64),
+  bagQuantity: optionalProgramText(128),
+  bulkQuantity: optionalProgramText(128),
+  plannedStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "L’heure de début doit être au format HH:MM"),
+  plannedEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "L’heure de fin doit être au format HH:MM"),
+  observation: optionalProgramText(4000),
 });
 
 export function calculateRecord(input: z.infer<typeof recordInput>) {
@@ -101,6 +127,38 @@ export const appRouter = router({
       await assertProductionActionAuthorized(input.currentPassword);
       await saveActionPasswordDigest(createActionPasswordDigest(input.newPassword));
       return { success: true } as const;
+    }),
+  }),
+  dailyProgram: router({
+    list: publicProcedure.query(() => listDailyPrograms()),
+    byDate: publicProcedure.input(z.object({ programDate: dateInput })).query(({ input }) => getDailyProgramByDate(input.programDate)),
+    create: publicProcedure.input(dailyProgramInput.safeExtend({ actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const { actionPassword, ...program } = input;
+      return createDailyProgram(program);
+    }),
+    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const { id, actionPassword, ...program } = input;
+      return updateDailyProgram(id, program);
+    }),
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return deleteDailyProgram(input.id);
+    }),
+    createLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const { actionPassword, ...line } = input;
+      return createDailyProgramLine(line);
+    }),
+    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const { id, actionPassword, ...line } = input;
+      return updateDailyProgramLine(id, line);
+    }),
+    deleteLine: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      return deleteDailyProgramLine(input.id);
     }),
   }),
   production: router({

@@ -1,6 +1,10 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
+  dailyProgramLines,
+  dailyPrograms,
+  InsertDailyProgram,
+  InsertDailyProgramLine,
   InsertProductionRecord,
   InsertUser,
   productionArticles,
@@ -93,6 +97,69 @@ export async function deleteProductionRecord(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
   await db.delete(productionRecords).where(eq(productionRecords.id, id));
+  return { success: true } as const;
+}
+
+export async function listDailyPrograms() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(dailyPrograms).orderBy(desc(dailyPrograms.programDate));
+}
+
+export async function getDailyProgramByDate(programDate: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const programs = await db.select().from(dailyPrograms).where(eq(dailyPrograms.programDate, programDate)).limit(1);
+  const program = programs[0];
+  if (!program) return undefined;
+  const lines = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.programId, program.id)).orderBy(asc(dailyProgramLines.sequence), asc(dailyProgramLines.id));
+  return { ...program, lines };
+}
+
+export async function createDailyProgram(program: InsertDailyProgram) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(dailyPrograms).values(program);
+  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, result[0].insertId));
+  return rows[0];
+}
+
+export async function updateDailyProgram(id: number, program: Partial<InsertDailyProgram>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.update(dailyPrograms).set(program).where(eq(dailyPrograms.id, id));
+  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, id));
+  return rows[0];
+}
+
+export async function deleteDailyProgram(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.delete(dailyProgramLines).where(eq(dailyProgramLines.programId, id));
+  await db.delete(dailyPrograms).where(eq(dailyPrograms.id, id));
+  return { success: true } as const;
+}
+
+export async function createDailyProgramLine(line: InsertDailyProgramLine) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  const result = await db.insert(dailyProgramLines).values(line);
+  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, result[0].insertId));
+  return rows[0];
+}
+
+export async function updateDailyProgramLine(id: number, line: Partial<InsertDailyProgramLine>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.update(dailyProgramLines).set(line).where(eq(dailyProgramLines.id, id));
+  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, id));
+  return rows[0];
+}
+
+export async function deleteDailyProgramLine(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+  await db.delete(dailyProgramLines).where(eq(dailyProgramLines.id, id));
   return { success: true } as const;
 }
 

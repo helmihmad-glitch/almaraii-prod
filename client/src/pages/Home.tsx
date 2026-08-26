@@ -1,7 +1,7 @@
 // Atelier Signal — page de pilotage : composition en feuille de production, signaux orange et typographie éditoriale.
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, ArrowDownRight, ArrowUpRight, BarChart3, Bell, CalendarDays,
+  Activity, ArrowDownRight, ArrowUpRight, Bell, CalendarDays,
   ChevronDown, CircleHelp, ClipboardList, Download, Factory, Gauge,
   LayoutDashboard, Menu, MoreHorizontal, PackageCheck, Search, Settings2,
   SlidersHorizontal, Sparkles, Target, Timer, TrendingUp, TriangleAlert,
@@ -144,6 +144,8 @@ export default function Home() {
   });
   const openRegistry = () => { setSidebarOpen(false); setLocation("/registre"); };
   const openSettings = () => { setSidebarOpen(false); setLocation("/parametres"); };
+  const openDailyProgram = () => { setSidebarOpen(false); setLocation("/programme-journalier"); };
+  const openDailyProgramData = () => { setSidebarOpen(false); setLocation("/programme-journalier-donnee"); };
   const month = months.find((item) => monthPrefixFromKey(item.key) === selectedPeriod) ?? ({ name: periodNameFromValue(selectedPeriod), target: 0 } as Month);
   const monthPrefix = selectedPeriod;
   const periodName = periodNameFromValue(selectedPeriod);
@@ -221,7 +223,8 @@ export default function Home() {
         <div className="rail-section"><span className="rail-label">Espace opérationnel</span><nav>
           <button className="rail-link active"><LayoutDashboard size={17} />Vue d’ensemble</button>
           <button className="rail-link" onClick={openRegistry}><ClipboardList size={17} />Registre journalier</button>
-          <button className="rail-link" onClick={() => toast.info("La comparaison multi-lignes arrive bientôt.")}><BarChart3 size={17} />Analyse des lignes</button>
+          <button className="rail-link" onClick={openDailyProgram}><CalendarDays size={17} />Programme journalier</button>
+          <button className="rail-link" onClick={openDailyProgramData}><SlidersHorizontal size={17} />Programme journalier donnée</button>
         </nav></div>
         <div className="rail-section"><span className="rail-label">Raccourcis</span><nav>
           <button className="rail-link" onClick={exportData}><Download size={17} />Exporter les données</button>

@@ -1,4 +1,4 @@
-import { boolean, decimal, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { boolean, decimal, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -57,6 +57,29 @@ export const productionSettings = mysqlTable("production_settings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const dailyPrograms = mysqlTable("daily_programs", {
+  id: int("id").autoincrement().primaryKey(),
+  programDate: varchar("programDate", { length: 10 }).notNull(),
+  operatorName: text("operatorName").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [uniqueIndex("daily_programs_date_unique").on(table.programDate)]);
+
+export const dailyProgramLines = mysqlTable("daily_program_lines", {
+  id: int("id").autoincrement().primaryKey(),
+  programId: int("programId").notNull(),
+  sequence: int("sequence").notNull().default(1),
+  article: varchar("article", { length: 64 }),
+  version: varchar("version", { length: 64 }),
+  bagQuantity: varchar("bagQuantity", { length: 128 }),
+  bulkQuantity: varchar("bulkQuantity", { length: 128 }),
+  plannedStart: varchar("plannedStart", { length: 5 }).notNull(),
+  plannedEnd: varchar("plannedEnd", { length: 5 }).notNull(),
+  observation: text("observation"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [index("daily_program_lines_program_sequence_index").on(table.programId, table.sequence)]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ProductionRecord = typeof productionRecords.$inferSelect;
@@ -64,3 +87,7 @@ export type InsertProductionRecord = typeof productionRecords.$inferInsert;
 export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;
 export type ProductionArticle = typeof productionArticles.$inferSelect;
 export type ProductionSettings = typeof productionSettings.$inferSelect;
+export type DailyProgram = typeof dailyPrograms.$inferSelect;
+export type InsertDailyProgram = typeof dailyPrograms.$inferInsert;
+export type DailyProgramLine = typeof dailyProgramLines.$inferSelect;
+export type InsertDailyProgramLine = typeof dailyProgramLines.$inferInsert;

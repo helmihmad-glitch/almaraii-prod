@@ -241,3 +241,8 @@
 - [x] Réintégrer le badge JOURNÉE et son pourcentage calculé dans la carte de production du PDF, puis vérifier et publier.
 - [x] Afficher chaque article et tonnage sur sa propre ligne dans la carte de production journalière du PDF, puis vérifier et publier.
 - [x] Espacer la liste d’articles du PDF et répartir les deux premiers à gauche, puis le troisième à droite, avant vérification et publication.
+- [x] Définir le modèle de données persistant du Programme journalier avec date, pupitreur et lignes planifiées.
+- [x] Créer les opérations de consultation, ajout, modification et suppression des lignes de programme.
+- [x] Remplacer « Analyse des lignes » par « Programme journalier » et proposer la consultation du programme par date.
+- [x] Ajouter « Programme journalier donnée » dans la navigation avec un espace CRUD de gestion des programmes.
+- [x] Tester les flux Programme journalier sur desktop/mobile, puis publier le module.
