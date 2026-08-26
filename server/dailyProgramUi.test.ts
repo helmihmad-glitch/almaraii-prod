@@ -9,6 +9,7 @@ const home = readFileSync(new URL("../client/src/pages/Home.tsx", import.meta.ur
 const dailyProgram = readFileSync(new URL("../client/src/pages/DailyProgram.tsx", import.meta.url), "utf8");
 const dailyProgramData = readFileSync(new URL("../client/src/pages/DailyProgramData.tsx", import.meta.url), "utf8");
 const settings = readFileSync(new URL("../client/src/pages/Settings.tsx", import.meta.url), "utf8");
+const dailyProgramPdf = readFileSync(new URL("../client/src/lib/dailyProgramPdf.ts", import.meta.url), "utf8");
 
 describe("Programme journalier", () => {
   it("déclare un stockage persistant pour les en-têtes et lignes planifiées", () => {
@@ -51,5 +52,15 @@ describe("Programme journalier", () => {
     expect(dailyProgramData).toContain("selectedOperatorNames.join");
     expect(dailyProgramData).toContain("articlesQuery");
     expect(dailyProgramData).toContain("<select");
+  });
+
+  it("propose l’export PDF structuré du programme planifié", () => {
+    expect(dailyProgram).toContain("generateDailyProgramPdf");
+    expect(dailyProgram).toContain("Exporter PDF");
+    expect(dailyProgramPdf).toContain("Programme de Production");
+    expect(dailyProgramPdf).toContain("Réf: For-Prod-09");
+    expect(dailyProgramPdf).toContain("Pupitreur");
+    expect(dailyProgramPdf).toContain("Quantité (tonne)");
+    expect(dailyProgramPdf).toContain("programme-production-");
   });
 });

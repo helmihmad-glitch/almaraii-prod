@@ -251,3 +251,5 @@
 - [x] Ajouter dans Paramètres la gestion de la liste des pupitreurs.
 - [x] Permettre la sélection multiple de pupitreurs dans le programme journalier.
 - [x] Alimenter la sélection d’article du programme journalier depuis les articles configurés, puis tester et publier.
+- [x] Créer un modèle PDF du Programme journalier avec en-tête Almaraïi, références, date, pupitreurs et tableau planifié.
+- [x] Ajouter une action d’export PDF à la page Programme journalier et valider le rendu du document.

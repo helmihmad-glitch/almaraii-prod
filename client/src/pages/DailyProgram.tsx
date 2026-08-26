@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, CalendarDays, ClipboardList, Database } from "lucide-react";
+import { ArrowLeft, CalendarDays, ClipboardList, Database, Download } from "lucide-react";
 import { Link } from "wouter";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { generateDailyProgramPdf } from "@/lib/dailyProgramPdf";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const formatDate = (value: string) => new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(`${value}T00:00:00`));
@@ -11,6 +13,19 @@ export default function DailyProgram() {
   const dateInput = useMemo(() => ({ programDate: selectedDate }), [selectedDate]);
   const programQuery = trpc.dailyProgram.byDate.useQuery(dateInput);
   const program = programQuery.data;
+  const [isExporting, setIsExporting] = useState(false);
+  const exportProgram = async () => {
+    if (!program) return;
+    setIsExporting(true);
+    try {
+      await generateDailyProgramPdf({ programDate: program.programDate, operatorName: program.operatorName, lines: program.lines });
+      toast.success("Programme PDF téléchargé");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Impossible de générer le programme PDF.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <main className="daily-program-screen">
@@ -29,7 +44,7 @@ export default function DailyProgram() {
           <div className="daily-program-sheet-head">
             <div><span className="daily-program-sheet-label">Date</span><strong>{formatDate(selectedDate)}</strong></div>
             <div><span className="daily-program-sheet-label">Pupitreur</span><strong>{programQuery.isLoading ? "Chargement…" : program?.operatorName || "Aucun pupitreur renseigné"}</strong></div>
-            <Link href="/programme-journalier-donnee" className="daily-program-manage-link"><Database size={15} />Gérer les données</Link>
+            <div className="daily-program-sheet-actions"><button type="button" className="daily-program-export" onClick={exportProgram} disabled={!program || isExporting}><Download size={15} />{isExporting ? "Génération…" : "Exporter PDF"}</button><Link href="/programme-journalier-donnee" className="daily-program-manage-link"><Database size={15} />Gérer les données</Link></div>
           </div>
 
           {programQuery.isLoading ? <div className="daily-program-empty">Chargement du programme…</div> : !program ? <div className="daily-program-empty"><ClipboardList size={24} /><strong>Aucun programme enregistré</strong><span>Le programme du {formatDate(selectedDate)} n’a pas encore été saisi.</span><Link href="/programme-journalier-donnee">Créer ce programme</Link></div> : <div className="daily-program-table-wrap"><table className="daily-program-table"><thead><tr><th rowSpan={2}>N°</th><th rowSpan={2}>Article</th><th rowSpan={2}>Version</th><th colSpan={2}>Quantité (tonne)</th><th rowSpan={2}>H début prévue</th><th rowSpan={2}>H fin prévue</th><th rowSpan={2}>Observation</th></tr><tr><th>Sac</th><th>Vrac</th></tr></thead><tbody>{program.lines.length ? program.lines.map((line) => <tr key={line.id}><td>{line.sequence}</td><td className="daily-program-article">{line.article || "—"}</td><td>{line.version || "—"}</td><td>{line.bagQuantity || "—"}</td><td>{line.bulkQuantity || "—"}</td><td>{line.plannedStart}</td><td>{line.plannedEnd}</td><td className="daily-program-observation">{line.observation || "—"}</td></tr>) : <tr><td colSpan={8} className="daily-program-empty-cell">Aucune ligne programmée pour cette journée.</td></tr>}</tbody></table></div>}
