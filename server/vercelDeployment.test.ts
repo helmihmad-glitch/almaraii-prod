@@ -7,6 +7,13 @@ const vercelConfig = readFileSync(`${root}vercel.json`, "utf8");
 const vercelFunction = readFileSync(`${root}api/[...path].ts`, "utf8");
 const vercelApiEntry = readFileSync(`${root}api/index.ts`, "utf8");
 const appFactory = readFileSync(`${root}server/_core/app.ts`, "utf8");
+const serverSources = [
+  readFileSync(`${root}server/routers.ts`, "utf8"),
+  readFileSync(`${root}server/_core/oauth.ts`, "utf8"),
+  readFileSync(`${root}server/_core/sdk.ts`, "utf8"),
+  readFileSync(`${root}server/_core/trpc.ts`, "utf8"),
+  readFileSync(`${root}server/_core/imageGeneration.ts`, "utf8"),
+].join("\n");
 
 describe("configuration de déploiement Vercel", () => {
   it("sert le frontend Vite compilé plutôt que le bundle serveur", () => {
@@ -27,5 +34,11 @@ describe("configuration de déploiement Vercel", () => {
     expect(vercelConfig).toContain('"destination": "/api?__path=:path*"');
     expect(vercelConfig).toContain('"source": "/:path((?!api/|manus-storage/).*)"');
     expect(vercelConfig).not.toContain('"source": "/api/(.*)"');
+  });
+
+  it("utilise des imports relatifs exécutables par la fonction Node Vercel", () => {
+    expect(serverSources).not.toContain('from "@shared/');
+    expect(serverSources).not.toContain('from \'@shared/');
+    expect(serverSources).not.toContain('from "server/');
   });
 });
