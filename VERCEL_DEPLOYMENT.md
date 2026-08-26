@@ -18,7 +18,7 @@ Ne renseignez pas `dist` ou `dist/index.js` comme **Output Directory**. Après l
 
 Ajoutez dans Vercel les mêmes variables que celles du projet actuel, sans jamais committer leurs valeurs : `DATABASE_URL`, `JWT_SECRET`, `COMMENT_EDIT_PASSWORD`, `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY`, `OAUTH_SERVER_URL`, `VITE_APP_ID`, `VITE_OAUTH_PORTAL_URL`, `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY`, `OWNER_OPEN_ID` et `OWNER_NAME`.
 
-Les chemins `/api/trpc/*`, `/api/oauth/callback` et `/manus-storage/*` sont pris en charge par la fonction Vercel. Ils sont explicitement exclus de la réécriture du frontend afin que les mutations `POST` tRPC restent dirigées vers la fonction Node. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
+Les chemins `/api/trpc/*`, `/api/oauth/callback` et `/manus-storage/*` sont relayés vers `api/index.ts`, une fonction Vercel racine stable qui restitue le chemin initial à Express. Les mutations `POST` tRPC restent donc dirigées vers la fonction Node ; elles ne sont jamais envoyées vers le frontend statique. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
 
 ## Import Excel et logo
 
