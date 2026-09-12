@@ -155,7 +155,19 @@ let nextFallbackRecordId = persistedFallback.nextRecordId;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const db = drizzle(process.env.DATABASE_URL);
+      // mysql2's pool emits "error" on background connection issues (idle
+      // timeout, network drop, DB restart). Without a listener, Node treats
+      // that as an uncaught exception and crashes the whole serverless
+      // function ("FUNCTION_INVOCATION_FAILED" on Vercel) instead of just
+      // failing the in-flight query. Logging it here keeps the process
+      // alive, and dropping the cached instance forces a fresh pool on the
+      // next request instead of reusing a broken connection.
+      db.$client.on("error", (error) => {
+        console.error("[Database] Pool error:", error);
+        _db = null;
+      });
+      _db = db;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
