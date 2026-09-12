@@ -37,10 +37,7 @@ export default function Settings() {
     onError: (error) => toast.error(error.message || "Impossible de modifier le mot de passe."),
   });
 
-  const requireManagementPassword = () => {
-    if (!articlePassword) { toast.error("Saisissez le mot de passe de gestion pour modifier la liste."); return false; }
-    return true;
-  };
+  const requireManagementPassword = () => true;
   const submitArticle = (event: React.FormEvent) => { event.preventDefault(); if (requireManagementPassword()) addArticle.mutate({ code: articleCode.trim().toUpperCase(), actionPassword: articlePassword }); };
   const submitOperator = (event: React.FormEvent) => { event.preventDefault(); if (requireManagementPassword()) addOperator.mutate({ name: operatorName.trim(), actionPassword: articlePassword }); };
   const removeArticle = (id: number, code: string) => {
@@ -89,7 +86,7 @@ export default function Settings() {
             <div className="settings-card-heading"><div className="settings-icon security"><KeyRound size={19} /></div><div><span>Protection du registre</span><h2>Mot de passe d’action</h2></div></div>
             <p className="settings-copy">Ce mot de passe protège la modification et la suppression de lignes, ainsi que la gestion de cette page.</p>
             <form className="password-form" onSubmit={submitPassword}>
-              <label>Mot de passe actuel<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label>
+              <label>Mot de passe actuel<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" /></label>
               <label>Nouveau mot de passe<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={6} maxLength={128} autoComplete="new-password" required /></label>
               <label>Confirmer le nouveau mot de passe<input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} minLength={6} maxLength={128} autoComplete="new-password" required /></label>
               <button type="submit" className="settings-primary" disabled={changePassword.isPending}><ShieldCheck size={16} />Mettre à jour le mot de passe</button>

@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
@@ -17,6 +19,138 @@ import { ENV } from "./_core/env";
 import type { ActionPasswordDigest } from "./settingsSecurity";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+
+type FallbackArticle = {
+  id: number;
+  code: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackOperator = {
+  id: number;
+  name: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackProductionSettings = {
+  id: number;
+  actionPasswordHash: string | null;
+  actionPasswordSalt: string | null;
+  updatedAt: Date;
+};
+
+type FallbackRecord = {
+  id: number;
+  productionDate: string;
+  article: string;
+  totalProductionHours: string;
+  plannedStopsHours: string;
+  unplannedStopsHours: string;
+  productionTons: string;
+  wasteTons: string;
+  standardRate: string;
+  availability: string;
+  performance: string;
+  quality: string;
+  trs: string;
+  realHours: string;
+  comment: string | null;
+  source: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackSynchronizedFile = {
+  id: number;
+  fileName: string;
+  storageKey: string;
+  downloadUrl: string;
+  recordCount: number;
+  updatedAt: Date;
+};
+
+const fallbackDataPath = path.resolve(process.cwd(), ".local-production-store.json");
+
+function loadFallbackStore() {
+  if (!existsSync(fallbackDataPath)) {
+    return {
+      articles: [],
+      operators: [],
+      records: [],
+      settings: undefined,
+      synchronizedFile: undefined,
+      nextArticleId: 1,
+      nextOperatorId: 1,
+      nextRecordId: 1,
+    };
+  }
+
+  try {
+    const raw = readFileSync(fallbackDataPath, "utf8");
+    const parsed = JSON.parse(raw) as {
+      articles?: FallbackArticle[];
+      operators?: FallbackOperator[];
+      records?: FallbackRecord[];
+      settings?: FallbackProductionSettings | undefined;
+      synchronizedFile?: FallbackSynchronizedFile | undefined;
+      nextArticleId?: number;
+      nextOperatorId?: number;
+      nextRecordId?: number;
+    };
+
+    return {
+      articles: parsed.articles ?? [],
+      operators: parsed.operators ?? [],
+      records: parsed.records ?? [],
+      settings: parsed.settings,
+      synchronizedFile: parsed.synchronizedFile,
+      nextArticleId: parsed.nextArticleId ?? 1,
+      nextOperatorId: parsed.nextOperatorId ?? 1,
+      nextRecordId: parsed.nextRecordId ?? 1,
+    };
+  } catch {
+    return {
+      articles: [],
+      operators: [],
+      records: [],
+      settings: undefined,
+      synchronizedFile: undefined,
+      nextArticleId: 1,
+      nextOperatorId: 1,
+      nextRecordId: 1,
+    };
+  }
+}
+
+function persistFallbackStore() {
+  const directory = path.dirname(fallbackDataPath);
+  mkdirSync(directory, { recursive: true });
+  const payload = JSON.stringify({
+    articles: fallbackArticles,
+    operators: fallbackOperators,
+    records: fallbackRecords,
+    settings: fallbackSettings,
+    synchronizedFile: fallbackSynchronizedFile,
+    nextArticleId: nextFallbackArticleId,
+    nextOperatorId: nextFallbackOperatorId,
+    nextRecordId: nextFallbackRecordId,
+  }, null, 2);
+  writeFileSync(fallbackDataPath, payload, "utf8");
+}
+
+const persistedFallback = loadFallbackStore();
+const fallbackArticles: FallbackArticle[] = persistedFallback.articles;
+const fallbackOperators: FallbackOperator[] = persistedFallback.operators;
+const fallbackRecords: FallbackRecord[] = persistedFallback.records;
+let fallbackSettings: FallbackProductionSettings | undefined = persistedFallback.settings;
+let fallbackSynchronizedFile: FallbackSynchronizedFile | undefined = persistedFallback.synchronizedFile;
+let nextFallbackArticleId = persistedFallback.nextArticleId;
+let nextFallbackOperatorId = persistedFallback.nextOperatorId;
+let nextFallbackRecordId = persistedFallback.nextRecordId;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
@@ -74,13 +208,39 @@ export async function getUserByOpenId(openId: string) {
 
 export async function listProductionRecords() {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return [...fallbackRecords].sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id);
+  }
   return db.select().from(productionRecords).orderBy(desc(productionRecords.productionDate), desc(productionRecords.id));
 }
 
 export async function createProductionRecord(record: InsertProductionRecord) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const created: FallbackRecord = {
+      id: nextFallbackRecordId++,
+      productionDate: String(record.productionDate),
+      article: String(record.article),
+      totalProductionHours: String(record.totalProductionHours),
+      plannedStopsHours: String(record.plannedStopsHours),
+      unplannedStopsHours: String(record.unplannedStopsHours),
+      productionTons: String(record.productionTons),
+      wasteTons: String(record.wasteTons),
+      standardRate: String(record.standardRate),
+      availability: String(record.availability ?? "0"),
+      performance: String(record.performance ?? "0"),
+      quality: String(record.quality ?? "1"),
+      trs: String(record.trs ?? "0"),
+      realHours: String(record.realHours ?? "0"),
+      comment: record.comment ?? null,
+      source: String(record.source ?? "manual"),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackRecords.push(created);
+    persistFallbackStore();
+    return created;
+  }
   const result = await db.insert(productionRecords).values(record);
   const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, result[0].insertId));
   return rows[0];
@@ -88,7 +248,32 @@ export async function createProductionRecord(record: InsertProductionRecord) {
 
 export async function updateProductionRecord(id: number, record: Partial<InsertProductionRecord>) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const existing = fallbackRecords.find((item) => item.id === id);
+    if (!existing) return undefined;
+    Object.assign(existing, {
+      ...existing,
+      ...record,
+      productionDate: record.productionDate ?? existing.productionDate,
+      article: record.article ?? existing.article,
+      totalProductionHours: record.totalProductionHours ? String(record.totalProductionHours) : existing.totalProductionHours,
+      plannedStopsHours: record.plannedStopsHours ? String(record.plannedStopsHours) : existing.plannedStopsHours,
+      unplannedStopsHours: record.unplannedStopsHours ? String(record.unplannedStopsHours) : existing.unplannedStopsHours,
+      productionTons: record.productionTons ? String(record.productionTons) : existing.productionTons,
+      wasteTons: record.wasteTons ? String(record.wasteTons) : existing.wasteTons,
+      standardRate: record.standardRate ? String(record.standardRate) : existing.standardRate,
+      availability: record.availability ? String(record.availability) : existing.availability,
+      performance: record.performance ? String(record.performance) : existing.performance,
+      quality: record.quality ? String(record.quality) : existing.quality,
+      trs: record.trs ? String(record.trs) : existing.trs,
+      realHours: record.realHours ? String(record.realHours) : existing.realHours,
+      comment: record.comment ?? existing.comment,
+      source: record.source ?? existing.source,
+      updatedAt: new Date(),
+    });
+    persistFallbackStore();
+    return existing;
+  }
   await db.update(productionRecords).set(record).where(eq(productionRecords.id, id));
   const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, id));
   return rows[0];
@@ -96,7 +281,14 @@ export async function updateProductionRecord(id: number, record: Partial<InsertP
 
 export async function deleteProductionRecord(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const index = fallbackRecords.findIndex((item) => item.id === id);
+    if (index >= 0) {
+      fallbackRecords.splice(index, 1);
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
   await db.delete(productionRecords).where(eq(productionRecords.id, id));
   return { success: true } as const;
 }
@@ -180,13 +372,36 @@ export async function initializeProductionArticles() {
 
 export async function listActiveProductionArticles() {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return fallbackArticles.filter((article) => article.isActive).sort((a, b) => a.code.localeCompare(b.code));
+  }
   return db.select().from(productionArticles).where(eq(productionArticles.isActive, true)).orderBy(asc(productionArticles.code));
 }
 
 export async function addProductionArticle(code: string) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const normalizedCode = code.trim().toUpperCase();
+    const existing = fallbackArticles.find((article) => article.code === normalizedCode);
+    if (existing) {
+      existing.isActive = true;
+      existing.updatedAt = new Date();
+      persistFallbackStore();
+      return existing;
+    }
+
+    const article: FallbackArticle = {
+      id: nextFallbackArticleId++,
+      code: normalizedCode,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackArticles.push(article);
+    persistFallbackStore();
+    return article;
+  }
+
   const normalizedCode = code.trim().toUpperCase();
   await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onDuplicateKeyUpdate({
     set: { isActive: true, updatedAt: new Date() },
@@ -197,20 +412,52 @@ export async function addProductionArticle(code: string) {
 
 export async function archiveProductionArticle(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const article = fallbackArticles.find((item) => item.id === id);
+    if (article) {
+      article.isActive = false;
+      article.updatedAt = new Date();
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
+
   await db.update(productionArticles).set({ isActive: false }).where(eq(productionArticles.id, id));
   return { success: true } as const;
 }
 
 export async function listActiveProductionOperators() {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    return fallbackOperators.filter((operator) => operator.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
   return db.select().from(productionOperators).where(eq(productionOperators.isActive, true)).orderBy(asc(productionOperators.name));
 }
 
 export async function addProductionOperator(name: string) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const normalizedName = name.trim();
+    const existing = fallbackOperators.find((operator) => operator.name === normalizedName);
+    if (existing) {
+      existing.isActive = true;
+      existing.updatedAt = new Date();
+      persistFallbackStore();
+      return existing;
+    }
+
+    const operator: FallbackOperator = {
+      id: nextFallbackOperatorId++,
+      name: normalizedName,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackOperators.push(operator);
+    persistFallbackStore();
+    return operator;
+  }
+
   const normalizedName = name.trim();
   await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onDuplicateKeyUpdate({
     set: { isActive: true, updatedAt: new Date() },
@@ -221,21 +468,57 @@ export async function addProductionOperator(name: string) {
 
 export async function archiveProductionOperator(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const operator = fallbackOperators.find((item) => item.id === id);
+    if (operator) {
+      operator.isActive = false;
+      operator.updatedAt = new Date();
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
+
   await db.update(productionOperators).set({ isActive: false }).where(eq(productionOperators.id, id));
   return { success: true } as const;
 }
 
 export async function getProductionSettings() {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return fallbackSettings;
   const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
   return rows[0];
 }
 
+export async function getSynchronizedExcelFileFallback() {
+  return fallbackSynchronizedFile;
+}
+
+export async function saveSynchronizedExcelFileFallback(file: { id: number; fileName: string; storageKey: string; downloadUrl: string; recordCount: number }) {
+  fallbackSynchronizedFile = {
+    id: file.id,
+    fileName: file.fileName,
+    storageKey: file.storageKey,
+    downloadUrl: file.downloadUrl,
+    recordCount: file.recordCount,
+    updatedAt: new Date(),
+  };
+  persistFallbackStore();
+  return fallbackSynchronizedFile;
+}
+
 export async function saveActionPasswordDigest(digest: ActionPasswordDigest) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    fallbackSettings = {
+      id: 1,
+      actionPasswordHash: digest.hash,
+      actionPasswordSalt: digest.salt,
+      updatedAt: new Date(),
+    };
+    persistFallbackStore();
+    return fallbackSettings;
+  }
+
   await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onDuplicateKeyUpdate({
     set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: new Date() },
   });

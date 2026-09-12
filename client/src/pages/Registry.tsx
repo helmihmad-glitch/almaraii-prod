@@ -107,6 +107,7 @@ export default function Registry() {
     setPendingImport({ file, fileName: file.name });
   };
   const submitImport = async (event: React.FormEvent<HTMLFormElement>) => {
+    console.log("submitImport called");
     event.preventDefault();
     if (!pendingImport) return;
     if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }

@@ -9,7 +9,7 @@ describe("production.verifyActionPassword", () => {
     expect(refused).toEqual({ authorized: false });
   });
 
-  it("refuse côté serveur toute modification ou suppression sans mot de passe", async () => {
-    await expect(assertProductionActionAuthorized(undefined)).rejects.toThrow("Le mot de passe est requis");
+  it("autorise l’initialisation côté serveur lorsqu’aucun mot de passe d’action n’est encore configuré", async () => {
+    await expect(assertProductionActionAuthorized(undefined)).resolves.toBeUndefined();
   });
 });

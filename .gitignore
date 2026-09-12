@@ -45,6 +45,7 @@ pids
 *.seed
 *.pid.lock
 *.bak
+.local-production-store.json
 
 # Coverage directory used by tools like istanbul
 coverage/

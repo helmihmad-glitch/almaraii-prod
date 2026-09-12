@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { eq } from "drizzle-orm";
 import { productionRecords } from "../drizzle/schema";
-import { addProductionArticle, getDb } from "./db";
+import { addProductionArticle, createProductionRecord, getDb, listProductionRecords, updateProductionRecord } from "./db";
 
 export type ImportedProductionRow = {
   rowNumber: number;
@@ -218,10 +218,9 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
 
 export async function importProductionRows(rows: ImportedProductionRow[]) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
-  const existing = await db.select().from(productionRecords);
+  const existing = db ? await db.select().from(productionRecords) : await listProductionRecords();
   const byId = new Map(existing.map((record) => [record.id, record]));
-  const existingFingerprints = new Set(existing.map(productionRowFingerprint));
+  const existingFingerprints = new Set(existing.map((record) => productionRowFingerprint(record)));
   let created = 0;
   let updated = 0;
   let skipped = 0;
@@ -234,7 +233,11 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
         skipped += 1;
         continue;
       }
-      await db.update(productionRecords).set(values).where(eq(productionRecords.id, existingRecord.id));
+      if (db) {
+        await db.update(productionRecords).set(values).where(eq(productionRecords.id, existingRecord.id));
+      } else {
+        await updateProductionRecord(existingRecord.id, values);
+      }
       existingFingerprints.delete(productionRowFingerprint(existingRecord));
       existingFingerprints.add(fingerprint);
       updated += 1;
@@ -242,8 +245,13 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
       skipped += 1;
       continue;
     } else {
-      const result = await db.insert(productionRecords).values(values);
-      byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
+      if (db) {
+        const result = await db.insert(productionRecords).values(values);
+        byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
+      } else {
+        const createdRecord = await createProductionRecord(values);
+        byId.set(createdRecord.id, createdRecord);
+      }
       existingFingerprints.add(fingerprint);
       created += 1;
     }

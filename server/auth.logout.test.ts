@@ -59,4 +59,25 @@ describe("auth.logout", () => {
       path: "/",
     });
   });
+
+  it("uses browser-friendly cookie settings for local http development", async () => {
+    const { ctx, clearedCookies } = createAuthContext();
+    ctx.req = {
+      protocol: "http",
+      hostname: "localhost",
+      headers: {},
+    } as TrpcContext["req"];
+
+    const caller = appRouter.createCaller(ctx);
+
+    await caller.auth.logout();
+
+    expect(clearedCookies[0]?.options).toMatchObject({
+      maxAge: -1,
+      secure: false,
+      sameSite: "lax",
+      httpOnly: true,
+      path: "/",
+    });
+  });
 });

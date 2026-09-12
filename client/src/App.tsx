@@ -12,6 +12,7 @@ import DailyProgram from "./pages/DailyProgram";
 import DailyProgramData from "./pages/DailyProgramData";
 
 function Router() {
+  console.log("Router initialized");
   // make sure to consider if you need authentication for certain routes
   return (
     <Switch>

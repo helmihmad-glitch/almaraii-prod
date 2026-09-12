@@ -4,6 +4,10 @@
 
 import { ENV } from "./_core/env";
 
+function hasForgeStorageConfig() {
+  return Boolean(ENV.forgeApiUrl && ENV.forgeApiKey);
+}
+
 function getForgeConfig() {
   const forgeUrl = ENV.forgeApiUrl;
   const forgeKey = ENV.forgeApiKey;
@@ -17,8 +21,18 @@ function getForgeConfig() {
   return { forgeUrl: forgeUrl.replace(/\/+$/, ""), forgeKey };
 }
 
+function getLocalStorageBaseUrl() {
+  const configuredBaseUrl = process.env.PUBLIC_BASE_URL || process.env.VITE_PUBLIC_BASE_URL;
+  if (configuredBaseUrl) return configuredBaseUrl.replace(/\/+$/, "");
+  return `http://localhost:${process.env.PORT || 3000}`;
+}
+
 function normalizeKey(relKey: string): string {
   return relKey.replace(/^\/+/, "");
+}
+
+function localStorageUrlForKey(relKey: string): string {
+  return `${getLocalStorageBaseUrl()}/manus-storage/${normalizeKey(relKey)}`;
 }
 
 function appendHashSuffix(relKey: string): string {
@@ -49,13 +63,18 @@ export async function storagePut(
     throw new Error(`Storage upload to S3 failed (${uploadResp.status})`);
   }
 
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: localStorageUrlForKey(key) };
 }
 
 /** Fournit une URL PUT temporaire pour éviter de faire transiter les fichiers par une fonction serverless. */
 export async function storageCreatePresignedUpload(relKey: string): Promise<{ key: string; uploadUrl: string }> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
   const key = appendHashSuffix(normalizeKey(relKey));
+
+  if (!hasForgeStorageConfig()) {
+    return { key, uploadUrl: localStorageUrlForKey(key) };
+  }
+
+  const { forgeUrl, forgeKey } = getForgeConfig();
 
   // 1. Get presigned PUT URL from Forge
   const presignUrl = new URL("v1/storage/presign/put", forgeUrl + "/");
@@ -77,12 +96,17 @@ export async function storageCreatePresignedUpload(relKey: string): Promise<{ ke
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: localStorageUrlForKey(key) };
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
   const key = normalizeKey(relKey);
+
+  if (!hasForgeStorageConfig()) {
+    return localStorageUrlForKey(key);
+  }
+
+  const { forgeUrl, forgeKey } = getForgeConfig();
 
   const getUrl = new URL("v1/storage/presign/get", forgeUrl + "/");
   getUrl.searchParams.set("path", key);

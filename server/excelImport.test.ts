@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { parseImportedWorkbook, productionRowFingerprint } from "./excelImport";
+import { importProductionRows, parseImportedWorkbook, productionRowFingerprint } from "./excelImport";
 
 async function buildWorkbook(values: unknown[]) {
   const workbook = new ExcelJS.Workbook();
@@ -156,5 +156,19 @@ describe("parseImportedWorkbook", () => {
     expect(parsed.errors).toEqual([]);
     expect(augustFifth).toHaveLength(2);
     expect(augustFifth.map((row) => row.article)).toEqual(["DG3", "CG3"]);
+  });
+
+  it("importe une ligne Excel dans le fallback local sans base de données", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Test local");
+    worksheet.addRow(["DATE", "ARTICLE", "TEMPS TOTAL PROD. (h)", "ARRÊTS PLAN. (h)", "ARRÊTS NON PL. (h)", "PROD. (T)", "REBUTS (T)", "CADENCE STD"]);
+    worksheet.addRow(["12/09/2026", "TESTLOCAL", 12, 1, 0, 90, 2, 15]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+    const result = await importProductionRows(parsed.rows);
+
+    expect(parsed.errors).toEqual([]);
+    expect(result.total).toBe(1);
+    expect(result.created).toBeGreaterThanOrEqual(1);
   });
 });

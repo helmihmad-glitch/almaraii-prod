@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import { asc, desc, eq } from "drizzle-orm";
 import sourceData from "../client/src/data/app-data.json";
 import { productionRecords, synchronizedExcelFiles } from "../drizzle/schema";
-import { getDb } from "./db";
+import { getDb, getSynchronizedExcelFileFallback, listProductionRecords, saveSynchronizedExcelFileFallback } from "./db";
 import { storagePut } from "./storage";
 
 type SourceDay = {
@@ -85,7 +85,9 @@ export function shouldSeedExcelRecords(existingRecordCount: number, hasSynchroni
 
 export async function seedExcelRecordsIfNeeded() {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    return { seeded: false, count: 0 };
+  }
 
   const existingRecords = await db.select({ id: productionRecords.id }).from(productionRecords).limit(1);
   const currentFile = await getSynchronizedExcelFile();
@@ -102,17 +104,18 @@ export async function seedExcelRecordsIfNeeded() {
 
 export async function getSynchronizedExcelFile() {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return getSynchronizedExcelFileFallback();
   const rows = await db.select().from(synchronizedExcelFiles).where(eq(synchronizedExcelFiles.id, 1)).limit(1);
   return rows[0];
 }
 
 export async function syncExcelFromRecords() {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
 
-  const records = await db.select().from(productionRecords)
-    .orderBy(asc(productionRecords.productionDate), asc(productionRecords.article), asc(productionRecords.id));
+  const records = db
+    ? await db.select().from(productionRecords)
+      .orderBy(asc(productionRecords.productionDate), asc(productionRecords.article), asc(productionRecords.id))
+    : await listProductionRecords();
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Almaraïi Production Pulse";
@@ -186,6 +189,11 @@ export async function syncExcelFromRecords() {
     downloadUrl: uploaded.url,
     recordCount: records.length,
   };
+
+  if (!db) {
+    return saveSynchronizedExcelFileFallback(fileValues);
+  }
+
   await db.insert(synchronizedExcelFiles).values(fileValues).onDuplicateKeyUpdate({
     set: {
       fileName: fileValues.fileName,

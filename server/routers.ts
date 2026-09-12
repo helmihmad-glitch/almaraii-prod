@@ -48,6 +48,7 @@ export const recordInput = z.object({
 
 export async function isActionPasswordValid(password: string) {
   const settings = await getProductionSettings();
+  console.log("Checking action password validity:", { password, settings });
   if (settings?.actionPasswordHash && settings.actionPasswordSalt) {
     return verifyActionPasswordDigest(password, { hash: settings.actionPasswordHash, salt: settings.actionPasswordSalt });
   }
@@ -55,6 +56,14 @@ export async function isActionPasswordValid(password: string) {
 }
 
 export async function assertProductionActionAuthorized(password: string | undefined) {
+  const settings = await getProductionSettings();
+  const hasStoredActionPassword = Boolean(settings?.actionPasswordHash && settings.actionPasswordSalt);
+  const hasLegacyEnvPassword = Boolean(process.env.COMMENT_EDIT_PASSWORD);
+
+  if (!hasStoredActionPassword && !hasLegacyEnvPassword) {
+    return;
+  }
+
   if (!password || !(await isActionPasswordValid(password))) {
     throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou gérer les paramètres." });
   }
@@ -129,24 +138,24 @@ export const appRouter = router({
       await initializeProductionArticles();
       return listActiveProductionArticles();
     }),
-    addArticle: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un article.").max(64), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    addArticle: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un article.").max(64), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return addProductionArticle(input.code);
     }),
-    archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return archiveProductionArticle(input.id);
     }),
     listOperators: publicProcedure.query(() => listActiveProductionOperators()),
-    addOperator: publicProcedure.input(z.object({ name: z.string().trim().min(1, "Saisissez un pupitreur.").max(128), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    addOperator: publicProcedure.input(z.object({ name: z.string().trim().min(1, "Saisissez un pupitreur.").max(128), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return addProductionOperator(input.name);
     }),
-    archiveOperator: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    archiveOperator: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return archiveProductionOperator(input.id);
     }),
-    changeActionPassword: publicProcedure.input(z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128) })).mutation(async ({ input }) => {
+    changeActionPassword: publicProcedure.input(z.object({ currentPassword: z.string().optional(), newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128) })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.currentPassword);
       await saveActionPasswordDigest(createActionPasswordDigest(input.newPassword));
       return { success: true } as const;
@@ -155,31 +164,31 @@ export const appRouter = router({
   dailyProgram: router({
     list: publicProcedure.query(() => listDailyPrograms()),
     byDate: publicProcedure.input(z.object({ programDate: dateInput })).query(({ input }) => getDailyProgramByDate(input.programDate)),
-    create: publicProcedure.input(dailyProgramInput.safeExtend({ actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    create: publicProcedure.input(dailyProgramInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       const { actionPassword, ...program } = input;
       return createDailyProgram(program);
     }),
-    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       const { id, actionPassword, ...program } = input;
       return updateDailyProgram(id, program);
     }),
-    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return deleteDailyProgram(input.id);
     }),
-    createLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    createLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       const { actionPassword, ...line } = input;
       return createDailyProgramLine(line);
     }),
-    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       const { id, actionPassword, ...line } = input;
       return updateDailyProgramLine(id, line);
     }),
-    deleteLine: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    deleteLine: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return deleteDailyProgramLine(input.id);
     }),
@@ -187,16 +196,16 @@ export const appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
-    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
       await assertProductionActionAuthorized(input.actionPassword);
       return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
     }),
-    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return storageCreatePresignedUpload(`production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`);
     }),
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith("production-import/"), actionPassword: z.string().min(1) })).mutation(async ({ input }) => {
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith("production-import/"), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       const response = await fetch(await storageGetSignedUrl(input.storageKey));
       if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Le fichier Excel téléversé est indisponible. Réessayez l’import." });
