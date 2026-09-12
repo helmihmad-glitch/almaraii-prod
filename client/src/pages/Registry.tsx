@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { upload as uploadToVercelBlob } from "@vercel/blob/client";
 import { trpc } from "@/lib/trpc";
 import { generateDayPdf } from "@/lib/dayPdfReport";
 import { BRAND_LOGO_URL } from "@/lib/brand";
@@ -113,9 +114,22 @@ export default function Registry() {
     if (!importPassword) { toast.error("Saisissez le mot de passe d’action pour importer ce fichier."); return; }
     try {
       const prepared = await prepareExcelUpload.mutateAsync({ fileName: pendingImport.fileName, actionPassword: importPassword });
-      const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": pendingImport.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: pendingImport.file });
-      if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");
-      const result = await importExcel.mutateAsync({ storageKey: prepared.key, actionPassword: importPassword });
+      const contentType = pendingImport.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      let storageKey: string;
+      if (prepared.mode === "vercel-blob") {
+        const blob = await uploadToVercelBlob(prepared.key, pendingImport.file, {
+          access: "public",
+          handleUploadUrl: "/api/blob-upload",
+          contentType,
+          clientPayload: JSON.stringify({ actionPassword: importPassword }),
+        });
+        storageKey = blob.url;
+      } else {
+        const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingImport.file });
+        if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");
+        storageKey = prepared.key;
+      }
+      const result = await importExcel.mutateAsync({ storageKey, actionPassword: importPassword });
       await Promise.all([registryQuery.refetch(), synchronizedFileQuery.refetch()]);
       toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s), ${result.updated} ligne(s) mise(s) à jour et ${result.skipped} doublon(s) identique(s) ignoré(s).` });
       if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });

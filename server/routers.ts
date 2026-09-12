@@ -30,7 +30,7 @@ import {
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
 import { importProductionRows, parseImportedWorkbook } from "./excelImport";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
-import { storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
+import { isVercelBlobConfigured, storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
@@ -92,6 +92,20 @@ const dailyProgramLineInput = z.object({
 });
 const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
 const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
+
+function isVercelBlobUrl(value: string): boolean {
+  try {
+    return new URL(value).hostname.endsWith(".blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
+}
+// Le fichier importé provient soit d’une clé de stockage Forge/locale
+// (préfixe "production-import/"), soit d’une URL Vercel Blob publique.
+const importSourceInput = z.string().refine(
+  (value) => value.startsWith("production-import/") || isVercelBlobUrl(value),
+  "Source de fichier invalide.",
+);
 
 async function importWorkbookBuffer(buffer: Buffer) {
   const parsed = await parseImportedWorkbook(buffer);
@@ -203,11 +217,22 @@ export const appRouter = router({
     }),
     prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
-      return storageCreatePresignedUpload(`production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`);
+      const relKey = `production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      // Sur Vercel, le navigateur téléverse directement vers Vercel Blob via
+      // un jeton de courte durée (route /api/blob-upload) : le fichier ne
+      // passe donc jamais par le corps de la fonction. Sans Vercel Blob
+      // configuré, on retombe sur une URL PUT présignée classique (Forge ou
+      // stockage local en développement).
+      if (isVercelBlobConfigured()) {
+        return { mode: "vercel-blob" as const, key: relKey };
+      }
+      const prepared = await storageCreatePresignedUpload(relKey);
+      return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith("production-import/"), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
-      const response = await fetch(await storageGetSignedUrl(input.storageKey));
+      const sourceUrl = isVercelBlobUrl(input.storageKey) ? input.storageKey : await storageGetSignedUrl(input.storageKey);
+      const response = await fetch(sourceUrl);
       if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Le fichier Excel téléversé est indisponible. Réessayez l’import." });
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });

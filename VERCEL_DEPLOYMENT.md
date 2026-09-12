@@ -28,6 +28,14 @@ Le code source de la fonction vit dans `server/_core/vercelEntry.ts`. `pnpm buil
 
 ## Import Excel et logo
 
-L’import Excel téléverse désormais le fichier directement vers le stockage avant son traitement : le fichier ne passe donc plus dans le corps de la fonction Vercel, limité à 4,5 Mo. Les variables `BUILT_IN_FORGE_API_URL` et `BUILT_IN_FORGE_API_KEY` restent indispensables dans Vercel pour générer ces liens temporaires de téléversement et synchroniser le fichier Excel.
+L’import Excel téléverse désormais le fichier directement vers le stockage avant son traitement : le fichier ne passe donc plus dans le corps de la fonction Vercel, limité à 4,5 Mo.
+
+`BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` ne sont disponibles que sur l’hébergement Manus — sur Vercel, activez plutôt **Vercel Blob** :
+
+1. Dans le tableau de bord Vercel → votre projet → onglet **Storage** → **Create Database** → **Blob** → connectez-le au projet.
+2. Vercel ajoute automatiquement la variable d’environnement `BLOB_READ_WRITE_TOKEN` au projet — aucune valeur à copier manuellement.
+3. Redéployez (ou attendez le prochain déploiement) : dès que `BLOB_READ_WRITE_TOKEN` est présent, `server/storage.ts` l’utilise automatiquement, pour l’import Excel (upload direct navigateur → Blob via `/api/blob-upload`) comme pour le fichier Excel synchronisé.
+
+Sans Forge ni Vercel Blob configuré, le stockage retombe sur le système de fichiers local, qui ne fonctionne qu’en développement (le système de fichiers d’une fonction Vercel est en lecture seule).
 
 Le logo et le favicon utilisent une URL publique dédiée afin d’être visibles depuis Vercel, sans dépendre d’un chemin relatif `/manus-storage` sur votre domaine Vercel.

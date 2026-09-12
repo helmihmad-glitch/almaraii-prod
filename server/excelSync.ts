@@ -181,7 +181,17 @@ export async function syncExcelFromRecords() {
   worksheet.autoFilter = "A1:P1";
 
   const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
-  const uploaded = await storagePut(`production-sync/${EXCEL_FILE_NAME}`, buffer, EXCEL_MIME);
+  let uploaded: { key: string; url: string };
+  try {
+    uploaded = await storagePut(`production-sync/${EXCEL_FILE_NAME}`, buffer, EXCEL_MIME);
+  } catch (error) {
+    // Le fichier Excel synchronisé est une commodité de téléchargement, pas la
+    // source de vérité (les données restent en base). Une erreur de stockage
+    // ne doit donc jamais faire échouer la création, la modification, la
+    // suppression ou l’import d’un enregistrement de production.
+    console.error("[ExcelSync] Échec de l’enregistrement du fichier Excel synchronisé (le registre reste à jour en base) :", error);
+    return db ? getSynchronizedExcelFile() : getSynchronizedExcelFileFallback();
+  }
   const fileValues = {
     id: 1,
     fileName: EXCEL_FILE_NAME,

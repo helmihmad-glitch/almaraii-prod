@@ -1,8 +1,21 @@
 // Preconfigured storage helpers for Manus WebDev templates
 // Uploads via Forge Server presigned URL to S3 (PUT direct).
 // Downloads return /manus-storage/{key} paths served via 307 redirect.
+//
+// BUILT_IN_FORGE_API_URL / BUILT_IN_FORGE_API_KEY are only available when
+// hosted on the Manus platform. When deployed elsewhere (e.g. Vercel), those
+// are absent, and Vercel Blob (BLOB_READ_WRITE_TOKEN) is used instead — it
+// only requires enabling "Blob" storage in the Vercel project's Storage tab,
+// no external account. If neither is configured, storage falls back to the
+// local filesystem, which only works for local development (Vercel's
+// function filesystem is read-only).
 
+import { put as blobPut } from "@vercel/blob";
 import { ENV } from "./_core/env";
+
+export function isVercelBlobConfigured() {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
 
 function hasForgeStorageConfig() {
   return Boolean(ENV.forgeApiUrl && ENV.forgeApiKey);
@@ -52,6 +65,13 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream",
 ): Promise<{ key: string; url: string }> {
+  if (isVercelBlobConfigured()) {
+    const key = appendHashSuffix(normalizeKey(relKey));
+    const body = typeof data === "string" ? data : Buffer.from(data);
+    const blob = await blobPut(key, body, { access: "public", contentType, addRandomSuffix: false });
+    return { key: blob.pathname, url: blob.url };
+  }
+
   const { key, uploadUrl } = await storageCreatePresignedUpload(relKey);
   const blob =
     typeof data === "string"
