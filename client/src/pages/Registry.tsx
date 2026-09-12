@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { upload as uploadToVercelBlob } from "@vercel/blob/client";
+import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { trpc } from "@/lib/trpc";
 import { generateDayPdf } from "@/lib/dayPdfReport";
 import { BRAND_LOGO_URL } from "@/lib/brand";

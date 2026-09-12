@@ -90,7 +90,7 @@ const dailyProgramLineInput = z.object({
   plannedEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "L’heure de fin doit être au format HH:MM"),
   observation: optionalProgramText(4000),
 });
-const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
+export const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
 const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
 
 function isVercelBlobUrl(value: string): boolean {

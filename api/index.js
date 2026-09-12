@@ -3,7 +3,8 @@ import express2 from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
 // server/_core/blobUpload.ts
-import { handleUpload } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import { handleUploadPresigned } from "@vercel/blob/client";
 
 // server/routers.ts
 import { z as z2 } from "zod";
@@ -3944,10 +3945,10 @@ var EXCEL_MIME2 = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 function registerBlobUploadRoute(app2) {
   app2.post("/api/blob-upload", async (req, res) => {
     try {
-      const jsonResponse = await handleUpload({
+      const jsonResponse = await handleUploadPresigned({
         body: req.body,
         request: req,
-        onBeforeGenerateToken: async (_pathname, clientPayload) => {
+        getSignedToken: async (pathname, clientPayload) => {
           let actionPassword;
           if (clientPayload) {
             try {
@@ -3956,10 +3957,14 @@ function registerBlobUploadRoute(app2) {
             }
           }
           await assertProductionActionAuthorized(actionPassword);
-          return {
+          const token = await issueSignedToken({
+            pathname,
+            operations: ["put"],
             allowedContentTypes: [EXCEL_MIME2],
-            addRandomSuffix: true
-          };
+            maximumSizeInBytes: EXCEL_IMPORT_MAX_BYTES,
+            validUntil: Date.now() + 5 * 60 * 1e3
+          });
+          return { token };
         },
         onUploadCompleted: async () => {
         }
