@@ -20,6 +20,9 @@ export function createApp(): Express {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ path, error }) {
+        console.error(`[tRPC] ${path ?? "<unknown>"} failed:`, error);
+      },
     })
   );
   return app;

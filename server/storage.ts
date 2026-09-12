@@ -24,6 +24,11 @@ function getForgeConfig() {
 function getLocalStorageBaseUrl() {
   const configuredBaseUrl = process.env.PUBLIC_BASE_URL || process.env.VITE_PUBLIC_BASE_URL;
   if (configuredBaseUrl) return configuredBaseUrl.replace(/\/+$/, "");
+
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`.replace(/\/+$/, "");
+  }
+
   return `http://localhost:${process.env.PORT || 3000}`;
 }
 
