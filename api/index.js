@@ -3196,7 +3196,7 @@ var app_data_default = {
 // server/storage.ts
 import { put as blobPut } from "@vercel/blob";
 function isVercelBlobConfigured() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
 function hasForgeStorageConfig() {
   return Boolean(ENV.forgeApiUrl && ENV.forgeApiKey);

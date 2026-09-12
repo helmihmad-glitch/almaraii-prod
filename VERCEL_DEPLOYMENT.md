@@ -33,8 +33,8 @@ L’import Excel téléverse désormais le fichier directement vers le stockage 
 `BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` ne sont disponibles que sur l’hébergement Manus — sur Vercel, activez plutôt **Vercel Blob** :
 
 1. Dans le tableau de bord Vercel → votre projet → onglet **Storage** → **Create Database** → **Blob** → connectez-le au projet.
-2. Vercel ajoute automatiquement la variable d’environnement `BLOB_READ_WRITE_TOKEN` au projet — aucune valeur à copier manuellement.
-3. Redéployez (ou attendez le prochain déploiement) : dès que `BLOB_READ_WRITE_TOKEN` est présent, `server/storage.ts` l’utilise automatiquement, pour l’import Excel (upload direct navigateur → Blob via `/api/blob-upload`) comme pour le fichier Excel synchronisé.
+2. Vercel ajoute automatiquement les variables nécessaires au projet (selon la version : soit `BLOB_READ_WRITE_TOKEN`, soit `BLOB_STORE_ID` associé à un jeton OIDC injecté automatiquement) — aucune valeur à copier manuellement.
+3. **Redéployez après avoir connecté le store** : Vercel n’applique les nouvelles variables qu’aux déploiements suivants, jamais à un déploiement déjà en cours d’exécution (Deployments → menu **⋯** du déploiement le plus récent → **Redeploy**). Dès que `BLOB_READ_WRITE_TOKEN` ou `BLOB_STORE_ID` est présent, `server/storage.ts` l’utilise automatiquement, pour l’import Excel (upload direct navigateur → Blob via `/api/blob-upload`) comme pour le fichier Excel synchronisé.
 
 Sans Forge ni Vercel Blob configuré, le stockage retombe sur le système de fichiers local, qui ne fonctionne qu’en développement (le système de fichiers d’une fonction Vercel est en lecture seule).
 

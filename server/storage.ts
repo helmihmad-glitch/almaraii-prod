@@ -4,17 +4,22 @@
 //
 // BUILT_IN_FORGE_API_URL / BUILT_IN_FORGE_API_KEY are only available when
 // hosted on the Manus platform. When deployed elsewhere (e.g. Vercel), those
-// are absent, and Vercel Blob (BLOB_READ_WRITE_TOKEN) is used instead — it
-// only requires enabling "Blob" storage in the Vercel project's Storage tab,
-// no external account. If neither is configured, storage falls back to the
-// local filesystem, which only works for local development (Vercel's
+// are absent, and Vercel Blob is used instead — it only requires enabling
+// "Blob" storage in the Vercel project's Storage tab, no external account.
+// Connecting a Blob store to a project provisions either the classic static
+// BLOB_READ_WRITE_TOKEN, or (current default) BLOB_STORE_ID + an OIDC token
+// (VERCEL_OIDC_TOKEN, injected automatically per-invocation and never listed
+// among the project's environment variables) — @vercel/blob's put()/
+// handleUpload() already support both transparently, so we just need to
+// detect whichever is present. If neither is configured, storage falls back
+// to the local filesystem, which only works for local development (Vercel's
 // function filesystem is read-only).
 
 import { put as blobPut } from "@vercel/blob";
 import { ENV } from "./_core/env";
 
 export function isVercelBlobConfigured() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
 
 function hasForgeStorageConfig() {
