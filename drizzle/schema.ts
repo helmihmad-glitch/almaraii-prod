@@ -1,19 +1,25 @@
-import { boolean, decimal, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { boolean, decimal, index, integer, pgEnum, pgTable, serial, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+// Postgres n’a pas d’équivalent natif à `ON UPDATE CURRENT_TIMESTAMP` de MySQL :
+// les colonnes `updatedAt` sont donc renseignées explicitement côté application
+// (voir server/db.ts) à chaque mise à jour.
+
+export const userRole = pgEnum("role", ["user", "admin"]);
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: userRole("role").default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
-export const productionRecords = mysqlTable("production_records", {
-  id: int("id").autoincrement().primaryKey(),
+export const productionRecords = pgTable("production_records", {
+  id: serial("id").primaryKey(),
   productionDate: varchar("productionDate", { length: 10 }).notNull(),
   article: varchar("article", { length: 64 }).notNull(),
   totalProductionHours: decimal("totalProductionHours", { precision: 10, scale: 2 }).notNull(),
@@ -30,53 +36,53 @@ export const productionRecords = mysqlTable("production_records", {
   comment: text("comment"),
   source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
-export const synchronizedExcelFiles = mysqlTable("synchronized_excel_files", {
-  id: int("id").primaryKey(),
+export const synchronizedExcelFiles = pgTable("synchronized_excel_files", {
+  id: integer("id").primaryKey(),
   fileName: varchar("fileName", { length: 255 }).notNull(),
   storageKey: varchar("storageKey", { length: 512 }).notNull(),
   downloadUrl: varchar("downloadUrl", { length: 1024 }).notNull(),
-  recordCount: int("recordCount").notNull().default(0),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  recordCount: integer("recordCount").notNull().default(0),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
-export const productionArticles = mysqlTable("production_articles", {
-  id: int("id").autoincrement().primaryKey(),
+export const productionArticles = pgTable("production_articles", {
+  id: serial("id").primaryKey(),
   code: varchar("code", { length: 64 }).notNull(),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [uniqueIndex("production_articles_code_unique").on(table.code)]);
 
-export const productionOperators = mysqlTable("production_operators", {
-  id: int("id").autoincrement().primaryKey(),
+export const productionOperators = pgTable("production_operators", {
+  id: serial("id").primaryKey(),
   name: varchar("name", { length: 128 }).notNull(),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
 
-export const productionSettings = mysqlTable("production_settings", {
-  id: int("id").primaryKey(),
+export const productionSettings = pgTable("production_settings", {
+  id: integer("id").primaryKey(),
   actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
   actionPasswordSalt: varchar("actionPasswordSalt", { length: 64 }),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
-export const dailyPrograms = mysqlTable("daily_programs", {
-  id: int("id").autoincrement().primaryKey(),
+export const dailyPrograms = pgTable("daily_programs", {
+  id: serial("id").primaryKey(),
   programDate: varchar("programDate", { length: 10 }).notNull(),
   operatorName: text("operatorName").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [uniqueIndex("daily_programs_date_unique").on(table.programDate)]);
 
-export const dailyProgramLines = mysqlTable("daily_program_lines", {
-  id: int("id").autoincrement().primaryKey(),
-  programId: int("programId").notNull(),
-  sequence: int("sequence").notNull().default(1),
+export const dailyProgramLines = pgTable("daily_program_lines", {
+  id: serial("id").primaryKey(),
+  programId: integer("programId").notNull(),
+  sequence: integer("sequence").notNull().default(1),
   article: varchar("article", { length: 64 }),
   version: varchar("version", { length: 64 }),
   bagQuantity: varchar("bagQuantity", { length: 128 }),
@@ -85,7 +91,7 @@ export const dailyProgramLines = mysqlTable("daily_program_lines", {
   plannedEnd: varchar("plannedEnd", { length: 5 }).notNull(),
   observation: text("observation"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [index("daily_program_lines_program_sequence_index").on(table.programId, table.sequence)]);
 
 export type User = typeof users.$inferSelect;

@@ -13,8 +13,8 @@ const dailyProgramPdf = readFileSync(new URL("../client/src/lib/dailyProgramPdf.
 
 describe("Programme journalier", () => {
   it("déclare un stockage persistant pour les en-têtes et lignes planifiées", () => {
-    expect(schema).toContain('mysqlTable("daily_programs"');
-    expect(schema).toContain('mysqlTable("daily_program_lines"');
+    expect(schema).toContain('pgTable("daily_programs"');
+    expect(schema).toContain('pgTable("daily_program_lines"');
     expect(schema).toContain('uniqueIndex("daily_programs_date_unique")');
     expect(db).toContain("getDailyProgramByDate");
     expect(db).toContain("if (!program) return null;");
@@ -42,7 +42,7 @@ describe("Programme journalier", () => {
   });
 
   it("gère les pupitreurs et les articles depuis les paramètres", () => {
-    expect(schema).toContain('mysqlTable("production_operators"');
+    expect(schema).toContain('pgTable("production_operators"');
     expect(db).toContain("listActiveProductionOperators");
     expect(routers).toContain("listOperators:");
     expect(routers).toContain("addOperator:");

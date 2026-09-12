@@ -234,7 +234,7 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
         continue;
       }
       if (db) {
-        await db.update(productionRecords).set(values).where(eq(productionRecords.id, existingRecord.id));
+        await db.update(productionRecords).set({ ...values, updatedAt: new Date() }).where(eq(productionRecords.id, existingRecord.id));
       } else {
         await updateProductionRecord(existingRecord.id, values);
       }
@@ -246,8 +246,8 @@ export async function importProductionRows(rows: ImportedProductionRow[]) {
       continue;
     } else {
       if (db) {
-        const result = await db.insert(productionRecords).values(values);
-        byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: new Date(), updatedAt: new Date() } as typeof existing[number]);
+        const [createdRow] = await db.insert(productionRecords).values(values).returning();
+        byId.set(createdRow.id, createdRow as typeof existing[number]);
       } else {
         const createdRecord = await createProductionRecord(values);
         byId.set(createdRecord.id, createdRecord);

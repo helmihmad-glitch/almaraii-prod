@@ -212,24 +212,26 @@ var systemRouter = router({
 // server/db.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { neon } from "@neondatabase/serverless";
 import { asc, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/neon-http";
 
 // drizzle/schema.ts
-import { boolean, decimal, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
-var users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
+import { boolean, decimal, index, integer, pgEnum, pgTable, serial, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+var userRole = pgEnum("role", ["user", "admin"]);
+var users = pgTable("users", {
+  id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: userRole("role").default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull()
 });
-var productionRecords = mysqlTable("production_records", {
-  id: int("id").autoincrement().primaryKey(),
+var productionRecords = pgTable("production_records", {
+  id: serial("id").primaryKey(),
   productionDate: varchar("productionDate", { length: 10 }).notNull(),
   article: varchar("article", { length: 64 }).notNull(),
   totalProductionHours: decimal("totalProductionHours", { precision: 10, scale: 2 }).notNull(),
@@ -246,47 +248,47 @@ var productionRecords = mysqlTable("production_records", {
   comment: text("comment"),
   source: varchar("source", { length: 16 }).notNull().default("manual"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 });
-var synchronizedExcelFiles = mysqlTable("synchronized_excel_files", {
-  id: int("id").primaryKey(),
+var synchronizedExcelFiles = pgTable("synchronized_excel_files", {
+  id: integer("id").primaryKey(),
   fileName: varchar("fileName", { length: 255 }).notNull(),
   storageKey: varchar("storageKey", { length: 512 }).notNull(),
   downloadUrl: varchar("downloadUrl", { length: 1024 }).notNull(),
-  recordCount: int("recordCount").notNull().default(0),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  recordCount: integer("recordCount").notNull().default(0),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 });
-var productionArticles = mysqlTable("production_articles", {
-  id: int("id").autoincrement().primaryKey(),
+var productionArticles = pgTable("production_articles", {
+  id: serial("id").primaryKey(),
   code: varchar("code", { length: 64 }).notNull(),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [uniqueIndex("production_articles_code_unique").on(table.code)]);
-var productionOperators = mysqlTable("production_operators", {
-  id: int("id").autoincrement().primaryKey(),
+var productionOperators = pgTable("production_operators", {
+  id: serial("id").primaryKey(),
   name: varchar("name", { length: 128 }).notNull(),
   isActive: boolean("isActive").notNull().default(true),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
-var productionSettings = mysqlTable("production_settings", {
-  id: int("id").primaryKey(),
+var productionSettings = pgTable("production_settings", {
+  id: integer("id").primaryKey(),
   actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
   actionPasswordSalt: varchar("actionPasswordSalt", { length: 64 }),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 });
-var dailyPrograms = mysqlTable("daily_programs", {
-  id: int("id").autoincrement().primaryKey(),
+var dailyPrograms = pgTable("daily_programs", {
+  id: serial("id").primaryKey(),
   programDate: varchar("programDate", { length: 10 }).notNull(),
   operatorName: text("operatorName").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [uniqueIndex("daily_programs_date_unique").on(table.programDate)]);
-var dailyProgramLines = mysqlTable("daily_program_lines", {
-  id: int("id").autoincrement().primaryKey(),
-  programId: int("programId").notNull(),
-  sequence: int("sequence").notNull().default(1),
+var dailyProgramLines = pgTable("daily_program_lines", {
+  id: serial("id").primaryKey(),
+  programId: integer("programId").notNull(),
+  sequence: integer("sequence").notNull().default(1),
   article: varchar("article", { length: 64 }),
   version: varchar("version", { length: 64 }),
   bagQuantity: varchar("bagQuantity", { length: 128 }),
@@ -295,7 +297,7 @@ var dailyProgramLines = mysqlTable("daily_program_lines", {
   plannedEnd: varchar("plannedEnd", { length: 5 }).notNull(),
   observation: text("observation"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull()
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [index("daily_program_lines_program_sequence_index").on(table.programId, table.sequence)]);
 
 // server/db.ts
@@ -340,9 +342,9 @@ function loadFallbackStore() {
     };
   }
 }
+var fallbackPersistenceWarned = false;
 function persistFallbackStore() {
   const directory = path.dirname(fallbackDataPath);
-  mkdirSync(directory, { recursive: true });
   const payload = JSON.stringify({
     articles: fallbackArticles,
     operators: fallbackOperators,
@@ -353,7 +355,15 @@ function persistFallbackStore() {
     nextOperatorId: nextFallbackOperatorId,
     nextRecordId: nextFallbackRecordId
   }, null, 2);
-  writeFileSync(fallbackDataPath, payload, "utf8");
+  try {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(fallbackDataPath, payload, "utf8");
+  } catch (error) {
+    if (!fallbackPersistenceWarned) {
+      fallbackPersistenceWarned = true;
+      console.warn("[Database] Stockage de secours non persistable (syst\xE8me de fichiers en lecture seule). Configurez DATABASE_URL pour conserver les donn\xE9es :", error);
+    }
+  }
 }
 var persistedFallback = loadFallbackStore();
 var fallbackArticles = persistedFallback.articles;
@@ -364,15 +374,14 @@ var fallbackSynchronizedFile = persistedFallback.synchronizedFile;
 var nextFallbackArticleId = persistedFallback.nextArticleId;
 var nextFallbackOperatorId = persistedFallback.nextOperatorId;
 var nextFallbackRecordId = persistedFallback.nextRecordId;
+function getDatabaseUrl() {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+}
 async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  const databaseUrl = getDatabaseUrl();
+  if (!_db && databaseUrl) {
     try {
-      const db = drizzle(process.env.DATABASE_URL);
-      db.$client.on("error", (error) => {
-        console.error("[Database] Pool error:", error);
-        _db = null;
-      });
-      _db = db;
+      _db = drizzle(neon(databaseUrl));
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -409,7 +418,8 @@ async function upsertUser(user) {
   }
   if (!values.lastSignedIn) values.lastSignedIn = /* @__PURE__ */ new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = /* @__PURE__ */ new Date();
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  updateSet.updatedAt = /* @__PURE__ */ new Date();
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 async function getUserByOpenId(openId) {
   const db = await getDb();
@@ -427,7 +437,7 @@ async function listProductionRecords() {
 async function createProductionRecord(record) {
   const db = await getDb();
   if (!db) {
-    const created = {
+    const created2 = {
       id: nextFallbackRecordId++,
       productionDate: String(record.productionDate),
       article: String(record.article),
@@ -447,13 +457,12 @@ async function createProductionRecord(record) {
       createdAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
     };
-    fallbackRecords.push(created);
+    fallbackRecords.push(created2);
     persistFallbackStore();
-    return created;
+    return created2;
   }
-  const result = await db.insert(productionRecords).values(record);
-  const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(productionRecords).values(record).returning();
+  return created;
 }
 async function updateProductionRecord(id, record) {
   const db = await getDb();
@@ -483,9 +492,8 @@ async function updateProductionRecord(id, record) {
     persistFallbackStore();
     return existing;
   }
-  await db.update(productionRecords).set(record).where(eq(productionRecords.id, id));
-  const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, id));
-  return rows[0];
+  const [updated] = await db.update(productionRecords).set({ ...record, updatedAt: /* @__PURE__ */ new Date() }).where(eq(productionRecords.id, id)).returning();
+  return updated;
 }
 async function deleteProductionRecord(id) {
   const db = await getDb();
@@ -517,16 +525,14 @@ async function getDailyProgramByDate(programDate) {
 async function createDailyProgram(program) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  const result = await db.insert(dailyPrograms).values(program);
-  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(dailyPrograms).values(program).returning();
+  return created;
 }
 async function updateDailyProgram(id, program) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  await db.update(dailyPrograms).set(program).where(eq(dailyPrograms.id, id));
-  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, id));
-  return rows[0];
+  const [updated] = await db.update(dailyPrograms).set({ ...program, updatedAt: /* @__PURE__ */ new Date() }).where(eq(dailyPrograms.id, id)).returning();
+  return updated;
 }
 async function deleteDailyProgram(id) {
   const db = await getDb();
@@ -538,16 +544,14 @@ async function deleteDailyProgram(id) {
 async function createDailyProgramLine(line) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  const result = await db.insert(dailyProgramLines).values(line);
-  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(dailyProgramLines).values(line).returning();
+  return created;
 }
 async function updateDailyProgramLine(id, line) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  await db.update(dailyProgramLines).set(line).where(eq(dailyProgramLines.id, id));
-  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, id));
-  return rows[0];
+  const [updated] = await db.update(dailyProgramLines).set({ ...line, updatedAt: /* @__PURE__ */ new Date() }).where(eq(dailyProgramLines.id, id)).returning();
+  return updated;
 }
 async function deleteDailyProgramLine(id) {
   const db = await getDb();
@@ -563,7 +567,8 @@ async function initializeProductionArticles() {
   const rows = await db.select({ article: productionRecords.article }).from(productionRecords);
   const codes = Array.from(new Set(rows.map((row) => row.article.trim()).filter(Boolean)));
   if (codes.length === 0) return;
-  await db.insert(productionArticles).values(codes.map((code) => ({ code, isActive: true }))).onDuplicateKeyUpdate({
+  await db.insert(productionArticles).values(codes.map((code) => ({ code, isActive: true }))).onConflictDoUpdate({
+    target: productionArticles.code,
     set: { updatedAt: /* @__PURE__ */ new Date() }
   });
 }
@@ -578,30 +583,30 @@ async function addProductionArticle(code) {
   const db = await getDb();
   if (!db) {
     const normalizedCode2 = code.trim().toUpperCase();
-    const existing = fallbackArticles.find((article2) => article2.code === normalizedCode2);
+    const existing = fallbackArticles.find((article3) => article3.code === normalizedCode2);
     if (existing) {
       existing.isActive = true;
       existing.updatedAt = /* @__PURE__ */ new Date();
       persistFallbackStore();
       return existing;
     }
-    const article = {
+    const article2 = {
       id: nextFallbackArticleId++,
       code: normalizedCode2,
       isActive: true,
       createdAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
     };
-    fallbackArticles.push(article);
+    fallbackArticles.push(article2);
     persistFallbackStore();
-    return article;
+    return article2;
   }
   const normalizedCode = code.trim().toUpperCase();
-  await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onDuplicateKeyUpdate({
+  const [article] = await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onConflictDoUpdate({
+    target: productionArticles.code,
     set: { isActive: true, updatedAt: /* @__PURE__ */ new Date() }
-  });
-  const rows = await db.select().from(productionArticles).where(eq(productionArticles.code, normalizedCode)).limit(1);
-  return rows[0];
+  }).returning();
+  return article;
 }
 async function archiveProductionArticle(id) {
   const db = await getDb();
@@ -614,7 +619,7 @@ async function archiveProductionArticle(id) {
     }
     return { success: true };
   }
-  await db.update(productionArticles).set({ isActive: false }).where(eq(productionArticles.id, id));
+  await db.update(productionArticles).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(productionArticles.id, id));
   return { success: true };
 }
 async function listActiveProductionOperators() {
@@ -628,30 +633,30 @@ async function addProductionOperator(name) {
   const db = await getDb();
   if (!db) {
     const normalizedName2 = name.trim();
-    const existing = fallbackOperators.find((operator2) => operator2.name === normalizedName2);
+    const existing = fallbackOperators.find((operator3) => operator3.name === normalizedName2);
     if (existing) {
       existing.isActive = true;
       existing.updatedAt = /* @__PURE__ */ new Date();
       persistFallbackStore();
       return existing;
     }
-    const operator = {
+    const operator2 = {
       id: nextFallbackOperatorId++,
       name: normalizedName2,
       isActive: true,
       createdAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
     };
-    fallbackOperators.push(operator);
+    fallbackOperators.push(operator2);
     persistFallbackStore();
-    return operator;
+    return operator2;
   }
   const normalizedName = name.trim();
-  await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onDuplicateKeyUpdate({
+  const [operator] = await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onConflictDoUpdate({
+    target: productionOperators.name,
     set: { isActive: true, updatedAt: /* @__PURE__ */ new Date() }
-  });
-  const rows = await db.select().from(productionOperators).where(eq(productionOperators.name, normalizedName)).limit(1);
-  return rows[0];
+  }).returning();
+  return operator;
 }
 async function archiveProductionOperator(id) {
   const db = await getDb();
@@ -664,7 +669,7 @@ async function archiveProductionOperator(id) {
     }
     return { success: true };
   }
-  await db.update(productionOperators).set({ isActive: false }).where(eq(productionOperators.id, id));
+  await db.update(productionOperators).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(productionOperators.id, id));
   return { success: true };
 }
 async function getProductionSettings() {
@@ -700,7 +705,8 @@ async function saveActionPasswordDigest(digest) {
     persistFallbackStore();
     return fallbackSettings;
   }
-  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onDuplicateKeyUpdate({
+  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onConflictDoUpdate({
+    target: productionSettings.id,
     set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: /* @__PURE__ */ new Date() }
   });
   return getProductionSettings();
@@ -3460,12 +3466,14 @@ async function syncExcelFromRecords() {
   if (!db) {
     return saveSynchronizedExcelFileFallback(fileValues);
   }
-  await db.insert(synchronizedExcelFiles).values(fileValues).onDuplicateKeyUpdate({
+  await db.insert(synchronizedExcelFiles).values(fileValues).onConflictDoUpdate({
+    target: synchronizedExcelFiles.id,
     set: {
       fileName: fileValues.fileName,
       storageKey: fileValues.storageKey,
       downloadUrl: fileValues.downloadUrl,
-      recordCount: fileValues.recordCount
+      recordCount: fileValues.recordCount,
+      updatedAt: /* @__PURE__ */ new Date()
     }
   });
   return getSynchronizedExcelFile();
@@ -3689,7 +3697,7 @@ async function importProductionRows(rows) {
         continue;
       }
       if (db) {
-        await db.update(productionRecords).set(values).where(eq3(productionRecords.id, existingRecord.id));
+        await db.update(productionRecords).set({ ...values, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(productionRecords.id, existingRecord.id));
       } else {
         await updateProductionRecord(existingRecord.id, values);
       }
@@ -3701,8 +3709,8 @@ async function importProductionRows(rows) {
       continue;
     } else {
       if (db) {
-        const result = await db.insert(productionRecords).values(values);
-        byId.set(result[0].insertId, { ...values, id: result[0].insertId, createdAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() });
+        const [createdRow] = await db.insert(productionRecords).values(values).returning();
+        byId.set(createdRow.id, createdRow);
       } else {
         const createdRecord = await createProductionRecord(values);
         byId.set(createdRecord.id, createdRecord);

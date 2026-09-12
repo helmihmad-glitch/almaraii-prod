@@ -204,12 +204,14 @@ export async function syncExcelFromRecords() {
     return saveSynchronizedExcelFileFallback(fileValues);
   }
 
-  await db.insert(synchronizedExcelFiles).values(fileValues).onDuplicateKeyUpdate({
+  await db.insert(synchronizedExcelFiles).values(fileValues).onConflictDoUpdate({
+    target: synchronizedExcelFiles.id,
     set: {
       fileName: fileValues.fileName,
       storageKey: fileValues.storageKey,
       downloadUrl: fileValues.downloadUrl,
       recordCount: fileValues.recordCount,
+      updatedAt: new Date(),
     },
   });
   return getSynchronizedExcelFile();

@@ -44,7 +44,7 @@ try {
   }
 
   const temporaryArticle = `TEST-SUPPRESSION-${Date.now()}`;
-  const temporaryInsert = await db.insert(productionRecords).values({
+  const [temporaryInsert] = await db.insert(productionRecords).values({
     productionDate: "2026-12-31",
     article: temporaryArticle,
     totalProductionHours: "1.00",
@@ -60,8 +60,8 @@ try {
     realHours: "1.00",
     comment: "Vérification temporaire de suppression",
     source: "manual",
-  });
-  temporaryRecordId = Number(temporaryInsert[0].insertId);
+  }).returning();
+  temporaryRecordId = Number(temporaryInsert.id);
   await syncExcelFromRecords();
   await db.delete(productionRecords).where(eq(productionRecords.id, temporaryRecordId));
   await syncExcelFromRecords();

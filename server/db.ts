@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { neon } from "@neondatabase/serverless";
 import { asc, desc, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/neon-http";
 import {
   dailyProgramLines,
   dailyPrograms,
@@ -126,9 +127,10 @@ function loadFallbackStore() {
   }
 }
 
+let fallbackPersistenceWarned = false;
+
 function persistFallbackStore() {
   const directory = path.dirname(fallbackDataPath);
-  mkdirSync(directory, { recursive: true });
   const payload = JSON.stringify({
     articles: fallbackArticles,
     operators: fallbackOperators,
@@ -139,7 +141,20 @@ function persistFallbackStore() {
     nextOperatorId: nextFallbackOperatorId,
     nextRecordId: nextFallbackRecordId,
   }, null, 2);
-  writeFileSync(fallbackDataPath, payload, "utf8");
+
+  // Ce stockage de secours n’existe que pour le développement local. Sur une
+  // fonction serverless (système de fichiers en lecture seule), l’écriture
+  // échoue : on dégrade alors vers une conservation en mémoire seule plutôt
+  // que de faire échouer la requête de l’utilisateur avec une erreur EROFS.
+  try {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(fallbackDataPath, payload, "utf8");
+  } catch (error) {
+    if (!fallbackPersistenceWarned) {
+      fallbackPersistenceWarned = true;
+      console.warn("[Database] Stockage de secours non persistable (système de fichiers en lecture seule). Configurez DATABASE_URL pour conserver les données :", error);
+    }
+  }
 }
 
 const persistedFallback = loadFallbackStore();
@@ -152,22 +167,23 @@ let nextFallbackArticleId = persistedFallback.nextArticleId;
 let nextFallbackOperatorId = persistedFallback.nextOperatorId;
 let nextFallbackRecordId = persistedFallback.nextRecordId;
 
+/**
+ * Vercel provisionne `DATABASE_URL` en connectant une base Postgres au projet
+ * (onglet Storage) ; `POSTGRES_URL` est accepté en secours selon la variante
+ * d’intégration utilisée.
+ */
+function getDatabaseUrl() {
+  return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+}
+
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  const databaseUrl = getDatabaseUrl();
+  if (!_db && databaseUrl) {
     try {
-      const db = drizzle(process.env.DATABASE_URL);
-      // mysql2's pool emits "error" on background connection issues (idle
-      // timeout, network drop, DB restart). Without a listener, Node treats
-      // that as an uncaught exception and crashes the whole serverless
-      // function ("FUNCTION_INVOCATION_FAILED" on Vercel) instead of just
-      // failing the in-flight query. Logging it here keeps the process
-      // alive, and dropping the cached instance forces a fresh pool on the
-      // next request instead of reusing a broken connection.
-      db.$client.on("error", (error) => {
-        console.error("[Database] Pool error:", error);
-        _db = null;
-      });
-      _db = db;
+      // Le pilote Neon interroge Postgres en HTTP : aucune connexion TCP
+      // persistante n’est conservée entre les invocations, ce qui évite les
+      // erreurs de pool dormant propres aux environnements serverless.
+      _db = drizzle(neon(databaseUrl));
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -207,8 +223,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   }
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+  updateSet.updatedAt = new Date();
 
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
@@ -253,9 +270,8 @@ export async function createProductionRecord(record: InsertProductionRecord) {
     persistFallbackStore();
     return created;
   }
-  const result = await db.insert(productionRecords).values(record);
-  const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(productionRecords).values(record).returning();
+  return created;
 }
 
 export async function updateProductionRecord(id: number, record: Partial<InsertProductionRecord>) {
@@ -286,9 +302,8 @@ export async function updateProductionRecord(id: number, record: Partial<InsertP
     persistFallbackStore();
     return existing;
   }
-  await db.update(productionRecords).set(record).where(eq(productionRecords.id, id));
-  const rows = await db.select().from(productionRecords).where(eq(productionRecords.id, id));
-  return rows[0];
+  const [updated] = await db.update(productionRecords).set({ ...record, updatedAt: new Date() }).where(eq(productionRecords.id, id)).returning();
+  return updated;
 }
 
 export async function deleteProductionRecord(id: number) {
@@ -324,17 +339,15 @@ export async function getDailyProgramByDate(programDate: string) {
 export async function createDailyProgram(program: InsertDailyProgram) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  const result = await db.insert(dailyPrograms).values(program);
-  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(dailyPrograms).values(program).returning();
+  return created;
 }
 
 export async function updateDailyProgram(id: number, program: Partial<InsertDailyProgram>) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  await db.update(dailyPrograms).set(program).where(eq(dailyPrograms.id, id));
-  const rows = await db.select().from(dailyPrograms).where(eq(dailyPrograms.id, id));
-  return rows[0];
+  const [updated] = await db.update(dailyPrograms).set({ ...program, updatedAt: new Date() }).where(eq(dailyPrograms.id, id)).returning();
+  return updated;
 }
 
 export async function deleteDailyProgram(id: number) {
@@ -348,17 +361,15 @@ export async function deleteDailyProgram(id: number) {
 export async function createDailyProgramLine(line: InsertDailyProgramLine) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  const result = await db.insert(dailyProgramLines).values(line);
-  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, result[0].insertId));
-  return rows[0];
+  const [created] = await db.insert(dailyProgramLines).values(line).returning();
+  return created;
 }
 
 export async function updateDailyProgramLine(id: number, line: Partial<InsertDailyProgramLine>) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  await db.update(dailyProgramLines).set(line).where(eq(dailyProgramLines.id, id));
-  const rows = await db.select().from(dailyProgramLines).where(eq(dailyProgramLines.id, id));
-  return rows[0];
+  const [updated] = await db.update(dailyProgramLines).set({ ...line, updatedAt: new Date() }).where(eq(dailyProgramLines.id, id)).returning();
+  return updated;
 }
 
 export async function deleteDailyProgramLine(id: number) {
@@ -377,7 +388,8 @@ export async function initializeProductionArticles() {
   const rows = await db.select({ article: productionRecords.article }).from(productionRecords);
   const codes = Array.from(new Set(rows.map((row) => row.article.trim()).filter(Boolean)));
   if (codes.length === 0) return;
-  await db.insert(productionArticles).values(codes.map((code) => ({ code, isActive: true }))).onDuplicateKeyUpdate({
+  await db.insert(productionArticles).values(codes.map((code) => ({ code, isActive: true }))).onConflictDoUpdate({
+    target: productionArticles.code,
     set: { updatedAt: new Date() },
   });
 }
@@ -415,11 +427,11 @@ export async function addProductionArticle(code: string) {
   }
 
   const normalizedCode = code.trim().toUpperCase();
-  await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onDuplicateKeyUpdate({
+  const [article] = await db.insert(productionArticles).values({ code: normalizedCode, isActive: true }).onConflictDoUpdate({
+    target: productionArticles.code,
     set: { isActive: true, updatedAt: new Date() },
-  });
-  const rows = await db.select().from(productionArticles).where(eq(productionArticles.code, normalizedCode)).limit(1);
-  return rows[0];
+  }).returning();
+  return article;
 }
 
 export async function archiveProductionArticle(id: number) {
@@ -434,7 +446,7 @@ export async function archiveProductionArticle(id: number) {
     return { success: true } as const;
   }
 
-  await db.update(productionArticles).set({ isActive: false }).where(eq(productionArticles.id, id));
+  await db.update(productionArticles).set({ isActive: false, updatedAt: new Date() }).where(eq(productionArticles.id, id));
   return { success: true } as const;
 }
 
@@ -471,11 +483,11 @@ export async function addProductionOperator(name: string) {
   }
 
   const normalizedName = name.trim();
-  await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onDuplicateKeyUpdate({
+  const [operator] = await db.insert(productionOperators).values({ name: normalizedName, isActive: true }).onConflictDoUpdate({
+    target: productionOperators.name,
     set: { isActive: true, updatedAt: new Date() },
-  });
-  const rows = await db.select().from(productionOperators).where(eq(productionOperators.name, normalizedName)).limit(1);
-  return rows[0];
+  }).returning();
+  return operator;
 }
 
 export async function archiveProductionOperator(id: number) {
@@ -490,7 +502,7 @@ export async function archiveProductionOperator(id: number) {
     return { success: true } as const;
   }
 
-  await db.update(productionOperators).set({ isActive: false }).where(eq(productionOperators.id, id));
+  await db.update(productionOperators).set({ isActive: false, updatedAt: new Date() }).where(eq(productionOperators.id, id));
   return { success: true } as const;
 }
 
@@ -531,7 +543,8 @@ export async function saveActionPasswordDigest(digest: ActionPasswordDigest) {
     return fallbackSettings;
   }
 
-  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onDuplicateKeyUpdate({
+  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onConflictDoUpdate({
+    target: productionSettings.id,
     set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: new Date() },
   });
   return getProductionSettings();

@@ -16,7 +16,19 @@ Ne renseignez pas `dist` ou `dist/index.js` comme **Output Directory**. Après l
 
 ## Variables d’environnement
 
-Ajoutez dans Vercel les mêmes variables que celles du projet actuel, sans jamais committer leurs valeurs : `DATABASE_URL`, `JWT_SECRET`, `COMMENT_EDIT_PASSWORD`, `BUILT_IN_FORGE_API_URL`, `BUILT_IN_FORGE_API_KEY`, `OAUTH_SERVER_URL`, `VITE_APP_ID`, `VITE_OAUTH_PORTAL_URL`, `VITE_FRONTEND_FORGE_API_URL`, `VITE_FRONTEND_FORGE_API_KEY`, `OWNER_OPEN_ID` et `OWNER_NAME`.
+Ajoutez dans Vercel les variables nécessaires, sans jamais committer leurs valeurs : `DATABASE_URL` (voir ci-dessous), `JWT_SECRET`, `COMMENT_EDIT_PASSWORD`, `OAUTH_SERVER_URL`, `VITE_APP_ID`, `VITE_OAUTH_PORTAL_URL`, `OWNER_OPEN_ID` et `OWNER_NAME`.
+
+## Base de données Postgres
+
+L’application utilise **Postgres** (`drizzle-orm/neon-http`), et non plus MySQL : la base fournie par Vercel elle-même est donc utilisable sans service tiers.
+
+1. Tableau de bord Vercel → votre projet → onglet **Storage** → **Create Database** → **Postgres** → connectez-la au projet.
+2. Vercel ajoute automatiquement `DATABASE_URL` (et ses variantes) aux variables d’environnement du projet. `server/db.ts` accepte `DATABASE_URL` ou, à défaut, `POSTGRES_URL`.
+3. **Redéployez** : comme pour le stockage Blob, les nouvelles variables ne s’appliquent qu’aux déploiements suivants.
+
+Les migrations sont appliquées automatiquement pendant le build (`node scripts/migrate.mjs`, dernière étape de `pnpm build`) : les tables sont donc créées au premier déploiement effectué après la connexion de la base, sans commande manuelle. Sans `DATABASE_URL`, l’étape est simplement ignorée et le build se termine normalement.
+
+Sans base configurée, l’application retombe sur un stockage de secours en mémoire : les données ne survivent alors pas au redémarrage d’une fonction, ce qui ne convient qu’au développement local.
 
 Les chemins `/api/trpc/*`, `/api/oauth/callback` et `/manus-storage/*` sont relayés explicitement vers l’unique fonction `api/index.js`, qui restitue le chemin initial à Express. Les mutations `POST` tRPC restent donc dirigées vers la fonction Node ; elles ne sont jamais envoyées vers le frontend statique. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
 
