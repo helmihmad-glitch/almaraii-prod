@@ -3909,7 +3909,11 @@ var appRouter = router({
       await assertProductionActionAuthorized(input.actionPassword);
       const sourceUrl = isVercelBlobUrl(input.storageKey) ? input.storageKey : await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
-      if (!response.ok) throw new TRPCError3({ code: "BAD_REQUEST", message: "Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible. R\xE9essayez l\u2019import." });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ImportExcel] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError3({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+      }
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError3({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
       return importWorkbookBuffer(buffer);

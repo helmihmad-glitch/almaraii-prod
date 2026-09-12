@@ -233,7 +233,11 @@ export const appRouter = router({
       await assertProductionActionAuthorized(input.actionPassword);
       const sourceUrl = isVercelBlobUrl(input.storageKey) ? input.storageKey : await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
-      if (!response.ok) throw new TRPCError({ code: "BAD_REQUEST", message: "Le fichier Excel téléversé est indisponible. Réessayez l’import." });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ImportExcel] Échec de la récupération du fichier téléversé (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Le fichier Excel téléversé est indisponible (${response.status}). Réessayez l’import.` });
+      }
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });
       return importWorkbookBuffer(buffer);
