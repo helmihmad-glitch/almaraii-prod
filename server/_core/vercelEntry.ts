@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createApp } from "../server/_core/app";
+import { createApp } from "./app";
 
 const app = createApp();
 
@@ -21,8 +21,14 @@ function sendStartupError(res: ServerResponse, error: unknown) {
 }
 
 /**
- * Point d’entrée Vercel stable. Les réécritures de vercel.json conservent le
- * chemin API demandé dans `__path`, puis ce handler le restitue à Express.
+ * Point d’entrée Vercel stable. Ce fichier est bundlé par esbuild (voir le
+ * script `build`) en `api/index.js`, un unique fichier autonome sans import
+ * relatif restant à résoudre à l’exécution : Vercel n’a donc plus besoin de
+ * retrouver `server/_core/app.ts` sur le disque de la fonction, ce qui
+ * provoquait une erreur `ERR_MODULE_NOT_FOUND` au démarrage.
+ *
+ * Les réécritures de vercel.json conservent le chemin API demandé dans
+ * `__path`, puis ce handler le restitue à Express.
  */
 export default function vercelApiHandler(req: IncomingMessage, res: ServerResponse) {
   const requestUrl = new URL(req.url ?? "/", "http://localhost");
