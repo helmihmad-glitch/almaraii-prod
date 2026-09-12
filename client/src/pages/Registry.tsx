@@ -117,13 +117,13 @@ export default function Registry() {
       const contentType = pendingImport.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       let storageKey: string;
       if (prepared.mode === "vercel-blob") {
-        const blob = await uploadToVercelBlob(prepared.key, pendingImport.file, {
-          access: "public",
+        await uploadToVercelBlob(prepared.key, pendingImport.file, {
+          access: "private",
           handleUploadUrl: "/api/blob-upload",
           contentType,
           clientPayload: JSON.stringify({ actionPassword: importPassword }),
         });
-        storageKey = blob.url;
+        storageKey = prepared.key;
       } else {
         const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingImport.file });
         if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");

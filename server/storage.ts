@@ -15,7 +15,7 @@
 // to the local filesystem, which only works for local development (Vercel's
 // function filesystem is read-only).
 
-import { put as blobPut } from "@vercel/blob";
+import { issueSignedToken, presignUrl as blobPresignUrl, put as blobPut } from "@vercel/blob";
 import { ENV } from "./_core/env";
 
 export function isVercelBlobConfigured() {
@@ -131,6 +131,16 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
   const key = normalizeKey(relKey);
+
+  if (isVercelBlobConfigured()) {
+    // Le fichier importé via le flux « presigned » (voir server/_core/blobUpload.ts)
+    // n’est pas lisible via une simple URL publique : on redemande ici un jeton
+    // signé, cette fois pour une lecture (`get`), puis on en dérive une URL de
+    // lecture temporaire.
+    const token = await issueSignedToken({ pathname: key, operations: ["get"], validUntil: Date.now() + 5 * 60 * 1000 });
+    const { presignedUrl } = await blobPresignUrl(token, { operation: "get", pathname: key, access: "private" });
+    return presignedUrl;
+  }
 
   if (!hasForgeStorageConfig()) {
     return localStorageUrlForKey(key);

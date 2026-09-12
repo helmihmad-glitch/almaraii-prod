@@ -93,19 +93,7 @@ const dailyProgramLineInput = z.object({
 export const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
 const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
 
-function isVercelBlobUrl(value: string): boolean {
-  try {
-    return new URL(value).hostname.endsWith(".blob.vercel-storage.com");
-  } catch {
-    return false;
-  }
-}
-// Le fichier importé provient soit d’une clé de stockage Forge/locale
-// (préfixe "production-import/"), soit d’une URL Vercel Blob publique.
-const importSourceInput = z.string().refine(
-  (value) => value.startsWith("production-import/") || isVercelBlobUrl(value),
-  "Source de fichier invalide.",
-);
+const importSourceInput = z.string().startsWith("production-import/");
 
 async function importWorkbookBuffer(buffer: Buffer) {
   const parsed = await parseImportedWorkbook(buffer);
@@ -231,7 +219,7 @@ export const appRouter = router({
     }),
     importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
-      const sourceUrl = isVercelBlobUrl(input.storageKey) ? input.storageKey : await storageGetSignedUrl(input.storageKey);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
         const body = await response.text().catch(() => "");

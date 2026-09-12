@@ -3,7 +3,7 @@ import express2 from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 
 // server/_core/blobUpload.ts
-import { issueSignedToken } from "@vercel/blob";
+import { issueSignedToken as issueSignedToken2 } from "@vercel/blob";
 import { handleUploadPresigned } from "@vercel/blob/client";
 
 // server/routers.ts
@@ -3195,7 +3195,7 @@ var app_data_default = {
 };
 
 // server/storage.ts
-import { put as blobPut } from "@vercel/blob";
+import { issueSignedToken, presignUrl as blobPresignUrl, put as blobPut } from "@vercel/blob";
 function isVercelBlobConfigured() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
@@ -3272,6 +3272,11 @@ async function storageCreatePresignedUpload(relKey) {
 }
 async function storageGetSignedUrl(relKey) {
   const key = normalizeKey(relKey);
+  if (isVercelBlobConfigured()) {
+    const token = await issueSignedToken({ pathname: key, operations: ["get"], validUntil: Date.now() + 5 * 60 * 1e3 });
+    const { presignedUrl } = await blobPresignUrl(token, { operation: "get", pathname: key, access: "private" });
+    return presignedUrl;
+  }
   if (!hasForgeStorageConfig()) {
     return localStorageUrlForKey(key);
   }
@@ -3779,17 +3784,7 @@ var dailyProgramLineInput = z2.object({
 });
 var EXCEL_IMPORT_MAX_BYTES = 57e5;
 var importFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
-function isVercelBlobUrl(value) {
-  try {
-    return new URL(value).hostname.endsWith(".blob.vercel-storage.com");
-  } catch {
-    return false;
-  }
-}
-var importSourceInput = z2.string().refine(
-  (value) => value.startsWith("production-import/") || isVercelBlobUrl(value),
-  "Source de fichier invalide."
-);
+var importSourceInput = z2.string().startsWith("production-import/");
 async function importWorkbookBuffer(buffer) {
   const parsed = await parseImportedWorkbook(buffer);
   if (parsed.rows.length === 0) throw new TRPCError3({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
@@ -3907,7 +3902,7 @@ var appRouter = router({
     }),
     importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
-      const sourceUrl = isVercelBlobUrl(input.storageKey) ? input.storageKey : await storageGetSignedUrl(input.storageKey);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
         const body = await response.text().catch(() => "");
@@ -3961,7 +3956,7 @@ function registerBlobUploadRoute(app2) {
             }
           }
           await assertProductionActionAuthorized(actionPassword);
-          const token = await issueSignedToken({
+          const token = await issueSignedToken2({
             pathname,
             operations: ["put"],
             allowedContentTypes: [EXCEL_MIME2],
