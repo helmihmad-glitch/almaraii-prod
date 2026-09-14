@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { ArrowLeft, BookOpen, KeyRound, Plus, Settings2, ShieldCheck, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, KeyRound, Menu, Plus, Settings2, ShieldCheck, Trash2, Users } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
+import { useSidebar } from "@/components/AppShell";
 
 export default function Settings() {
+  const { openSidebar } = useSidebar();
   const utils = trpc.useUtils();
   const articlesQuery = trpc.settings.listArticles.useQuery();
   const operatorsQuery = trpc.settings.listOperators.useQuery();
@@ -57,6 +59,7 @@ export default function Settings() {
   return (
     <main className="settings-screen">
       <header className="settings-topbar">
+        <button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button>
         <Link href="/" className="settings-back"><ArrowLeft size={16} />Retour au tableau de bord</Link>
         <div className="settings-brand"><div className="settings-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
       </header>

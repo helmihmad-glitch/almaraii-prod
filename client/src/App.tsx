@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
+import AppShell from "./components/AppShell";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
@@ -10,6 +11,9 @@ import Registry from "./pages/Registry";
 import Settings from "./pages/Settings";
 import DailyProgram from "./pages/DailyProgram";
 import DailyProgramData from "./pages/DailyProgramData";
+import SiloPf from "./pages/SiloPf";
+import SiloPfData from "./pages/SiloPfData";
+import SiloLots from "./pages/SiloLots";
 
 function Router() {
   console.log("Router initialized");
@@ -21,6 +25,9 @@ function Router() {
       <Route path="/parametres" component={Settings} />
       <Route path="/programme-journalier" component={DailyProgram} />
       <Route path="/programme-journalier-donnee" component={DailyProgramData} />
+      <Route path="/silo-pf" component={SiloPf} />
+      <Route path="/silo-pf-donnee" component={SiloPfData} />
+      <Route path="/silo-pf-lots" component={SiloLots} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
@@ -33,7 +40,7 @@ export default function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <AppShell><Router /></AppShell>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

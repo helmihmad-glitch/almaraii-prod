@@ -5,7 +5,8 @@ const schema = readFileSync(new URL("../drizzle/schema.ts", import.meta.url), "u
 const db = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 const routers = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../client/src/App.tsx", import.meta.url), "utf8");
-const home = readFileSync(new URL("../client/src/pages/Home.tsx", import.meta.url), "utf8");
+// La navigation vit désormais dans la coque commune, partagée par toutes les pages.
+const appShell = readFileSync(new URL("../client/src/components/AppShell.tsx", import.meta.url), "utf8");
 const dailyProgram = readFileSync(new URL("../client/src/pages/DailyProgram.tsx", import.meta.url), "utf8");
 const dailyProgramData = readFileSync(new URL("../client/src/pages/DailyProgramData.tsx", import.meta.url), "utf8");
 const settings = readFileSync(new URL("../client/src/pages/Settings.tsx", import.meta.url), "utf8");
@@ -32,9 +33,9 @@ describe("Programme journalier", () => {
   it("propose les deux pages et les accès de navigation demandés", () => {
     expect(app).toContain('path="/programme-journalier"');
     expect(app).toContain('path="/programme-journalier-donnee"');
-    expect(home).toContain("Programme journalier");
-    expect(home).toContain("Programme journalier donnée");
-    expect(home).not.toContain("Analyse des lignes");
+    expect(appShell).toContain("Programme journalier");
+    expect(appShell).toContain("Programme journalier donnée");
+    expect(appShell).not.toContain("Analyse des lignes");
     expect(dailyProgram).toContain('type="date"');
     expect(dailyProgram).toContain("Quantité (tonne)");
     expect(dailyProgramData).toContain("Créer le programme");

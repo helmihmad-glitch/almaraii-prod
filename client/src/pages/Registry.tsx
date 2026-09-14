@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Activity, ArrowLeft, CalendarDays, Database, Download, Factory, FileText, Menu, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { trpc } from "@/lib/trpc";
+import { useSidebar } from "@/components/AppShell";
 import { generateDayPdf } from "@/lib/dayPdfReport";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import "./registry-import-dialog.css";
@@ -49,6 +50,7 @@ type PendingImport = { file: File; fileName: string };
 type PendingPdf = { productionDate: string; comment: string };
 
 export default function Registry() {
+  const { openSidebar } = useSidebar();
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -155,6 +157,7 @@ export default function Registry() {
     {pendingPdf && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog registry-pdf-dialog" onSubmit={(event) => { event.preventDefault(); void confirmDayPdf(); }} role="dialog" aria-modal="true" aria-labelledby="pdf-dialog-title"><span className="registry-kicker"><FileText size={14} />Rapport journalier</span><h2 id="pdf-dialog-title">Ajouter un <em>commentaire</em> au PDF ?</h2><p>Ce commentaire est facultatif. S’il est renseigné, il apparaîtra en bas du rapport de production du {prettyDate(pendingPdf.productionDate)}.</p><label>Commentaire d’export<textarea value={pendingPdf.comment} onChange={(event) => setPendingPdf({ ...pendingPdf, comment: event.target.value })} autoFocus maxLength={1200} placeholder="Ex. Situation particulière, consigne de suivi…" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => setPendingPdf(null)}>Annuler</button><button type="button" className="registry-clear" onClick={() => void confirmDayPdf("")}>Exporter sans commentaire</button><button type="submit" className="registry-import">Exporter le PDF</button></div></form></div>}
     {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Le fichier est téléversé directement et ne traverse pas la limite de requête de Vercel. Les lignes seront ensuite ajoutées ou mises à jour dans le registre.</p><label>Mot de passe d’action<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" placeholder="Saisissez le mot de passe" /></label><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={prepareExcelUpload.isPending || importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={prepareExcelUpload.isPending || importExcel.isPending}>{prepareExcelUpload.isPending || importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
     <header className="registry-topbar">
+      <button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button>
       <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
       <div className="registry-brand"><span className="registry-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
       <Link href="/?entry=1" className="registry-add"><Plus size={16} />Saisir une production</Link>

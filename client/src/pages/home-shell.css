@@ -1,0 +1,2 @@
+/* La vue d’ensemble occupe toute la zone de contenu de la coque commune. */
+.home-main { display: block; width: 100%; min-width: 0; }

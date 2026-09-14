@@ -1,8 +1,8 @@
 // Atelier Signal — page de pilotage : composition en feuille de production, signaux orange et typographie éditoriale.
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity, ArrowDownRight, ArrowUpRight, Bell, CalendarDays,
-  ChevronDown, CircleHelp, ClipboardList, Download, Factory, Gauge,
+  Activity, ArrowDownRight, ArrowUpRight, Bell, Boxes, CalendarDays,
+  ChevronDown, CircleHelp, ClipboardList, Download, Factory, Gauge, Layers,
   LayoutDashboard, Menu, MoreHorizontal, PackageCheck, Search, Settings2,
   SlidersHorizontal, Sparkles, Target, Timer, TrendingUp, TriangleAlert,
   Plus, Pencil, Trash2, RotateCcw, X,
@@ -13,7 +13,9 @@ import data from "@/data/app-data.json";
 import { trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { calculateDailyHoursSummaries, calculateHoursSummary, calculateMonthlyProductionStats, getDailyHoursSummary, getPreviousCalendarDate, orderProductionRows } from "@/lib/registryOrdering";
+import { useSidebar } from "@/components/AppShell";
 import { useLocation } from "wouter";
+import "./home-shell.css";
 
 type Day = (typeof data.months)[number]["daily"][number];
 type Month = (typeof data.months)[number];
@@ -74,7 +76,7 @@ export default function Home() {
   const [dateFilter, setDateFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { openSidebar } = useSidebar();
   const [isEntryOpen, setIsEntryOpen] = useState(() => new URLSearchParams(window.location.search).get("entry") === "1");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingSourceKey, setEditingSourceKey] = useState<string | null>(null);
@@ -143,10 +145,6 @@ export default function Home() {
     onError: (_error, _variables, context) => { productionUtils.production.list.setData(undefined, context?.previous); toast.error("La ligne n’a pas pu être supprimée."); },
     onSuccess: () => { void productionUtils.production.syncFile.invalidate(); toast.success("Ligne supprimée"); },
   });
-  const openRegistry = () => { setSidebarOpen(false); setLocation("/registre"); };
-  const openSettings = () => { setSidebarOpen(false); setLocation("/parametres"); };
-  const openDailyProgram = () => { setSidebarOpen(false); setLocation("/programme-journalier"); };
-  const openDailyProgramData = () => { setSidebarOpen(false); setLocation("/programme-journalier-donnee"); };
   const month = months.find((item) => monthPrefixFromKey(item.key) === selectedPeriod) ?? ({ name: periodNameFromValue(selectedPeriod), target: 0 } as Month);
   const monthPrefix = selectedPeriod;
   const periodName = periodNameFromValue(selectedPeriod);
@@ -218,24 +216,9 @@ export default function Home() {
   };
 
   return (
-    <div className="app-shell">
-      <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <div className="brand"><div className="brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><div><strong>Almaraïi</strong><span>Production Pulse</span></div><button className="mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu"><X size={18} /></button></div>
-        <div className="rail-section"><span className="rail-label">Espace opérationnel</span><nav>
-          <button className="rail-link active"><LayoutDashboard size={17} />Vue d’ensemble</button>
-          <button className="rail-link" onClick={openRegistry}><ClipboardList size={17} />Registre journalier</button>
-          <button className="rail-link" onClick={openDailyProgram}><CalendarDays size={17} />Programme journalier</button>
-          <button className="rail-link" onClick={openDailyProgramData}><SlidersHorizontal size={17} />Programme journalier donnée</button>
-        </nav></div>
-        <div className="rail-section"><span className="rail-label">Raccourcis</span><nav>
-          <button className="rail-link" onClick={exportData}><Download size={17} />Exporter les données</button>
-          <button className="rail-link" onClick={openSettings}><Settings2 size={17} />Paramètres</button>
-        </nav></div>
-        <div className="rail-footer"><div className="status-pulse"><span />Source synchronisée</div><small>Classeur : Dashboard_Production.xlsx<br />Dernière lecture · aujourd’hui</small></div>
-      </aside>
-      {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" />}
-      <main className="main-content">
-        <header className="topbar"><div className="topbar-left"><button className="mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu"><Menu size={20} /></button><div className="breadcrumb"><span>Production</span><ChevronDown size={14} /><strong>Vue d’ensemble</strong></div></div><div className="topbar-actions"><button className="icon-button" aria-label="Rechercher" onClick={() => document.getElementById("registry-search")?.focus()}><Search size={17} /></button><button className="icon-button notification" aria-label="Notifications" onClick={() => toast.info("Aucun nouvel événement critique.")}><Bell size={17} /><i /></button><div className="avatar">HH</div></div></header>
+    <>
+      <main className="home-main">
+        <header className="topbar"><div className="topbar-left"><button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button><div className="breadcrumb"><span>Production</span><ChevronDown size={14} /><strong>Vue d’ensemble</strong></div></div><div className="topbar-actions"><button className="icon-button" aria-label="Rechercher" onClick={() => document.getElementById("registry-search")?.focus()}><Search size={17} /></button><button className="icon-button notification" aria-label="Notifications" onClick={() => toast.info("Aucun nouvel événement critique.")}><Bell size={17} /><i /></button><div className="avatar">HH</div></div></header>
         <div className="content-wrap">
           <section className="top-insight-grid" aria-label="Synthèse quotidienne et horaires"><ProductionJ1Card day={yesterdayProduction} yesterdayDate={yesterdayDate} /><article className="top-hours-panel"><div className="top-insight-heading"><div><span className="eyebrow"><span className="eyebrow-dot" />Heures quotidiennes</span></div><div className="hours-legend"><span><i className="active-bar-dot" />Actives</span><span><i className="lost-bar-dot" />Perdues</span></div></div><div className="hours-chart">{dailyHoursData.length ? <ResponsiveContainer width="100%" height="100%"><BarChart data={dailyHoursData} margin={{ top: 12, right: 8, left: -18, bottom: 0 }} barGap={3}><CartesianGrid strokeDasharray="2 6" stroke="#dfe3d8" vertical={false} /><XAxis dataKey="label" tick={{ fill: "#70806e", fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" /><YAxis tick={{ fill: "#70806e", fontSize: 11 }} tickLine={false} axisLine={false} unit=" h" /><Tooltip contentStyle={{ background: "#1d4826", border: "0", borderRadius: "8px", color: "white", fontSize: "12px" }} formatter={(value: number, name: string) => [`${fmt(value, 1)} h`, name === "activeHours" ? "Heures actives" : "Heures perdues"]} /><Bar dataKey="activeHours" fill="#4d7b40" radius={[4, 4, 0, 0]} /><Bar dataKey="lostHours" fill="#e8b53a" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer> : <div className="empty-chart">Aucune heure enregistrée pour cette période.</div>}</div></article></section>
           <section className="hero-panel"><div className="hero-copy"><div className="hero-heading-row"><div className="eyebrow light"><span className="eyebrow-dot" />Objectif mensuel · {periodName}</div><div className="hero-period-control"><span className="control-label">Période observée</span><label className="select-wrap period-calendar"><CalendarDays size={15} /><input type="month" value={selectedPeriod} onChange={(event) => { setSelectedPeriod(event.target.value); setArticleFilter("Toutes les lignes"); setQuery(""); setDateFilter(""); setDateFrom(""); setDateTo(""); }} aria-label="Choisir le mois et l’année" /></label><span className="period-note">{isPeriodResolving ? <><span className="loading-dot" />Chargement</> : hasMonthData ? <><span className="live-dot" />Données disponibles</> : <><span className="empty-dot" />Sans données</>}</span></div></div><div className="hero-number-row"><h2>{hasMonthData ? fmt(monthlyStats.production, 1) : isPeriodResolving ? "…" : "—"} <span>/</span></h2>{isTargetEditing ? <div className="target-edit"><input type="number" min="1" step="1" value={targetDraft} onChange={(e) => setTargetDraft(e.target.value)} aria-label="Objectif mensuel en tonnes" /><span>T</span><button type="button" onClick={saveTarget}>OK</button><button type="button" onClick={() => setIsTargetEditing(false)} aria-label="Annuler">×</button></div> : <button type="button" className="target-value" onClick={() => { setTargetDraft(String(monthTarget)); setIsTargetEditing(true); }} title="Modifier l’objectif mensuel"><strong>{monthTarget > 0 ? `${fmt(monthTarget)} T` : "Définir un objectif"}</strong><Pencil size={13} /></button>}</div><p>{isPeriodResolving ? "Chargement des données de production…" : hasMonthData ? (monthlyStats.production >= monthTarget && monthTarget > 0 ? "Objectif dépassé — la ligne reste à surveiller sur la qualité." : `${fmt(Math.max(monthTarget - monthlyStats.production, 0), 1)} T restent à produire pour atteindre le plan.`) : "Aucune donnée de production n’est disponible pour ce mois."}</p><div className="progress-track"><span style={{ width: `${Math.min(monthProgress * 100, 100)}%` }} /><i style={{ left: `${Math.min(monthProgress * 100, 100)}%` }} /></div><div className="progress-foot"><span>Progression réelle <strong>{hasMonthData ? pct(monthProgress) : "—"}</strong></span><span>Plan <strong>{monthTarget > 0 ? `${fmt(monthTarget)} T` : "—"}</strong></span></div></div><div className="hero-donut"><Donut value={monthProgress} /><span>atteinte du plan</span></div><div className="hero-texture" /></section>
@@ -253,6 +236,7 @@ export default function Home() {
                 <div className="date-filter-input"><CalendarDays size={15} /><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} aria-label="Filtrer par date exacte" title="Filtrer par date exacte" /></div>
                 <div className="date-range-group"><label>Du<input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); if (dateTo && event.target.value > dateTo) setDateTo(event.target.value); }} aria-label="Date de début" /></label><label>Au<input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); if (dateFrom && event.target.value < dateFrom) setDateFrom(event.target.value); }} aria-label="Date de fin" /></label></div>
                 {(query || articleFilter !== "Toutes les lignes" || dateFilter || dateFrom || dateTo) && <button type="button" className="filter-button" onClick={clearRegistryFilters}><RotateCcw size={15} />Effacer les filtres</button>}
+                <button type="button" className="filter-button" onClick={exportData}><Download size={15} />Exporter les données</button>
                 {(Object.keys(sourceOverrides).length > 0 || Object.keys(sourceDeleted).length > 0) && <button className="filter-button" onClick={restoreExcelSources} title="Annuler les corrections locales Excel"><RotateCcw size={15} />Réinitialiser Excel</button>}
                 <button className="export-button" onClick={exportData}><Download size={15} />Exporter</button><button className="add-entry-button" onClick={openNewEntry}><Plus size={15} />Saisir une production</button>
               </div>
@@ -263,6 +247,6 @@ export default function Home() {
           {isEntryOpen && <div className="entry-overlay" role="dialog" aria-modal="true" aria-label="Saisir une production"><div className="entry-modal"><div className="entry-modal-head"><div><div className="eyebrow"><span className="eyebrow-dot" />Registre de production journalier</div><h3>{editingId ? "Modifier la ligne" : "Nouvelle production"}</h3><p>Les indicateurs disponibilité, performance, qualité, TRS et heures réelles sont calculés à l’enregistrement.</p></div><button className="row-action" onClick={() => setIsEntryOpen(false)} aria-label="Fermer"><X size={18} /></button></div><form onSubmit={saveEntry}><div className="entry-grid"><label>Date de production{editingId ? " (modifiable)" : ""}<input type="date" value={entryForm.productionDate} onChange={(e) => setEntryForm({ ...entryForm, productionDate: e.target.value })} required /></label><label>Article<input placeholder="CM1, DG3…" value={entryForm.article} onChange={(e) => setEntryForm({ ...entryForm, article: e.target.value.toUpperCase() })} required /></label><label>Temps total prod. (h)<input type="number" step="0.01" min="0" value={entryForm.totalProductionHours} onChange={(e) => setEntryForm({ ...entryForm, totalProductionHours: e.target.value })} required /></label><label>Arrêts plan. (h)<input type="number" step="0.01" min="0" value={entryForm.plannedStopsHours} onChange={(e) => setEntryForm({ ...entryForm, plannedStopsHours: e.target.value })} /></label><label>Arrêts non pl. (h)<input type="number" step="0.01" min="0" value={entryForm.unplannedStopsHours} onChange={(e) => setEntryForm({ ...entryForm, unplannedStopsHours: e.target.value })} /></label><label>Production (T)<input type="number" step="0.01" min="0" value={entryForm.productionTons} onChange={(e) => setEntryForm({ ...entryForm, productionTons: e.target.value })} required /></label><label>Rebuts (T)<input type="number" step="0.01" min="0" value={entryForm.wasteTons} onChange={(e) => setEntryForm({ ...entryForm, wasteTons: e.target.value })} /></label><label>Cadence std. article<input type="number" step="0.01" min="0.01" value={entryForm.standardRate} onChange={(e) => setEntryForm({ ...entryForm, standardRate: e.target.value })} required /></label></div><div className="comment-fields"><label>Commentaire<textarea value={entryForm.comment} onChange={(e) => setEntryForm({ ...entryForm, comment: e.target.value })} placeholder="Ajouter une observation de production…" maxLength={1000} /></label><p>Le commentaire est ajouté librement. Le mot de passe sera demandé avant toute modification ou suppression.</p></div><div className="entry-formula"><span>Calcul automatique</span><strong>Disponibilité × performance × qualité = TRS</strong></div><div className="entry-modal-actions"><button type="button" className="filter-button" onClick={() => setIsEntryOpen(false)}>Annuler</button><button type="submit" className="export-button" disabled={createEntry.isPending || updateEntry.isPending}>{editingId ? "Enregistrer les modifications" : "Enregistrer la saisie"}</button></div></form></div></div>}{editingYesterdayComment && <div className="entry-overlay" role="dialog" aria-modal="true" aria-label="Modifier le commentaire J-1"><div className="comment-edit-dialog"><div className="eyebrow"><span className="eyebrow-dot" />Production J-1</div><h3>Modifier le commentaire</h3><p>{editingYesterdayComment.article} · {shortDate(editingYesterdayComment.date)}</p><label>Commentaire<textarea value={yesterdayCommentDraft} onChange={(event) => setYesterdayCommentDraft(event.target.value)} autoFocus maxLength={1000} placeholder="Ajouter une observation de production…" /></label><div className="entry-modal-actions"><button type="button" className="filter-button" onClick={() => { setEditingYesterdayComment(null); setYesterdayCommentDraft(""); setEditActionPassword(""); }}>Annuler</button><button type="button" className="export-button" onClick={saveYesterdayComment} disabled={updateEntry.isPending}>Enregistrer le commentaire</button></div></div></div>}<ActionPasswordDialog action={protectedAction} password={actionPassword} isPending={verifyActionPassword.isPending || deleteEntry.isPending || updateEntry.isPending} onPasswordChange={setActionPassword} onCancel={() => { setProtectedAction(null); setActionPassword(""); }} onConfirm={() => void confirmProtectedAction()} /><footer className="page-footer"><span><Sparkles size={14} />Pulse opérationnel · lecture {month.name}</span><span><CircleHelp size={14} />Les valeurs sont issues du classeur source et recalculées côté interface.</span></footer>
         </div>
       </main>
-    </div>
+    </>
   );
 }

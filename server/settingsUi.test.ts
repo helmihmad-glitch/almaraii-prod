@@ -4,13 +4,15 @@ import { describe, expect, it } from "vitest";
 
 const app = readFileSync(fileURLToPath(new URL("../client/src/App.tsx", import.meta.url)), "utf8");
 const homePage = readFileSync(fileURLToPath(new URL("../client/src/pages/Home.tsx", import.meta.url)), "utf8");
+// L’accès aux Paramètres passe par le rail de navigation commun.
+const appShell = readFileSync(fileURLToPath(new URL("../client/src/components/AppShell.tsx", import.meta.url)), "utf8");
 const settingsPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Settings.tsx", import.meta.url)), "utf8");
 
 describe("interface Paramètres", () => {
   it("enregistre et expose la page Paramètres depuis le routeur", () => {
     expect(app).toContain('path="/parametres"');
     expect(app).toContain("component={Settings}");
-    expect(homePage).toContain('setLocation("/parametres")');
+    expect(appShell).toContain('navigate("/parametres")');
   });
 
   it("propose l’ajout et le retrait sécurisé des articles", () => {
