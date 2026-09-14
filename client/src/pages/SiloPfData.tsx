@@ -279,7 +279,7 @@ export default function SiloPfData() {
             </div>
           </form>
 
-          <div className="silo-table-wrap">
+          {entries.length ? <div className="silo-table-wrap">
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th><th>Actions</th></tr></thead>
               <tbody>
@@ -293,10 +293,9 @@ export default function SiloPfData() {
                     <td><span className="silo-row-actions"><button type="button" onClick={() => editEntry(entry)} aria-label="Modifier l’entrée"><Pencil size={14} /></button><button type="button" onClick={() => removeEntry(entry.id)} aria-label="Supprimer l’entrée"><Trash2 size={14} /></button></span></td>
                   </tr>
                 ))}
-                {!entriesQuery.isLoading && entries.length === 0 && <tr><td className="silo-empty-cell" colSpan={6}>Aucune entrée de production enregistrée.</td></tr>}
               </tbody>
             </table>
-          </div>
+          </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">Aucune entrée de production enregistrée.</div>}
         </section>
 
         <section className="silo-section">
@@ -316,7 +315,7 @@ export default function SiloPfData() {
             </div>
           </form>
 
-          <div className="silo-table-wrap">
+          {shipments.length ? <div className="silo-table-wrap">
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th><th>Actions</th></tr></thead>
               <tbody>
@@ -331,10 +330,9 @@ export default function SiloPfData() {
                     <td><span className="silo-row-actions"><button type="button" onClick={() => editShipment(shipment)} aria-label="Modifier l’expédition"><Pencil size={14} /></button><button type="button" onClick={() => removeShipment(shipment.id)} aria-label="Supprimer l’expédition"><Trash2 size={14} /></button></span></td>
                   </tr>
                 ))}
-                {!shipmentsQuery.isLoading && shipments.length === 0 && <tr><td className="silo-empty-cell" colSpan={7}>Aucune expédition enregistrée.</td></tr>}
               </tbody>
             </table>
-          </div>
+          </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">Aucune expédition enregistrée.</div>}
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>

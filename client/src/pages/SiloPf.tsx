@@ -161,7 +161,7 @@ export default function SiloPf() {
         <div className="silo-recent-grid">
           <section className="silo-section">
             <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>Dernières productions</h2></div><Link href="/silo-pf-donnee" className="silo-inline-link">Gérer</Link></div>
-            <div className="silo-table-wrap">
+            {recentEntries.length ? <div className="silo-table-wrap">
               <table className="silo-list-table">
                 <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th></tr></thead>
                 <tbody>
@@ -174,15 +174,14 @@ export default function SiloPf() {
                       <td className="silo-allocation-cell">{entry.allocations.length ? entry.allocations.map((allocation) => `${allocation.silo}: ${fmt(Number(allocation.quantity), 2)}`).join(" · ") : "—"}</td>
                     </tr>
                   ))}
-                  {!entriesQuery.isLoading && recentEntries.length === 0 && <tr><td className="silo-empty-cell" colSpan={5}>Aucune entrée de production enregistrée.</td></tr>}
                 </tbody>
               </table>
-            </div>
+            </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">Aucune entrée de production enregistrée.</div>}
           </section>
 
           <section className="silo-section">
             <div className="silo-section-head"><div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>Dernières expéditions</h2></div><Link href="/silo-pf-donnee" className="silo-inline-link">Gérer</Link></div>
-            <div className="silo-table-wrap">
+            {recentShipments.length ? <div className="silo-table-wrap">
               <table className="silo-list-table">
                 <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th></tr></thead>
                 <tbody>
@@ -196,10 +195,9 @@ export default function SiloPf() {
                       <td><span className={`silo-type-tag ${shipment.shipmentType === "Vrac" ? "silo-type-vrac" : ""}`}>{shipment.shipmentType}</span></td>
                     </tr>
                   ))}
-                  {!shipmentsQuery.isLoading && recentShipments.length === 0 && <tr><td className="silo-empty-cell" colSpan={6}>Aucune expédition enregistrée.</td></tr>}
                 </tbody>
               </table>
-            </div>
+            </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">Aucune expédition enregistrée.</div>}
           </section>
         </div>
       </section>

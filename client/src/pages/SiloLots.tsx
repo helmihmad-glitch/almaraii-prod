@@ -96,7 +96,7 @@ export default function SiloLots() {
             </div>
           </div>
 
-          {ledgerQuery.isLoading ? <p className="silo-empty">Chargement de la traçabilité…</p> : (
+          {ledgerQuery.isLoading ? <p className="silo-empty">Chargement de la traçabilité…</p> : filteredLots.length === 0 ? <div className="silo-empty-cell">Aucun lot ne correspond à ces filtres.</div> : (
             <div className="silo-table-wrap">
               <table className="silo-list-table silo-lot-table">
                 <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th><th>Statut</th></tr></thead>
@@ -133,7 +133,6 @@ export default function SiloLots() {
                       </Fragment>
                     );
                   })}
-                  {filteredLots.length === 0 && <tr><td className="silo-empty-cell" colSpan={9}>Aucun lot ne correspond à ces filtres.</td></tr>}
                 </tbody>
               </table>
             </div>

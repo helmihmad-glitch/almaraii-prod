@@ -9,8 +9,8 @@
 .silo-brand-mark img { width: 24px; height: 27px; object-fit: contain; }
 .silo-manage-link { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d0ddd1; border-radius: 7px; padding: 9px 11px; color: #356a40; background: #f3f8f1; text-decoration: none; font-size: 11px; font-weight: 700; }
 .silo-manage-link:hover { border-color: #4d7b40; background: #e9f4e7; }
-.silo-page { max-width: 1280px; margin: 0 auto; padding: 42px clamp(20px, 5vw, 72px) 60px; display: grid; gap: 22px; }
-.silo-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; flex-wrap: wrap; }
+.silo-page { max-width: 1280px; margin: 0 auto; padding: 42px clamp(20px, 5vw, 72px) 60px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.silo-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; flex-wrap: wrap; min-width: 0; }
 .silo-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--signal); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
 .silo-hero h1 { margin: 12px 0; color: var(--ink); font: 600 clamp(32px, 4.4vw, 50px)/1 'Space Grotesk'; letter-spacing: -.06em; }
 .silo-hero h1 em { color: var(--signal); font-style: normal; }
@@ -25,7 +25,7 @@
 .silo-password-card span { color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .silo-password-card input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
 .silo-password-card input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
-.silo-section { border: 1px solid #e1e6dc; border-radius: 13px; padding: 20px 22px; background: rgba(255,254,250,.94); box-shadow: 0 10px 28px rgba(29,72,38,.05); }
+.silo-section { border: 1px solid #e1e6dc; border-radius: 13px; padding: 20px 22px; background: rgba(255,254,250,.94); box-shadow: 0 10px 28px rgba(29,72,38,.05); min-width: 0; }
 .silo-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .silo-section-label { display: inline-flex; align-items: center; gap: 7px; color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .silo-section-head h2 { margin: 5px 0 0; color: var(--ink); font: 600 20px 'Space Grotesk'; letter-spacing: -.04em; }
@@ -76,7 +76,7 @@
 .silo-type-vrac { background: #fdf3dd; color: #8a6414; }
 .silo-empty, .silo-empty-cell { color: #7c8980; font-size: 12px; }
 .silo-empty-cell { padding: 26px !important; text-align: center !important; }
-.silo-recent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 22px; }
+.silo-recent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 22px; min-width: 0; }
 .silo-error-card { display: flex; align-items: center; gap: 14px; border: 1px solid #f1cfc7; border-radius: 13px; padding: 18px 20px; background: #fff7f4; color: #a24c37; }
 .silo-error-card strong { display: block; color: #8f3f2b; font: 600 15px 'Space Grotesk'; }
 .silo-error-card span { font-size: 12px; }
@@ -123,8 +123,19 @@
 .silo-row-actions button:hover { border-color: #4d7b40; background: #eff6ed; }
 @media (max-width: 760px) {
   .silo-topbar { height: auto; padding: 12px clamp(14px, 4vw, 24px); flex-wrap: wrap; gap: 10px; }
-  .silo-recent-grid { grid-template-columns: 1fr; }
+  .silo-recent-grid { grid-template-columns: minmax(0, 1fr); }
   .silo-hero { gap: 18px; }
+  .silo-hero-actions { width: 100%; }
+  .silo-total-card, .silo-password-card { min-width: 0; width: 100%; }
+  .silo-file-actions { width: 100%; }
+  .silo-file-actions .silo-secondary { width: 100%; }
+  .silo-section { padding: 17px; }
+  .silo-section-head { gap: 10px; }
+  .silo-lot-filters { width: 100%; gap: 10px; }
+  .silo-lot-filters label { flex: 1 1 128px; }
+  .silo-lot-filters select, .silo-lot-filters input { width: 100%; min-width: 0; }
+  .silo-fields { grid-template-columns: minmax(0, 1fr); }
+  .silo-allocation-fields > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 .silo-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .silo-file-actions { display: flex; flex-direction: column; gap: 8px; }
