@@ -1,0 +1,139 @@
+/* Silos de produits finis — état des silos et saisie des mouvements. */
+.silo-screen { min-height: 100vh; background: #f5f6ee; color: var(--ink); background-image: linear-gradient(rgba(77,123,64,.026) 1px, transparent 1px), linear-gradient(90deg, rgba(77,123,64,.018) 1px, transparent 1px); background-size: 100% 28px, 28px 100%; }
+.silo-topbar { height: 70px; padding: 0 clamp(20px, 5vw, 72px); display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #e0e5d9; background: rgba(255,254,248,.88); backdrop-filter: blur(10px); }
+.silo-back { display: inline-flex; align-items: center; gap: 8px; color: #4e664d; text-decoration: none; font-size: 12px; font-weight: 600; }
+.silo-back:hover { color: var(--signal); }
+.silo-brand { display: flex; align-items: center; gap: 9px; color: var(--ink); font: 600 13px 'Space Grotesk'; }
+.silo-brand small { display: block; margin-top: 2px; color: #71816e; font: 500 8px 'IBM Plex Sans'; letter-spacing: .1em; text-transform: uppercase; }
+.silo-brand-mark { width: 30px; height: 30px; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(232,181,58,.55); border-radius: 7px; background: #fffdf6; }
+.silo-brand-mark img { width: 24px; height: 27px; object-fit: contain; }
+.silo-manage-link { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d0ddd1; border-radius: 7px; padding: 9px 11px; color: #356a40; background: #f3f8f1; text-decoration: none; font-size: 11px; font-weight: 700; }
+.silo-manage-link:hover { border-color: #4d7b40; background: #e9f4e7; }
+.silo-page { max-width: 1280px; margin: 0 auto; padding: 42px clamp(20px, 5vw, 72px) 60px; display: grid; gap: 22px; }
+.silo-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; flex-wrap: wrap; }
+.silo-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--signal); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.silo-hero h1 { margin: 12px 0; color: var(--ink); font: 600 clamp(32px, 4.4vw, 50px)/1 'Space Grotesk'; letter-spacing: -.06em; }
+.silo-hero h1 em { color: var(--signal); font-style: normal; }
+.silo-hero p { max-width: 620px; margin: 0; color: #6e7d6b; font-size: 14px; line-height: 1.6; }
+.silo-total-card { min-width: 210px; display: grid; gap: 4px; border: 1px solid #e1e6dc; border-radius: 13px; padding: 16px 18px; background: rgba(255,254,250,.94); box-shadow: 0 10px 28px rgba(29,72,38,.05); }
+.silo-total-card span { color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.silo-total-card strong { color: var(--ink); font: 600 30px 'Space Grotesk'; letter-spacing: -.05em; }
+.silo-total-bar { position: relative; height: 6px; border-radius: 999px; overflow: hidden; background: #e7ece2; }
+.silo-total-bar i { position: absolute; inset: 0 auto 0 0; display: block; height: 100%; border-radius: inherit; background: #4d7b40; transition: width .3s ease; }
+.silo-total-card small { color: #7c8980; font-size: 11px; }
+.silo-password-card { min-width: 235px; display: grid; gap: 7px; border: 1px solid #e1e6dc; border-radius: 13px; padding: 15px 17px; background: rgba(255,254,250,.94); }
+.silo-password-card span { color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.silo-password-card input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
+.silo-password-card input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
+.silo-section { border: 1px solid #e1e6dc; border-radius: 13px; padding: 20px 22px; background: rgba(255,254,250,.94); box-shadow: 0 10px 28px rgba(29,72,38,.05); }
+.silo-section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.silo-section-label { display: inline-flex; align-items: center; gap: 7px; color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.silo-section-head h2 { margin: 5px 0 0; color: var(--ink); font: 600 20px 'Space Grotesk'; letter-spacing: -.04em; }
+.silo-toggle { display: inline-flex; align-items: center; gap: 8px; color: #65736e; font-size: 11px; font-weight: 600; }
+.silo-inline-link { color: #356a40; font-size: 11px; font-weight: 700; text-decoration: none; }
+.silo-inline-link:hover { color: var(--signal); }
+.silo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 18px 14px; }
+.silo-shape { position: relative; aspect-ratio: 120 / 156; }
+.silo-shape-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+.silo-shape-outline { fill: #fbfcf8; stroke: #c4cec0; stroke-width: 4; stroke-linejoin: round; transition: fill .18s ease, stroke .18s ease; }
+.silo-shape-filled .silo-shape-outline { fill: #eef6ea; stroke: #4d7b40; }
+.silo-shape-fill { transition: y .3s ease, height .3s ease; }
+.silo-shape-fill-normal { fill: #6fa15e; }
+.silo-shape-fill-warning { fill: #e8b53a; }
+.silo-shape-fill-over { fill: #c15a3f; }
+/* L’encadré suit la sévérité du remplissage plutôt que de rester vert par défaut : un silo en alerte ou en dépassement doit se voir sans lire le chiffre. */
+.silo-shape-status-warning .silo-shape-outline { stroke: #b8860f; }
+.silo-shape-status-over .silo-shape-outline { stroke: #a24c37; }
+.silo-shape-content { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 15% 8% 38%; text-align: center; }
+.silo-shape-head { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.silo-shape-name { color: var(--ink); font: 600 13px 'Space Grotesk'; }
+.silo-shape-percent { border-radius: 999px; padding: 1px 6px; font-size: 9px; font-weight: 700; color: #fffefa; }
+.silo-shape-percent-normal { background: #4d7b40; }
+.silo-shape-percent-warning { background: #b8860f; }
+.silo-shape-percent-over { background: #a24c37; }
+.silo-badge { border-radius: 999px; padding: 3px 8px; background: #e8f2e4; color: #356a40; font-size: 10px; font-weight: 700; }
+.silo-badge-muted { background: #eef0ea; color: #86917f; }
+.silo-shape-qty { margin: auto 0 0; color: var(--ink); font: 600 16px 'Space Grotesk'; letter-spacing: -.03em; }
+.silo-shape-qty small { color: #7c8980; font: 500 10px 'IBM Plex Sans'; }
+.silo-article-stock { display: flex; flex-wrap: wrap; gap: 10px; }
+.silo-article-chip { display: grid; gap: 3px; border: 1px solid #dbe4d8; border-radius: 10px; padding: 11px 15px; background: #fbfcf8; }
+.silo-article-chip strong { color: var(--ink); font: 600 13px 'Space Grotesk'; }
+.silo-article-chip span { color: #4d7b40; font-size: 13px; font-weight: 600; }
+.silo-table-wrap { overflow: auto; }
+.silo-matrix-table, .silo-list-table { width: 100%; border-collapse: collapse; background: #fffefa; }
+.silo-matrix-table { min-width: 620px; }
+.silo-list-table { min-width: 760px; }
+.silo-matrix-table th, .silo-matrix-table td { padding: 10px 12px; border: 1px solid #dce5dc; font-size: 12px; text-align: center; }
+.silo-matrix-table thead th { background: #f4f8f1; color: var(--ink); font-size: 11px; }
+.silo-matrix-table tbody th { background: #f9fbf6; color: var(--ink); font: 600 12px 'Space Grotesk'; }
+.silo-cell-filled { color: var(--ink); font-weight: 600; background: #f6faf4; }
+.silo-cell-empty { background: #fffefa; }
+.silo-list-table th { padding: 11px 9px; background: #f4f8f1; color: #71817a; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.silo-list-table td { padding: 11px 9px; border-top: 1px solid #edf0eb; color: #4f6054; font-size: 11px; }
+.silo-strong-cell { color: var(--ink) !important; font: 600 12px 'Space Grotesk'; }
+.silo-allocation-cell { color: #4d7b40 !important; font-size: 11px; }
+.silo-type-tag { border-radius: 999px; padding: 3px 9px; background: #e8f2e4; color: #356a40; font-size: 10px; font-weight: 700; }
+.silo-type-vrac { background: #fdf3dd; color: #8a6414; }
+.silo-empty, .silo-empty-cell { color: #7c8980; font-size: 12px; }
+.silo-empty-cell { padding: 26px !important; text-align: center !important; }
+.silo-recent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 22px; }
+.silo-error-card { display: flex; align-items: center; gap: 14px; border: 1px solid #f1cfc7; border-radius: 13px; padding: 18px 20px; background: #fff7f4; color: #a24c37; }
+.silo-error-card strong { display: block; color: #8f3f2b; font: 600 15px 'Space Grotesk'; }
+.silo-error-card span { font-size: 12px; }
+.silo-warning-card { align-items: flex-start; }
+.silo-warning-card ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: 11px; }
+.silo-lot-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.silo-lot-filters label { display: flex; flex-direction: column; gap: 5px; color: #65736e; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.silo-lot-filters label.silo-toggle { flex-direction: row; align-items: center; text-transform: none; letter-spacing: normal; font-size: 11px; padding-bottom: 8px; }
+.silo-lot-filters select, .silo-lot-filters input { border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 8px 10px; font-size: 12px; min-width: 108px; }
+.silo-lot-filters select:focus, .silo-lot-filters input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
+.silo-lot-table { min-width: 900px; }
+.silo-lot-table tbody tr:not(.silo-lot-detail-row) { cursor: pointer; }
+.silo-lot-table tbody tr:not(.silo-lot-detail-row):hover { background: #f6faf3; }
+.silo-lot-expand { width: 24px; color: #97a598; }
+.silo-lot-expand svg { transition: transform .15s ease; }
+.silo-lot-row-depleted { opacity: .58; }
+.silo-lot-status { border-radius: 999px; padding: 3px 9px; font-size: 10px; font-weight: 700; }
+.silo-lot-status-active { background: #e8f2e4; color: #356a40; }
+.silo-lot-status-depleted { background: #eef0ea; color: #86917f; }
+.silo-lot-detail-row td { background: #fbfcf8; padding: 10px 16px !important; border-top: 0 !important; }
+.silo-lot-detail-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.silo-lot-detail-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: #4f6054; }
+.silo-lot-detail-list strong { color: #a24c37; font-weight: 700; }
+.silo-lot-detail-empty { margin: 0; color: #7c8980; font-size: 11px; }
+.silo-form { display: grid; gap: 15px; margin-bottom: 20px; }
+.silo-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.silo-fields label, .silo-allocation-fields label { display: flex; flex-direction: column; gap: 6px; color: #65736e; font-size: 11px; font-weight: 600; }
+.silo-fields input, .silo-fields select, .silo-allocation-fields input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
+.silo-fields input:focus, .silo-fields select:focus, .silo-allocation-fields input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
+.silo-allocation-fields { border: 1px solid #e3e8de; border-radius: 11px; padding: 14px 16px; background: #fbfcf8; }
+.silo-allocation-fields legend { padding: 0 6px; color: #7c8980; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.silo-allocation-fields > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 10px; }
+.silo-allocation-total, .silo-allocation-warning { margin: 12px 0 0; font-size: 11px; }
+.silo-allocation-total { color: #65736e; }
+.silo-allocation-warning { color: #a24c37; font-weight: 600; }
+.silo-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.silo-primary, .silo-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 7px; padding: 9px 13px; font-size: 11px; font-weight: 700; }
+.silo-primary { border: 1px solid var(--signal); background: var(--signal); color: var(--ink); }
+.silo-secondary { border: 1px solid #dce3da; background: #fffefa; color: #64756b; }
+.silo-primary:disabled { opacity: .55; cursor: wait; }
+.silo-row-actions { display: inline-flex; gap: 5px; }
+.silo-row-actions button { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid #dce3da; border-radius: 6px; background: #fffefa; color: #587063; }
+.silo-row-actions button:last-child { color: #a45b42; }
+.silo-row-actions button:hover { border-color: #4d7b40; background: #eff6ed; }
+@media (max-width: 760px) {
+  .silo-topbar { height: auto; padding: 12px clamp(14px, 4vw, 24px); flex-wrap: wrap; gap: 10px; }
+  .silo-recent-grid { grid-template-columns: 1fr; }
+  .silo-hero { gap: 18px; }
+}
+.silo-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.silo-file-actions { display: flex; flex-direction: column; gap: 8px; }
+.silo-import-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(19,43,53,.45); }
+.silo-import-dialog { width: min(430px, 100%); display: grid; gap: 11px; border: 1px solid #e1e6dc; border-radius: 14px; padding: 24px; background: #fffefa; box-shadow: 0 26px 60px rgba(29,72,38,.22); }
+.silo-import-dialog h2 { margin: 0; color: var(--ink); font: 600 20px 'Space Grotesk'; letter-spacing: -.04em; word-break: break-word; }
+.silo-import-dialog p { margin: 0; color: #6e7d6b; font-size: 12px; line-height: 1.6; }
+.silo-import-dialog strong { color: var(--ink); }
+.silo-import-dialog label { display: flex; flex-direction: column; gap: 6px; color: #65736e; font-size: 11px; font-weight: 600; }
+.silo-import-dialog input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
+.silo-import-dialog input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
+.silo-secondary:disabled { opacity: .55; cursor: wait; }

@@ -94,6 +94,43 @@ export const dailyProgramLines = pgTable("daily_program_lines", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [index("daily_program_lines_program_sequence_index").on(table.programId, table.sequence)]);
 
+// --- Silos de produits finis (reprise du classeur Silo_PF.xlsx) ---
+// Une entrée de production décrit un lot fabriqué, réparti sur un ou plusieurs
+// silos via `siloProductionAllocations`. Une ligne sans date ni lot sert de
+// correction/transfert (les quantités peuvent alors être négatives), comme dans
+// le classeur d’origine.
+
+export const siloProductionEntries = pgTable("silo_production_entries", {
+  id: serial("id").primaryKey(),
+  entryDate: varchar("entryDate", { length: 10 }),
+  article: varchar("article", { length: 64 }).notNull(),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  totalQuantity: decimal("totalQuantity", { precision: 10, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [index("silo_production_entries_date_index").on(table.entryDate)]);
+
+export const siloProductionAllocations = pgTable("silo_production_allocations", {
+  id: serial("id").primaryKey(),
+  entryId: integer("entryId").notNull(),
+  silo: varchar("silo", { length: 16 }).notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [index("silo_production_allocations_entry_index").on(table.entryId, table.silo)]);
+
+export const siloShipments = pgTable("silo_shipments", {
+  id: serial("id").primaryKey(),
+  shipmentDate: varchar("shipmentDate", { length: 10 }),
+  article: varchar("article", { length: 64 }).notNull(),
+  lotNumber: varchar("lotNumber", { length: 64 }),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  silo: varchar("silo", { length: 16 }).notNull(),
+  shipmentType: varchar("shipmentType", { length: 8 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [index("silo_shipments_date_index").on(table.shipmentDate)]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ProductionRecord = typeof productionRecords.$inferSelect;
@@ -106,3 +143,9 @@ export type DailyProgram = typeof dailyPrograms.$inferSelect;
 export type InsertDailyProgram = typeof dailyPrograms.$inferInsert;
 export type DailyProgramLine = typeof dailyProgramLines.$inferSelect;
 export type InsertDailyProgramLine = typeof dailyProgramLines.$inferInsert;
+export type SiloProductionEntry = typeof siloProductionEntries.$inferSelect;
+export type InsertSiloProductionEntry = typeof siloProductionEntries.$inferInsert;
+export type SiloProductionAllocation = typeof siloProductionAllocations.$inferSelect;
+export type InsertSiloProductionAllocation = typeof siloProductionAllocations.$inferInsert;
+export type SiloShipment = typeof siloShipments.$inferSelect;
+export type InsertSiloShipment = typeof siloShipments.$inferInsert;
