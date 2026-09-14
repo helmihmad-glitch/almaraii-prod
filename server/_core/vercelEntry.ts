@@ -38,7 +38,7 @@ export default function vercelApiHandler(req: IncomingMessage, res: ServerRespon
     const query = requestUrl.searchParams.toString();
     req.url = `/api/${routedPath}${query ? `?${query}` : ""}`;
   }
-  if (req.url?.startsWith("/api/manus-storage/")) {
+  if (req.url?.startsWith("/api/local-storage/")) {
     req.url = req.url.replace(/^\/api/, "");
   }
   try {

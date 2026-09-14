@@ -9,10 +9,7 @@ const vercelApiEntry = readFileSync(`${root}server/_core/vercelEntry.ts`, "utf8"
 const appFactory = readFileSync(`${root}server/_core/app.ts`, "utf8");
 const serverSources = [
   readFileSync(`${root}server/routers.ts`, "utf8"),
-  readFileSync(`${root}server/_core/oauth.ts`, "utf8"),
-  readFileSync(`${root}server/_core/sdk.ts`, "utf8"),
   readFileSync(`${root}server/_core/trpc.ts`, "utf8"),
-  readFileSync(`${root}server/_core/imageGeneration.ts`, "utf8"),
 ].join("\n");
 
 describe("configuration de déploiement Vercel", () => {
@@ -34,8 +31,8 @@ describe("configuration de déploiement Vercel", () => {
     expect(vercelConfig).not.toContain("includeFiles");
     expect(vercelConfig).toContain('"source": "/api/:path*"');
     expect(vercelConfig).toContain('"destination": "/api/index?__path=:path*"');
-    expect(vercelConfig).toContain('"destination": "/api/index?__path=manus-storage/:path*"');
-    expect(vercelConfig).toContain('"source": "/:path((?!api/|manus-storage/).*)"');
+    expect(vercelConfig).toContain('"destination": "/api/index?__path=local-storage/:path*"');
+    expect(vercelConfig).toContain('"source": "/:path((?!api/|local-storage/).*)"');
     expect(vercelConfig).not.toContain('"source": "/api/(.*)"');
   });
 

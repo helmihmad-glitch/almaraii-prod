@@ -16,7 +16,7 @@ Ne renseignez pas `dist` ou `dist/index.js` comme **Output Directory**. Après l
 
 ## Variables d’environnement
 
-Ajoutez dans Vercel les variables nécessaires, sans jamais committer leurs valeurs : `DATABASE_URL` (voir ci-dessous), `JWT_SECRET`, `COMMENT_EDIT_PASSWORD`, `OAUTH_SERVER_URL`, `VITE_APP_ID`, `VITE_OAUTH_PORTAL_URL`, `OWNER_OPEN_ID` et `OWNER_NAME`.
+Ajoutez dans Vercel les variables nécessaires, sans jamais committer leurs valeurs : `DATABASE_URL` (voir ci-dessous) et `COMMENT_EDIT_PASSWORD`.
 
 ## Base de données Postgres
 
@@ -30,7 +30,7 @@ Les migrations sont appliquées automatiquement pendant le build (`node scripts/
 
 Sans base configurée, l’application retombe sur un stockage de secours en mémoire : les données ne survivent alors pas au redémarrage d’une fonction, ce qui ne convient qu’au développement local.
 
-Les chemins `/api/trpc/*`, `/api/oauth/callback` et `/manus-storage/*` sont relayés explicitement vers l’unique fonction `api/index.js`, qui restitue le chemin initial à Express. Les mutations `POST` tRPC restent donc dirigées vers la fonction Node ; elles ne sont jamais envoyées vers le frontend statique. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
+Les chemins `/api/trpc/*` et `/local-storage/*` sont relayés explicitement vers l’unique fonction `api/index.js`, qui restitue le chemin initial à Express. Les mutations `POST` tRPC restent donc dirigées vers la fonction Node ; elles ne sont jamais envoyées vers le frontend statique. Les autres URL sont renvoyées vers le frontend afin que les routes React fonctionnent après actualisation.
 
 ### `api/index.js` : fichier généré, mais committé
 
@@ -42,12 +42,12 @@ Le code source de la fonction vit dans `server/_core/vercelEntry.ts`. `pnpm buil
 
 L’import Excel téléverse désormais le fichier directement vers le stockage avant son traitement : le fichier ne passe donc plus dans le corps de la fonction Vercel, limité à 4,5 Mo.
 
-`BUILT_IN_FORGE_API_URL` / `BUILT_IN_FORGE_API_KEY` ne sont disponibles que sur l’hébergement Manus — sur Vercel, activez plutôt **Vercel Blob** :
+Sur Vercel, activez **Vercel Blob** pour le stockage des fichiers :
 
 1. Dans le tableau de bord Vercel → votre projet → onglet **Storage** → **Create Database** → **Blob** → connectez-le au projet.
 2. Vercel ajoute automatiquement les variables nécessaires au projet (selon la version : soit `BLOB_READ_WRITE_TOKEN`, soit `BLOB_STORE_ID` associé à un jeton OIDC injecté automatiquement) — aucune valeur à copier manuellement.
 3. **Redéployez après avoir connecté le store** : Vercel n’applique les nouvelles variables qu’aux déploiements suivants, jamais à un déploiement déjà en cours d’exécution (Deployments → menu **⋯** du déploiement le plus récent → **Redeploy**). Dès que `BLOB_READ_WRITE_TOKEN` ou `BLOB_STORE_ID` est présent, `server/storage.ts` l’utilise automatiquement, pour l’import Excel (upload direct navigateur → Blob via `/api/blob-upload`) comme pour le fichier Excel synchronisé.
 
-Sans Forge ni Vercel Blob configuré, le stockage retombe sur le système de fichiers local, qui ne fonctionne qu’en développement (le système de fichiers d’une fonction Vercel est en lecture seule).
+Sans Vercel Blob configuré, le stockage retombe sur le système de fichiers local (`/local-storage/*`), qui ne fonctionne qu’en développement (le système de fichiers d’une fonction Vercel est en lecture seule).
 
-Le logo et le favicon utilisent une URL publique dédiée afin d’être visibles depuis Vercel, sans dépendre d’un chemin relatif `/manus-storage` sur votre domaine Vercel.
+Le logo et le favicon sont des fichiers statiques servis directement depuis `client/public/` (`almaraii-logo.png`, `almaraii-favicon.png`), donc visibles depuis Vercel sans dépendre d’un service externe.

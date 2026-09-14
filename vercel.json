@@ -10,15 +10,15 @@
   },
   "rewrites": [
     {
-      "source": "/manus-storage/:path*",
-      "destination": "/api/index?__path=manus-storage/:path*"
+      "source": "/local-storage/:path*",
+      "destination": "/api/index?__path=local-storage/:path*"
     },
     {
       "source": "/api/:path*",
       "destination": "/api/index?__path=:path*"
     },
     {
-      "source": "/:path((?!api/|manus-storage/).*)",
+      "source": "/:path((?!api/|local-storage/).*)",
       "destination": "/index.html"
     }
   ]

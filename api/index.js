@@ -8,151 +8,17 @@ import { handleUploadPresigned } from "@vercel/blob/client";
 
 // server/routers.ts
 import { z as z2 } from "zod";
-
-// shared/const.ts
-var COOKIE_NAME = "app_session_id";
-var ONE_YEAR_MS = 1e3 * 60 * 60 * 24 * 365;
-var AXIOS_TIMEOUT_MS = 3e4;
-var UNAUTHED_ERR_MSG = "Please login (10001)";
-var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
-var OAUTH_STATE_COOKIE = "__Host-oauth_state";
-var decodeOAuthState = (state) => {
-  let decoded;
-  try {
-    decoded = atob(state);
-  } catch {
-    return { redirectUri: "" };
-  }
-  try {
-    const parsed = JSON.parse(decoded);
-    if (parsed && typeof parsed.redirectUri === "string") return parsed;
-  } catch {
-  }
-  return { redirectUri: decoded };
-};
-
-// server/routers.ts
-import { TRPCError as TRPCError3 } from "@trpc/server";
-
-// server/_core/cookies.ts
-function isSecureRequest(req) {
-  if (req.protocol === "https") return true;
-  const forwardedProto = req.headers["x-forwarded-proto"];
-  if (!forwardedProto) return false;
-  const protoList = Array.isArray(forwardedProto) ? forwardedProto : forwardedProto.split(",");
-  return protoList.some((proto) => proto.trim().toLowerCase() === "https");
-}
-function getSessionCookieOptions(req) {
-  const secure = isSecureRequest(req);
-  return {
-    httpOnly: true,
-    path: "/",
-    sameSite: secure ? "none" : "lax",
-    secure
-  };
-}
+import { TRPCError as TRPCError2 } from "@trpc/server";
 
 // server/_core/systemRouter.ts
 import { z } from "zod";
 
-// server/_core/notification.ts
-import { TRPCError } from "@trpc/server";
-
-// server/_core/env.ts
-var ENV = {
-  appId: process.env.VITE_APP_ID ?? "",
-  cookieSecret: process.env.JWT_SECRET ?? "",
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
-  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
-  isProduction: process.env.NODE_ENV === "production",
-  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
-  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? ""
-};
-
-// server/_core/notification.ts
-var TITLE_MAX_LENGTH = 1200;
-var CONTENT_MAX_LENGTH = 2e4;
-var trimValue = (value) => value.trim();
-var isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
-var buildEndpointUrl = (baseUrl) => {
-  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  return new URL(
-    "webdevtoken.v1.WebDevService/SendNotification",
-    normalizedBase
-  ).toString();
-};
-var validatePayload = (input) => {
-  if (!isNonEmptyString(input.title)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Notification title is required."
-    });
-  }
-  if (!isNonEmptyString(input.content)) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Notification content is required."
-    });
-  }
-  const title = trimValue(input.title);
-  const content = trimValue(input.content);
-  if (title.length > TITLE_MAX_LENGTH) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Notification title must be at most ${TITLE_MAX_LENGTH} characters.`
-    });
-  }
-  if (content.length > CONTENT_MAX_LENGTH) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `Notification content must be at most ${CONTENT_MAX_LENGTH} characters.`
-    });
-  }
-  return { title, content };
-};
-async function notifyOwner(payload) {
-  const { title, content } = validatePayload(payload);
-  if (!ENV.forgeApiUrl) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service URL is not configured."
-    });
-  }
-  if (!ENV.forgeApiKey) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Notification service API key is not configured."
-    });
-  }
-  const endpoint = buildEndpointUrl(ENV.forgeApiUrl);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${ENV.forgeApiKey}`,
-        "content-type": "application/json",
-        "connect-protocol-version": "1"
-      },
-      body: JSON.stringify({ title, content })
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      console.warn(
-        `[Notification] Failed to notify owner (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`
-      );
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.warn("[Notification] Error calling notification service:", error);
-    return false;
-  }
-}
+// shared/const.ts
+var UNAUTHED_ERR_MSG = "Please login (10001)";
+var NOT_ADMIN_ERR_MSG = "You do not have required permission (10002)";
 
 // server/_core/trpc.ts
-import { initTRPC, TRPCError as TRPCError2 } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 var t = initTRPC.context().create({
   transformer: superjson
@@ -162,7 +28,7 @@ var publicProcedure = t.procedure;
 var requireUser = t.middleware(async (opts) => {
   const { ctx, next } = opts;
   if (!ctx.user) {
-    throw new TRPCError2({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
   return next({
     ctx: {
@@ -176,7 +42,7 @@ var adminProcedure = t.procedure.use(
   t.middleware(async (opts) => {
     const { ctx, next } = opts;
     if (!ctx.user || ctx.user.role !== "admin") {
-      throw new TRPCError2({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
     return next({
       ctx: {
@@ -195,18 +61,7 @@ var systemRouter = router({
     })
   ).query(() => ({
     ok: true
-  })),
-  notifyOwner: adminProcedure.input(
-    z.object({
-      title: z.string().min(1, "title is required"),
-      content: z.string().min(1, "content is required")
-    })
-  ).mutation(async ({ input }) => {
-    const delivered = await notifyOwner(input);
-    return {
-      success: delivered
-    };
-  })
+  }))
 });
 
 // server/db.ts
@@ -328,6 +183,13 @@ var siloShipments = pgTable("silo_shipments", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [index("silo_shipments_date_index").on(table.shipmentDate)]);
 
+// server/_core/env.ts
+var ENV = {
+  databaseUrl: process.env.DATABASE_URL ?? "",
+  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
+  isProduction: process.env.NODE_ENV === "production"
+};
+
 // server/db.ts
 var _db = null;
 var fallbackDataPath = path.resolve(process.cwd(), ".local-production-store.json");
@@ -416,44 +278,6 @@ async function getDb() {
     }
   }
   return _db;
-}
-async function upsertUser(user) {
-  if (!user.openId) throw new Error("User openId is required for upsert");
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
-  }
-  const values = { openId: user.openId };
-  const updateSet = {};
-  const textFields = ["name", "email", "loginMethod"];
-  textFields.forEach((field) => {
-    if (user[field] !== void 0) {
-      values[field] = user[field] ?? null;
-      updateSet[field] = user[field] ?? null;
-    }
-  });
-  if (user.lastSignedIn !== void 0) {
-    values.lastSignedIn = user.lastSignedIn;
-    updateSet.lastSignedIn = user.lastSignedIn;
-  }
-  if (user.role !== void 0) {
-    values.role = user.role;
-    updateSet.role = user.role;
-  } else if (user.openId === ENV.ownerOpenId) {
-    values.role = "admin";
-    updateSet.role = "admin";
-  }
-  if (!values.lastSignedIn) values.lastSignedIn = /* @__PURE__ */ new Date();
-  if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = /* @__PURE__ */ new Date();
-  updateSet.updatedAt = /* @__PURE__ */ new Date();
-  await db.insert(users).values(values).onConflictDoUpdate({ target: users.openId, set: updateSet });
-}
-async function getUserByOpenId(openId) {
-  const db = await getDb();
-  if (!db) return void 0;
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result[0];
 }
 async function listProductionRecords() {
   const db = await getDb();
@@ -3233,19 +3057,6 @@ import { issueSignedToken, presignUrl as blobPresignUrl, put as blobPut } from "
 function isVercelBlobConfigured() {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 }
-function hasForgeStorageConfig() {
-  return Boolean(ENV.forgeApiUrl && ENV.forgeApiKey);
-}
-function getForgeConfig() {
-  const forgeUrl = ENV.forgeApiUrl;
-  const forgeKey = ENV.forgeApiKey;
-  if (!forgeUrl || !forgeKey) {
-    throw new Error(
-      "Storage config missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY"
-    );
-  }
-  return { forgeUrl: forgeUrl.replace(/\/+$/, ""), forgeKey };
-}
 function getLocalStorageBaseUrl() {
   const configuredBaseUrl = process.env.PUBLIC_BASE_URL || process.env.VITE_PUBLIC_BASE_URL;
   if (configuredBaseUrl) return configuredBaseUrl.replace(/\/+$/, "");
@@ -3258,7 +3069,7 @@ function normalizeKey(relKey) {
   return relKey.replace(/^\/+/, "");
 }
 function localStorageUrlForKey(relKey) {
-  return `${getLocalStorageBaseUrl()}/manus-storage/${normalizeKey(relKey)}`;
+  return `${getLocalStorageBaseUrl()}/local-storage/${normalizeKey(relKey)}`;
 }
 function appendHashSuffix(relKey) {
   const hash = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
@@ -3281,28 +3092,13 @@ async function storagePut(relKey, data, contentType = "application/octet-stream"
     body: blob
   });
   if (!uploadResp.ok) {
-    throw new Error(`Storage upload to S3 failed (${uploadResp.status})`);
+    throw new Error(`Storage upload failed (${uploadResp.status})`);
   }
   return { key, url: localStorageUrlForKey(key) };
 }
 async function storageCreatePresignedUpload(relKey) {
   const key = appendHashSuffix(normalizeKey(relKey));
-  if (!hasForgeStorageConfig()) {
-    return { key, uploadUrl: localStorageUrlForKey(key) };
-  }
-  const { forgeUrl, forgeKey } = getForgeConfig();
-  const presignUrl = new URL("v1/storage/presign/put", forgeUrl + "/");
-  presignUrl.searchParams.set("path", key);
-  const presignResp = await fetch(presignUrl, {
-    headers: { Authorization: `Bearer ${forgeKey}` }
-  });
-  if (!presignResp.ok) {
-    const msg = await presignResp.text().catch(() => presignResp.statusText);
-    throw new Error(`Storage presign failed (${presignResp.status}): ${msg}`);
-  }
-  const { url: uploadUrl } = await presignResp.json();
-  if (!uploadUrl) throw new Error("Forge returned empty presign URL");
-  return { key, uploadUrl };
+  return { key, uploadUrl: localStorageUrlForKey(key) };
 }
 async function storageGetSignedUrl(relKey) {
   const key = normalizeKey(relKey);
@@ -3311,21 +3107,7 @@ async function storageGetSignedUrl(relKey) {
     const { presignedUrl } = await blobPresignUrl(token, { operation: "get", pathname: key, access: "private" });
     return presignedUrl;
   }
-  if (!hasForgeStorageConfig()) {
-    return localStorageUrlForKey(key);
-  }
-  const { forgeUrl, forgeKey } = getForgeConfig();
-  const getUrl = new URL("v1/storage/presign/get", forgeUrl + "/");
-  getUrl.searchParams.set("path", key);
-  const resp = await fetch(getUrl, {
-    headers: { Authorization: `Bearer ${forgeKey}` }
-  });
-  if (!resp.ok) {
-    const msg = await resp.text().catch(() => resp.statusText);
-    throw new Error(`Storage signed URL failed (${resp.status}): ${msg}`);
-  }
-  const { url } = await resp.json();
-  return url;
+  return localStorageUrlForKey(key);
 }
 
 // server/excelSync.ts
@@ -4622,7 +4404,7 @@ async function assertProductionActionAuthorized(password) {
     return;
   }
   if (!password || !await isActionPasswordValid(password)) {
-    throw new TRPCError3({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou g\xE9rer les param\xE8tres." });
+    throw new TRPCError2({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou g\xE9rer les param\xE8tres." });
   }
 }
 var recordWithCommentInput = recordInput.safeExtend({
@@ -4671,7 +4453,7 @@ var importFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) =
 var importSourceInput = z2.string().startsWith("production-import/");
 async function importWorkbookBuffer(buffer) {
   const parsed = await parseImportedWorkbook(buffer);
-  if (parsed.rows.length === 0) throw new TRPCError3({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
+  if (parsed.rows.length === 0) throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
   const result = await importProductionRows(parsed.rows);
   await syncExcelFromRecords();
   return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
@@ -4699,14 +4481,6 @@ function calculateRecord(input) {
 }
 var appRouter = router({
   system: systemRouter,
-  auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true };
-    })
-  }),
   settings: router({
     listArticles: publicProcedure.query(async () => {
       await initializeProductionArticles();
@@ -4833,13 +4607,13 @@ var appRouter = router({
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         console.error(`[SiloImport] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
-        throw new TRPCError3({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
       }
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError3({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
       const parsed = await parseSiloWorkbook(buffer);
       if (parsed.entries.length === 0 && parsed.shipments.length === 0) {
-        throw new TRPCError3({ code: "BAD_REQUEST", message: `Aucun mouvement de silo n\u2019a \xE9t\xE9 trouv\xE9 dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucun mouvement de silo n\u2019a \xE9t\xE9 trouv\xE9 dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
       }
       const result = await replaceSiloMovements(
         parsed.entries.map((entry) => ({
@@ -4888,7 +4662,7 @@ var appRouter = router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
     importExcel: publicProcedure.input(z2.object({ fileName: z2.string().trim().min(1).max(255), fileBase64: z2.string().min(1).max(8e6), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError3({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
+      if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError2({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
       await assertProductionActionAuthorized(input.actionPassword);
       return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
     }),
@@ -4908,10 +4682,10 @@ var appRouter = router({
       if (!response.ok) {
         const body = await response.text().catch(() => "");
         console.error(`[ImportExcel] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
-        throw new TRPCError3({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
       }
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError3({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
       return importWorkbookBuffer(buffer);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
@@ -4977,314 +4751,6 @@ function registerBlobUploadRoute(app2) {
   });
 }
 
-// server/_core/oauth.ts
-import { parse as parseCookieHeader2 } from "cookie";
-
-// shared/_core/errors.ts
-var HttpError = class extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
-    this.name = "HttpError";
-  }
-};
-var ForbiddenError = (msg) => new HttpError(403, msg);
-
-// server/_core/sdk.ts
-import axios from "axios";
-import { parse as parseCookieHeader } from "cookie";
-import { SignJWT, jwtVerify } from "jose";
-var isNonEmptyString2 = (value) => typeof value === "string" && value.length > 0;
-var EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
-var GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
-var GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
-var OAuthService = class {
-  constructor(client) {
-    this.client = client;
-    console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
-    if (!ENV.oAuthServerUrl) {
-      console.error(
-        "[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable."
-      );
-    }
-  }
-  decodeState(state) {
-    return decodeOAuthState(state).redirectUri;
-  }
-  async getTokenByCode(code, state) {
-    const payload = {
-      clientId: ENV.appId,
-      grantType: "authorization_code",
-      code,
-      redirectUri: this.decodeState(state)
-    };
-    const { data } = await this.client.post(
-      EXCHANGE_TOKEN_PATH,
-      payload
-    );
-    return data;
-  }
-  async getUserInfoByToken(token) {
-    const { data } = await this.client.post(
-      GET_USER_INFO_PATH,
-      {
-        accessToken: token.accessToken
-      }
-    );
-    return data;
-  }
-};
-var createOAuthHttpClient = () => axios.create({
-  baseURL: ENV.oAuthServerUrl,
-  timeout: AXIOS_TIMEOUT_MS
-});
-var SDKServer = class {
-  client;
-  oauthService;
-  constructor(client = createOAuthHttpClient()) {
-    this.client = client;
-    this.oauthService = new OAuthService(this.client);
-  }
-  deriveLoginMethod(platforms, fallback) {
-    if (fallback && fallback.length > 0) return fallback;
-    if (!Array.isArray(platforms) || platforms.length === 0) return null;
-    const set = new Set(
-      platforms.filter((p) => typeof p === "string")
-    );
-    if (set.has("REGISTERED_PLATFORM_EMAIL")) return "email";
-    if (set.has("REGISTERED_PLATFORM_GOOGLE")) return "google";
-    if (set.has("REGISTERED_PLATFORM_APPLE")) return "apple";
-    if (set.has("REGISTERED_PLATFORM_MICROSOFT") || set.has("REGISTERED_PLATFORM_AZURE"))
-      return "microsoft";
-    if (set.has("REGISTERED_PLATFORM_GITHUB")) return "github";
-    const first = Array.from(set)[0];
-    return first ? first.toLowerCase() : null;
-  }
-  /**
-   * Exchange OAuth authorization code for access token
-   * @example
-   * const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-   */
-  async exchangeCodeForToken(code, state) {
-    return this.oauthService.getTokenByCode(code, state);
-  }
-  /**
-   * Get user information using access token
-   * @example
-   * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
-   */
-  async getUserInfo(accessToken) {
-    const data = await this.oauthService.getUserInfoByToken({
-      accessToken
-    });
-    const loginMethod = this.deriveLoginMethod(
-      data?.platforms,
-      data?.platform ?? data.platform ?? null
-    );
-    return {
-      ...data,
-      platform: loginMethod,
-      loginMethod
-    };
-  }
-  parseCookies(cookieHeader) {
-    if (!cookieHeader) {
-      return /* @__PURE__ */ new Map();
-    }
-    const parsed = parseCookieHeader(cookieHeader);
-    return new Map(Object.entries(parsed));
-  }
-  getSessionSecret() {
-    const secret = ENV.cookieSecret;
-    return new TextEncoder().encode(secret);
-  }
-  /**
-   * Create a session token for a Manus user openId
-   * @example
-   * const sessionToken = await sdk.createSessionToken(userInfo.openId);
-   */
-  async createSessionToken(openId, options = {}) {
-    return this.signSession(
-      {
-        openId,
-        appId: ENV.appId,
-        name: options.name || ""
-      },
-      options
-    );
-  }
-  async signSession(payload, options = {}) {
-    const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
-    const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1e3);
-    const secretKey = this.getSessionSecret();
-    return new SignJWT({
-      openId: payload.openId,
-      appId: payload.appId,
-      name: payload.name
-    }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setExpirationTime(expirationSeconds).sign(secretKey);
-  }
-  async verifySession(cookieValue) {
-    if (!cookieValue) {
-      console.warn("[Auth] Missing session cookie");
-      return null;
-    }
-    try {
-      const secretKey = this.getSessionSecret();
-      const { payload } = await jwtVerify(cookieValue, secretKey, {
-        algorithms: ["HS256"]
-      });
-      const { openId, appId, name } = payload;
-      if (!isNonEmptyString2(openId) || !isNonEmptyString2(appId) || !isNonEmptyString2(name)) {
-        console.warn("[Auth] Session payload missing required fields");
-        return null;
-      }
-      return {
-        openId,
-        appId,
-        name
-      };
-    } catch (error) {
-      console.warn("[Auth] Session verification failed", String(error));
-      return null;
-    }
-  }
-  async getUserInfoWithJwt(jwtToken) {
-    const payload = {
-      jwtToken,
-      projectId: ENV.appId
-    };
-    const { data } = await this.client.post(
-      GET_USER_INFO_WITH_JWT_PATH,
-      payload
-    );
-    const loginMethod = this.deriveLoginMethod(
-      data?.platforms,
-      data?.platform ?? data.platform ?? null
-    );
-    return {
-      ...data,
-      platform: loginMethod,
-      loginMethod
-    };
-  }
-  async authenticateRequest(req) {
-    const cookies = this.parseCookies(req.headers.cookie);
-    let sessionToken = cookies.get(COOKIE_NAME);
-    if (!sessionToken) {
-      const authHeader = req.headers.authorization;
-      if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
-        sessionToken = authHeader.slice(7);
-      }
-    }
-    const session = await this.verifySession(sessionToken);
-    if (!session) {
-      throw ForbiddenError("Invalid session cookie");
-    }
-    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
-      const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-      const taskUid = userInfo.taskUid ?? null;
-      if (!taskUid) {
-        throw ForbiddenError("Cron session missing task_uid");
-      }
-      return buildCronUser(userInfo);
-    }
-    const sessionUserId = session.openId;
-    const signedInAt = /* @__PURE__ */ new Date();
-    let user = await getUserByOpenId(sessionUserId);
-    if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-        await upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt
-        });
-        user = await getUserByOpenId(userInfo.openId);
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
-      }
-    }
-    if (!user) {
-      throw ForbiddenError("User not found");
-    }
-    await upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt
-    });
-    return user;
-  }
-};
-var CRON_OPEN_ID_PREFIX = "cron_";
-function buildCronUser(userInfo) {
-  const now2 = /* @__PURE__ */ new Date();
-  return {
-    id: -1,
-    openId: userInfo.openId,
-    name: userInfo.name || "Manus Scheduled Task",
-    email: null,
-    loginMethod: null,
-    role: "user",
-    createdAt: now2,
-    updatedAt: now2,
-    lastSignedIn: now2,
-    taskUid: userInfo.taskUid ?? void 0,
-    isCron: true
-  };
-}
-var sdk = new SDKServer();
-
-// server/_core/oauth.ts
-function getQueryParam(req, key) {
-  const value = req.query[key];
-  return typeof value === "string" ? value : void 0;
-}
-function registerOAuthRoutes(app2) {
-  app2.get("/api/oauth/callback", async (req, res) => {
-    const code = getQueryParam(req, "code");
-    const state = getQueryParam(req, "state");
-    if (!code || !state) {
-      res.status(400).json({ error: "code and state are required" });
-      return;
-    }
-    const { nonce } = decodeOAuthState(state);
-    const expectedNonce = parseCookieHeader2(req.headers.cookie ?? "")[OAUTH_STATE_COOKIE];
-    if (!nonce || nonce !== expectedNonce) {
-      res.status(403).json({ error: "invalid oauth state" });
-      return;
-    }
-    res.clearCookie(OAUTH_STATE_COOKIE, { path: "/", secure: true, sameSite: "none" });
-    try {
-      const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-      const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
-      if (!userInfo.openId) {
-        res.status(400).json({ error: "openId missing from user info" });
-        return;
-      }
-      await upsertUser({
-        openId: userInfo.openId,
-        name: userInfo.name || null,
-        email: userInfo.email ?? null,
-        loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-        lastSignedIn: /* @__PURE__ */ new Date()
-      });
-      const sessionToken = await sdk.createSessionToken(userInfo.openId, {
-        name: userInfo.name || "",
-        expiresInMs: ONE_YEAR_MS
-      });
-      const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
-      res.redirect(302, "/");
-    } catch (error) {
-      console.error("[OAuth] Callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
-    }
-  });
-}
-
 // server/_core/storageProxy.ts
 import express from "express";
 import { existsSync as existsSync3, mkdirSync as mkdirSync3, writeFileSync as writeFileSync3 } from "node:fs";
@@ -5294,72 +4760,39 @@ function localStorageFilePath(key) {
   return path3.resolve(localStorageRoot, key.replace(/^\/+/, ""));
 }
 function registerStorageProxy(app2) {
-  app2.put("/manus-storage/*", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
+  app2.put("/local-storage/*", express.raw({ type: "*/*", limit: "50mb" }), async (req, res) => {
     const key = req.params[0];
     if (!key) {
       res.status(400).send("Missing storage key");
-      return;
-    }
-    if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
-      try {
-        const filePath = localStorageFilePath(key);
-        mkdirSync3(path3.dirname(filePath), { recursive: true });
-        writeFileSync3(filePath, Buffer.from(req.body ?? []));
-        res.status(200).send("OK");
-      } catch (error) {
-        console.error("[StorageProxy] local upload failed:", error);
-        res.status(500).send("Storage upload failed");
-      }
-      return;
-    }
-    res.status(500).send("Storage proxy not configured for upload");
-  });
-  app2.get("/manus-storage/*", async (req, res) => {
-    const key = req.params[0];
-    if (!key) {
-      res.status(400).send("Missing storage key");
-      return;
-    }
-    if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
-      const filePath = localStorageFilePath(key);
-      if (!existsSync3(filePath)) {
-        res.status(404).send("Storage file not found");
-        return;
-      }
-      try {
-        res.set("Cache-Control", "no-store");
-        res.sendFile(filePath);
-      } catch (error) {
-        console.error("[StorageProxy] local serve failed:", error);
-        res.status(500).send("Storage serve failed");
-      }
       return;
     }
     try {
-      const forgeUrl = new URL(
-        "v1/storage/presign/get",
-        ENV.forgeApiUrl.replace(/\/+$/, "") + "/"
-      );
-      forgeUrl.searchParams.set("path", key);
-      const forgeResp = await fetch(forgeUrl, {
-        headers: { Authorization: `Bearer ${ENV.forgeApiKey}` }
-      });
-      if (!forgeResp.ok) {
-        const body = await forgeResp.text().catch(() => "");
-        console.error(`[StorageProxy] forge error: ${forgeResp.status} ${body}`);
-        res.status(502).send("Storage backend error");
-        return;
-      }
-      const { url } = await forgeResp.json();
-      if (!url) {
-        res.status(502).send("Empty signed URL from backend");
-        return;
-      }
+      const filePath = localStorageFilePath(key);
+      mkdirSync3(path3.dirname(filePath), { recursive: true });
+      writeFileSync3(filePath, Buffer.from(req.body ?? []));
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("[StorageProxy] local upload failed:", error);
+      res.status(500).send("Storage upload failed");
+    }
+  });
+  app2.get("/local-storage/*", async (req, res) => {
+    const key = req.params[0];
+    if (!key) {
+      res.status(400).send("Missing storage key");
+      return;
+    }
+    const filePath = localStorageFilePath(key);
+    if (!existsSync3(filePath)) {
+      res.status(404).send("Storage file not found");
+      return;
+    }
+    try {
       res.set("Cache-Control", "no-store");
-      res.redirect(307, url);
-    } catch (err) {
-      console.error("[StorageProxy] failed:", err);
-      res.status(502).send("Storage proxy error");
+      res.sendFile(filePath);
+    } catch (error) {
+      console.error("[StorageProxy] local serve failed:", error);
+      res.status(500).send("Storage serve failed");
     }
   });
 }
@@ -5379,7 +4812,6 @@ function createApp() {
   app2.use(express2.json({ limit: "50mb" }));
   app2.use(express2.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app2);
-  registerOAuthRoutes(app2);
   registerBlobUploadRoute(app2);
   app2.use(
     "/api/trpc",
@@ -5420,7 +4852,7 @@ function vercelApiHandler(req, res) {
     const query = requestUrl.searchParams.toString();
     req.url = `/api/${routedPath}${query ? `?${query}` : ""}`;
   }
-  if (req.url?.startsWith("/api/manus-storage/")) {
+  if (req.url?.startsWith("/api/local-storage/")) {
     req.url = req.url.replace(/^\/api/, "");
   }
   try {
