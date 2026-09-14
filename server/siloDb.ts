@@ -292,13 +292,18 @@ export async function loadSiloMovements() {
     };
   }
 
-  const [allocations, shipments] = await Promise.all([
+  // Deux requêtes séparées puis jointure en mémoire, plutôt qu’un innerJoin
+  // SQL : une entrée tout juste créée s’est déjà montrée absente d’un
+  // innerJoin allocations/entrées alors qu’elle apparaissait normalement
+  // dans une requête à part sur chaque table (voir listSiloProductionEntries,
+  // qui utilise déjà ce schéma et n’a jamais présenté le problème).
+  const [entries, allocationRows, shipments] = await Promise.all([
+    db.select({ id: siloProductionEntries.id, article: siloProductionEntries.article }).from(siloProductionEntries),
     db.select({
-      article: siloProductionEntries.article,
+      entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity,
-    }).from(siloProductionAllocations)
-      .innerJoin(siloProductionEntries, eq(siloProductionAllocations.entryId, siloProductionEntries.id)),
+    }).from(siloProductionAllocations),
     db.select({
       article: siloShipments.article,
       silo: siloShipments.silo,
@@ -306,8 +311,17 @@ export async function loadSiloMovements() {
     }).from(siloShipments),
   ]);
 
+  const articleByEntry = new Map(entries.map((entry) => [entry.id, entry.article]));
+  const allocations = allocationRows
+    .map((row) => {
+      const article = articleByEntry.get(row.entryId);
+      if (article === undefined) return null;
+      return { article, silo: row.silo, quantity: Number(row.quantity) };
+    })
+    .filter((row): row is { article: string; silo: string; quantity: number } => row !== null);
+
   return {
-    allocations: allocations.map((row) => ({ article: row.article, silo: row.silo, quantity: Number(row.quantity) })),
+    allocations,
     shipments: shipments.map((row) => ({ article: row.article, silo: row.silo, quantity: Number(row.quantity) })),
   };
 }
@@ -347,16 +361,20 @@ export async function loadLotMovements() {
     };
   }
 
-  const [allocations, shipments] = await Promise.all([
+  // Voir loadSiloMovements ci-dessus : jointure faite en mémoire plutôt
+  // qu’avec un innerJoin SQL.
+  const [entries, allocationRows, shipments] = await Promise.all([
     db.select({
-      entryId: siloProductionAllocations.entryId,
+      id: siloProductionEntries.id,
       entryDate: siloProductionEntries.entryDate,
       article: siloProductionEntries.article,
       lotNumber: siloProductionEntries.lotNumber,
+    }).from(siloProductionEntries),
+    db.select({
+      entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity,
-    }).from(siloProductionAllocations)
-      .innerJoin(siloProductionEntries, eq(siloProductionAllocations.entryId, siloProductionEntries.id)),
+    }).from(siloProductionAllocations),
     db.select({
       shipmentId: siloShipments.id,
       shipmentDate: siloShipments.shipmentDate,
@@ -367,8 +385,17 @@ export async function loadLotMovements() {
     }).from(siloShipments),
   ]);
 
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+  const allocations = allocationRows
+    .map((row) => {
+      const entry = entryById.get(row.entryId);
+      if (!entry) return null;
+      return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity) };
+    })
+    .filter((row): row is { entryId: number; entryDate: string | null; article: string; lotNumber: string | null; silo: string; quantity: number } => row !== null);
+
   return {
-    allocations: allocations.map((row) => ({ ...row, quantity: Number(row.quantity) })),
+    allocations,
     shipments: shipments.map((row) => ({ ...row, quantity: Number(row.quantity) })),
   };
 }

@@ -3984,40 +3984,47 @@ async function replaceSiloMovements(entries, shipments) {
 async function loadSiloMovements() {
   const db = await getDb();
   if (!db) {
-    const articleByEntry = new Map(store.entries.map((entry) => [entry.id, entry.article]));
+    const articleByEntry2 = new Map(store.entries.map((entry) => [entry.id, entry.article]));
     return {
       allocations: store.allocations.map((allocation) => ({
-        article: articleByEntry.get(allocation.entryId) ?? "",
+        article: articleByEntry2.get(allocation.entryId) ?? "",
         silo: allocation.silo,
         quantity: Number(allocation.quantity)
       })).filter((allocation) => allocation.article),
       shipments: store.shipments.map((shipment) => ({ article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }))
     };
   }
-  const [allocations, shipments] = await Promise.all([
+  const [entries, allocationRows, shipments] = await Promise.all([
+    db.select({ id: siloProductionEntries.id, article: siloProductionEntries.article }).from(siloProductionEntries),
     db.select({
-      article: siloProductionEntries.article,
+      entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity
-    }).from(siloProductionAllocations).innerJoin(siloProductionEntries, eq4(siloProductionAllocations.entryId, siloProductionEntries.id)),
+    }).from(siloProductionAllocations),
     db.select({
       article: siloShipments.article,
       silo: siloShipments.silo,
       quantity: siloShipments.quantity
     }).from(siloShipments)
   ]);
+  const articleByEntry = new Map(entries.map((entry) => [entry.id, entry.article]));
+  const allocations = allocationRows.map((row) => {
+    const article = articleByEntry.get(row.entryId);
+    if (article === void 0) return null;
+    return { article, silo: row.silo, quantity: Number(row.quantity) };
+  }).filter((row) => row !== null);
   return {
-    allocations: allocations.map((row) => ({ article: row.article, silo: row.silo, quantity: Number(row.quantity) })),
+    allocations,
     shipments: shipments.map((row) => ({ article: row.article, silo: row.silo, quantity: Number(row.quantity) }))
   };
 }
 async function loadLotMovements() {
   const db = await getDb();
   if (!db) {
-    const entryById = new Map(store.entries.map((entry) => [entry.id, entry]));
+    const entryById2 = new Map(store.entries.map((entry) => [entry.id, entry]));
     return {
       allocations: store.allocations.map((allocation) => {
-        const entry = entryById.get(allocation.entryId);
+        const entry = entryById2.get(allocation.entryId);
         if (!entry) return null;
         return {
           entryId: allocation.entryId,
@@ -4038,15 +4045,18 @@ async function loadLotMovements() {
       }))
     };
   }
-  const [allocations, shipments] = await Promise.all([
+  const [entries, allocationRows, shipments] = await Promise.all([
     db.select({
-      entryId: siloProductionAllocations.entryId,
+      id: siloProductionEntries.id,
       entryDate: siloProductionEntries.entryDate,
       article: siloProductionEntries.article,
-      lotNumber: siloProductionEntries.lotNumber,
+      lotNumber: siloProductionEntries.lotNumber
+    }).from(siloProductionEntries),
+    db.select({
+      entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity
-    }).from(siloProductionAllocations).innerJoin(siloProductionEntries, eq4(siloProductionAllocations.entryId, siloProductionEntries.id)),
+    }).from(siloProductionAllocations),
     db.select({
       shipmentId: siloShipments.id,
       shipmentDate: siloShipments.shipmentDate,
@@ -4056,8 +4066,14 @@ async function loadLotMovements() {
       shipmentType: siloShipments.shipmentType
     }).from(siloShipments)
   ]);
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+  const allocations = allocationRows.map((row) => {
+    const entry = entryById.get(row.entryId);
+    if (!entry) return null;
+    return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity) };
+  }).filter((row) => row !== null);
   return {
-    allocations: allocations.map((row) => ({ ...row, quantity: Number(row.quantity) })),
+    allocations,
     shipments: shipments.map((row) => ({ ...row, quantity: Number(row.quantity) }))
   };
 }
