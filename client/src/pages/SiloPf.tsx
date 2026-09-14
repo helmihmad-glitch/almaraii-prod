@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { ArrowLeft, Boxes, Database, Download, Layers, Menu, PackageSearch, SlidersHorizontal, Truck } from "lucide-react";
 import { toast } from "sonner";
-import { trpc } from "@/lib/trpc";
+import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
 import { getSiloFillStatus, SILO_CAPACITY_TONS } from "@shared/silo";
@@ -41,9 +41,13 @@ export default function SiloPf() {
       setIsExporting(false);
     }
   };
-  const stateQuery = trpc.silo.state.useQuery();
-  const entriesQuery = trpc.silo.listEntries.useQuery();
-  const shipmentsQuery = trpc.silo.listShipments.useQuery();
+  // Les silos sont souvent modifiés depuis un autre onglet (page de saisie) ou
+  // par une autre personne : on rafraîchit systématiquement au retour sur la
+  // page et à intervalle régulier, plutôt que de dépendre uniquement de
+  // l’invalidation déclenchée par la page de saisie.
+  const stateQuery = trpc.silo.state.useQuery(undefined, LIVE_QUERY_OPTIONS);
+  const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
+  const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
 
   const state = stateQuery.data;
   const silos = state?.silos ?? [];

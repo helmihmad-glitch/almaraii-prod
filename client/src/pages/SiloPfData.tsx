@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { ArrowLeft, Boxes, Database, Download, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
-import { trpc } from "@/lib/trpc";
+import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
 import { SHIPMENT_TYPES, SILOS } from "@shared/silo";
@@ -40,8 +40,8 @@ export default function SiloPfData() {
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const entriesQuery = trpc.silo.listEntries.useQuery();
-  const shipmentsQuery = trpc.silo.listShipments.useQuery();
+  const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
+  const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
   const entries = entriesQuery.data ?? [];
   const shipments = shipmentsQuery.data ?? [];

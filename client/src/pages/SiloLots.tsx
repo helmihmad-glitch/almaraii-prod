@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { ArrowLeft, Boxes, ChevronDown, Database, Menu, PackageSearch, TriangleAlert } from "lucide-react";
-import { trpc } from "@/lib/trpc";
+import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
 import type { LotConsumptionSource } from "../../../server/siloLots";
@@ -21,7 +21,10 @@ export default function SiloLots() {
   const [showDepleted, setShowDepleted] = useState(true);
   const [expandedEntryId, setExpandedEntryId] = useState<number | null>(null);
 
-  const ledgerQuery = trpc.silo.lotLedger.useQuery();
+  // Voir client/src/lib/trpc.ts (LIVE_QUERY_OPTIONS) : cette vue de lecture
+  // doit refléter les modifications faites depuis un autre onglet ou par
+  // une autre personne sans recharger la page manuellement.
+  const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const lots = ledgerQuery.data?.lots ?? [];
   const unattributed = ledgerQuery.data?.unattributed ?? [];
 
