@@ -12,7 +12,8 @@ import Settings from "./pages/Settings";
 import DailyProgram from "./pages/DailyProgram";
 import DailyProgramData from "./pages/DailyProgramData";
 import SiloPf from "./pages/SiloPf";
-import SiloPfData from "./pages/SiloPfData";
+import SiloProduction from "./pages/SiloProduction";
+import SiloExpedition from "./pages/SiloExpedition";
 import SiloLots from "./pages/SiloLots";
 
 function Router() {
@@ -26,7 +27,8 @@ function Router() {
       <Route path="/programme-journalier" component={DailyProgram} />
       <Route path="/programme-journalier-donnee" component={DailyProgramData} />
       <Route path="/silo-pf" component={SiloPf} />
-      <Route path="/silo-pf-donnee" component={SiloPfData} />
+      <Route path="/silo-pf-production" component={SiloProduction} />
+      <Route path="/silo-pf-expedition" component={SiloExpedition} />
       <Route path="/silo-pf-lots" component={SiloLots} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

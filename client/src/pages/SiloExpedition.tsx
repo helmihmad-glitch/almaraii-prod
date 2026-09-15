@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, Database, Download, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
+import { ArrowLeft, Database, Download, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
@@ -9,13 +9,11 @@ import { useSidebar } from "@/components/AppShell";
 import { SHIPMENT_TYPES, SILOS } from "@shared/silo";
 import "./silo.css";
 
-type EntryDraft = { entryDate: string; article: string; lotNumber: string; totalQuantity: string; allocations: Record<string, string> };
 type ShipmentDraft = { shipmentDate: string; article: string; lotNumber: string; quantity: string; silo: string; shipmentType: string };
 
 const today = () => new Date().toISOString().slice(0, 10);
-const emptyAllocations = () => Object.fromEntries(SILOS.map((silo) => [silo, ""])) as Record<string, string>;
-const emptyEntry = (): EntryDraft => ({ entryDate: today(), article: "", lotNumber: "", totalQuantity: "", allocations: emptyAllocations() });
-const emptyShipment = (): ShipmentDraft => ({ shipmentDate: today(), article: "", lotNumber: "", quantity: "", silo: SILOS[0], shipmentType: SHIPMENT_TYPES[0] });
+const emptyShipment = (): ShipmentDraft => ({ shipmentDate: today(), article: "", lotNumber: "", quantity: "", silo: "", shipmentType: SHIPMENT_TYPES[0] });
+const siloRank = (value: string) => SILOS.indexOf(value as (typeof SILOS)[number]);
 const fmt = (value: number) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
@@ -27,12 +25,10 @@ const parseQuantity = (value: string) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-export default function SiloPfData() {
+export default function SiloExpedition() {
   const { openSidebar } = useSidebar();
   const utils = trpc.useUtils();
   const [actionPassword, setActionPassword] = useState("");
-  const [entryDraft, setEntryDraft] = useState<EntryDraft>(emptyEntry);
-  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [shipmentDraft, setShipmentDraft] = useState<ShipmentDraft>(emptyShipment);
   const [editingShipmentId, setEditingShipmentId] = useState<number | null>(null);
   const [pendingImport, setPendingImport] = useState<File | null>(null);
@@ -40,21 +36,76 @@ export default function SiloPfData() {
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
-  const entries = entriesQuery.data ?? [];
+  // Voir client/src/lib/trpc.ts (LIVE_QUERY_OPTIONS) : sert à suggérer automatiquement
+  // le N° Lot puis le silo (ou l'inverse) à partir des lots encore actifs.
+  const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
+  // Sert à bloquer tout de suite une expédition supérieure au stock affiché sur les cartes silo,
+  // sans attendre l'aller-retour serveur (qui reste la vérification faisant foi, y compris pour
+  // les modifications — voir assertShipmentWithinStock côté serveur).
+  const stateQuery = trpc.silo.state.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const shipments = shipmentsQuery.data ?? [];
   const articles = articlesQuery.data ?? [];
+
+  // Lots encore actifs pour l'article en cours de saisie : la base des suggestions
+  // de N° Lot et de silo ci-dessous (elles s'affinent l'une l'autre).
+  const lotsForArticle = useMemo(() => {
+    const activeLots = ledgerQuery.data?.lots.filter((lot) => lot.status === "active") ?? [];
+    return activeLots.filter((lot) => lot.article === shipmentDraft.article);
+  }, [ledgerQuery.data, shipmentDraft.article]);
+
+  // N° Lot : actifs pour cet article, restreints en plus au silo déjà choisi le cas échéant,
+  // triés du plus ancien au plus récent (ordre FIFO : celui à expédier en premier).
+  const lotNumberSuggestions = useMemo(() => {
+    const candidates = shipmentDraft.silo ? lotsForArticle.filter((lot) => lot.silo === shipmentDraft.silo) : lotsForArticle;
+    const byLotNumber = new Map<string, string | null>();
+    candidates.forEach((lot) => { if (lot.lotNumber && !byLotNumber.has(lot.lotNumber)) byLotNumber.set(lot.lotNumber, lot.entryDate); });
+    return Array.from(byLotNumber.entries())
+      .sort((a, b) => (a[1] ?? "").localeCompare(b[1] ?? ""))
+      .map(([lotNumber]) => lotNumber);
+  }, [lotsForArticle, shipmentDraft.silo]);
+
+  // Silo : ceux où l'article est actif, restreints en plus au N° Lot déjà choisi le cas échéant.
+  // Le silo déjà enregistré reste toujours proposé même hors de cette liste (édition d'une
+  // expédition existante, ou article sans lot actuellement tracé).
+  const siloSelectOptions = useMemo(() => {
+    const candidates = shipmentDraft.lotNumber ? lotsForArticle.filter((lot) => lot.lotNumber === shipmentDraft.lotNumber) : lotsForArticle;
+    const active = Array.from(new Set(candidates.map((lot) => lot.silo))).sort((a, b) => siloRank(a) - siloRank(b));
+    const base = active.length > 0 ? active : [...SILOS];
+    return shipmentDraft.silo && !base.includes(shipmentDraft.silo) ? [shipmentDraft.silo, ...base] : base;
+  }, [lotsForArticle, shipmentDraft.lotNumber, shipmentDraft.silo]);
+
+  const handleArticleChange = (value: string) => {
+    // Un autre article change entièrement le stock disponible : on repart d'un lot et d'un silo vierges.
+    setShipmentDraft({ ...shipmentDraft, article: value, lotNumber: "", silo: "" });
+  };
+
+  const handleLotChange = (value: string) => {
+    const matchingSilos = Array.from(new Set(lotsForArticle.filter((lot) => lot.lotNumber === value).map((lot) => lot.silo)));
+    setShipmentDraft((previous) => {
+      if (matchingSilos.length === 1) return { ...previous, lotNumber: value, silo: matchingSilos[0] };
+      if (matchingSilos.length > 1 && !matchingSilos.includes(previous.silo)) return { ...previous, lotNumber: value, silo: "" };
+      return { ...previous, lotNumber: value };
+    });
+  };
+
+  const handleSiloChange = (value: string) => {
+    const matchingLots = Array.from(new Set(
+      lotsForArticle.filter((lot) => lot.silo === value).map((lot) => lot.lotNumber).filter((lotNumber): lotNumber is string => Boolean(lotNumber)),
+    ));
+    setShipmentDraft((previous) => {
+      if (matchingLots.length === 1) return { ...previous, silo: value, lotNumber: matchingLots[0] };
+      if (matchingLots.length > 1 && !matchingLots.includes(previous.lotNumber)) return { ...previous, silo: value, lotNumber: "" };
+      return { ...previous, silo: value };
+    });
+  };
 
   const refresh = async () => {
     await Promise.all([utils.silo.listEntries.invalidate(), utils.silo.listShipments.invalidate(), utils.silo.state.invalidate()]);
   };
   const onError = (fallback: string) => (error: { message?: string }) => toast.error(error.message || fallback);
 
-  const createEntry = trpc.silo.createEntry.useMutation({ onSuccess: async () => { await refresh(); setEntryDraft(emptyEntry()); toast.success("Entrée de production ajoutée"); }, onError: onError("Impossible d’ajouter cette entrée.") });
-  const updateEntry = trpc.silo.updateEntry.useMutation({ onSuccess: async () => { await refresh(); setEditingEntryId(null); setEntryDraft(emptyEntry()); toast.success("Entrée de production mise à jour"); }, onError: onError("Impossible de modifier cette entrée.") });
-  const deleteEntry = trpc.silo.deleteEntry.useMutation({ onSuccess: async () => { await refresh(); toast.success("Entrée de production supprimée"); }, onError: onError("Impossible de supprimer cette entrée.") });
   const createShipment = trpc.silo.createShipment.useMutation({ onSuccess: async () => { await refresh(); setShipmentDraft(emptyShipment()); toast.success("Expédition ajoutée"); }, onError: onError("Impossible d’ajouter cette expédition.") });
   const updateShipment = trpc.silo.updateShipment.useMutation({ onSuccess: async () => { await refresh(); setEditingShipmentId(null); setShipmentDraft(emptyShipment()); toast.success("Expédition mise à jour"); }, onError: onError("Impossible de modifier cette expédition.") });
   const deleteShipment = trpc.silo.deleteShipment.useMutation({ onSuccess: async () => { await refresh(); toast.success("Expédition supprimée"); }, onError: onError("Impossible de supprimer cette expédition.") });
@@ -122,62 +173,27 @@ export default function SiloPfData() {
     }
   };
 
-  const allocatedTotal = useMemo(
-    () => SILOS.reduce((total, silo) => total + (parseQuantity(entryDraft.allocations[silo] ?? "") || 0), 0),
-    [entryDraft.allocations],
-  );
-  const declaredTotal = parseQuantity(entryDraft.totalQuantity);
-  const totalMismatch = declaredTotal !== undefined && declaredTotal !== null && Math.abs(declaredTotal - allocatedTotal) > 0.005;
-
   const requirePassword = () => {
     if (!actionPassword) { toast.error("Saisissez le mot de passe de gestion pour enregistrer."); return false; }
     return true;
-  };
-
-  const submitEntry = (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!requirePassword()) return;
-    if (!entryDraft.article.trim()) { toast.error("Indiquez l’article produit."); return; }
-
-    const allocations: { silo: typeof SILOS[number]; quantity: number }[] = [];
-    for (const silo of SILOS) {
-      const quantity = parseQuantity(entryDraft.allocations[silo] ?? "");
-      if (quantity === null) { toast.error(`Quantité invalide pour ${silo}.`); return; }
-      if (quantity !== undefined && quantity !== 0) allocations.push({ silo, quantity });
-    }
-    if (allocations.length === 0) { toast.error("Répartissez la production sur au moins un silo."); return; }
-    if (declaredTotal === null) { toast.error("Quantité totale invalide."); return; }
-
-    const payload = {
-      entryDate: entryDraft.entryDate || undefined,
-      article: entryDraft.article.trim(),
-      lotNumber: entryDraft.lotNumber.trim() || undefined,
-      totalQuantity: declaredTotal,
-      allocations,
-      actionPassword,
-    };
-    if (editingEntryId) updateEntry.mutate({ id: editingEntryId, ...payload }); else createEntry.mutate(payload);
-  };
-
-  const editEntry = (entry: typeof entries[number]) => {
-    setEditingEntryId(entry.id);
-    const allocations = emptyAllocations();
-    entry.allocations.forEach((allocation) => { allocations[allocation.silo] = String(Number(allocation.quantity)); });
-    setEntryDraft({
-      entryDate: entry.entryDate ?? "",
-      article: entry.article,
-      lotNumber: entry.lotNumber ?? "",
-      totalQuantity: entry.totalQuantity === null ? "" : String(Number(entry.totalQuantity)),
-      allocations,
-    });
   };
 
   const submitShipment = (event: React.FormEvent) => {
     event.preventDefault();
     if (!requirePassword()) return;
     if (!shipmentDraft.article.trim()) { toast.error("Indiquez l’article expédié."); return; }
+    if (!shipmentDraft.silo) { toast.error("Choisissez le silo d’où part l’expédition."); return; }
     const quantity = parseQuantity(shipmentDraft.quantity);
     if (quantity === undefined || quantity === null) { toast.error("Indiquez une quantité expédiée valide."); return; }
+    // Vérification immédiate côté client (le serveur reste la source de vérité, en particulier
+    // pour une modification : voir assertShipmentWithinStock, qui exclut l'expédition éditée).
+    if (!editingShipmentId) {
+      const available = stateQuery.data?.matrix?.[shipmentDraft.silo]?.[shipmentDraft.article] ?? 0;
+      if (quantity > available + 0.005) {
+        toast.error(`La quantité expédiée (${fmt(quantity)} T) dépasse le stock disponible de ${shipmentDraft.article} dans ${shipmentDraft.silo} (${fmt(available)} T).`);
+        return;
+      }
+    }
 
     const payload = {
       shipmentDate: shipmentDraft.shipmentDate || undefined,
@@ -203,7 +219,6 @@ export default function SiloPfData() {
     });
   };
 
-  const removeEntry = (id: number) => { if (requirePassword() && window.confirm("Supprimer cette entrée de production et sa répartition ?")) deleteEntry.mutate({ id, actionPassword }); };
   const removeShipment = (id: number) => { if (requirePassword() && window.confirm("Supprimer cette expédition ?")) deleteShipment.mutate({ id, actionPassword }); };
   const articleOptions = articles.map((article) => article.code);
 
@@ -218,9 +233,9 @@ export default function SiloPfData() {
       <section className="silo-page">
         <div className="silo-hero">
           <div>
-            <span className="silo-kicker"><Database size={14} />Administration</span>
-            <h1>Silo PF <em>donnée</em></h1>
-            <p>Saisissez les entrées de production réparties par silo et les expéditions sac / vrac. L’état des silos se recalcule automatiquement.</p>
+            <span className="silo-kicker"><Truck size={14} />Produits finis</span>
+            <h1>Ajouter une <em>expédition</em></h1>
+            <p>Saisissez les expéditions sac / vrac. L’état des silos se recalcule automatiquement.</p>
           </div>
           <div className="silo-hero-actions">
             <div className="silo-file-actions">
@@ -250,63 +265,17 @@ export default function SiloPfData() {
           </div>
         )}
 
-        {entriesQuery.error && <div className="silo-error-card"><Database size={22} /><div><strong>Les mouvements ne peuvent pas être chargés</strong><span>{entriesQuery.error.message}</span></div></div>}
-
-        <section className="silo-section">
-          <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>{editingEntryId ? "Modifier une entrée de production" : "Ajouter une entrée de production"}</h2></div></div>
-          <form className="silo-form" onSubmit={submitEntry}>
-            <div className="silo-fields">
-              <label>Date<input type="date" value={entryDraft.entryDate} onChange={(event) => setEntryDraft({ ...entryDraft, entryDate: event.target.value })} /></label>
-              <label>Article<input list="silo-articles" value={entryDraft.article} onChange={(event) => setEntryDraft({ ...entryDraft, article: event.target.value })} placeholder="CG3" required /></label>
-              <label>N° Lot<input value={entryDraft.lotNumber} onChange={(event) => setEntryDraft({ ...entryDraft, lotNumber: event.target.value })} placeholder="2600645-0409" /></label>
-              <label>Qté totale (T)<input value={entryDraft.totalQuantity} onChange={(event) => setEntryDraft({ ...entryDraft, totalQuantity: event.target.value })} placeholder="35" inputMode="decimal" /></label>
-            </div>
-            <fieldset className="silo-allocation-fields">
-              <legend>Répartition par silo (T) — une quantité négative corrige un silo</legend>
-              <div>
-                {SILOS.map((silo) => (
-                  <label key={silo}>{silo}<input value={entryDraft.allocations[silo] ?? ""} onChange={(event) => setEntryDraft({ ...entryDraft, allocations: { ...entryDraft.allocations, [silo]: event.target.value } })} placeholder="—" inputMode="decimal" /></label>
-                ))}
-              </div>
-              <p className={totalMismatch ? "silo-allocation-warning" : "silo-allocation-total"}>
-                Réparti : <strong>{fmt(allocatedTotal)} T</strong>
-                {totalMismatch && declaredTotal !== undefined && declaredTotal !== null ? ` — écart de ${fmt(declaredTotal - allocatedTotal)} T avec la quantité totale saisie` : ""}
-              </p>
-            </fieldset>
-            <div className="silo-form-actions">
-              {editingEntryId && <button type="button" className="silo-secondary" onClick={() => { setEditingEntryId(null); setEntryDraft(emptyEntry()); }}>Annuler</button>}
-              <button className="silo-primary" type="submit" disabled={createEntry.isPending || updateEntry.isPending}><Plus size={16} />{editingEntryId ? "Mettre à jour l’entrée" : "Ajouter l’entrée"}</button>
-            </div>
-          </form>
-
-          {entries.length ? <div className="silo-table-wrap">
-            <table className="silo-list-table">
-              <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th><th>Actions</th></tr></thead>
-              <tbody>
-                {entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{formatDate(entry.entryDate)}</td>
-                    <td className="silo-strong-cell">{entry.article}</td>
-                    <td>{entry.lotNumber || "—"}</td>
-                    <td>{entry.totalQuantity === null ? "—" : fmt(Number(entry.totalQuantity))}</td>
-                    <td className="silo-allocation-cell">{entry.allocations.length ? entry.allocations.map((allocation) => `${allocation.silo}: ${fmt(Number(allocation.quantity))}`).join(" · ") : "—"}</td>
-                    <td><span className="silo-row-actions"><button type="button" onClick={() => editEntry(entry)} aria-label="Modifier l’entrée"><Pencil size={14} /></button><button type="button" onClick={() => removeEntry(entry.id)} aria-label="Supprimer l’entrée"><Trash2 size={14} /></button></span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">Aucune entrée de production enregistrée.</div>}
-        </section>
+        {shipmentsQuery.error && <div className="silo-error-card"><Database size={22} /><div><strong>Les expéditions ne peuvent pas être chargées</strong><span>{shipmentsQuery.error.message}</span></div></div>}
 
         <section className="silo-section">
           <div className="silo-section-head"><div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>{editingShipmentId ? "Modifier une expédition" : "Ajouter une expédition"}</h2></div></div>
           <form className="silo-form" onSubmit={submitShipment}>
             <div className="silo-fields">
               <label>Date<input type="date" value={shipmentDraft.shipmentDate} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentDate: event.target.value })} /></label>
-              <label>Article<input list="silo-articles" value={shipmentDraft.article} onChange={(event) => setShipmentDraft({ ...shipmentDraft, article: event.target.value })} placeholder="CG3" required /></label>
-              <label>N° Lot<input value={shipmentDraft.lotNumber} onChange={(event) => setShipmentDraft({ ...shipmentDraft, lotNumber: event.target.value })} placeholder="2600646-0905" /></label>
+              <label>Article<input list="silo-articles" value={shipmentDraft.article} onChange={(event) => handleArticleChange(event.target.value)} placeholder="CG3" required /></label>
+              <label>N° Lot<input list="silo-expedition-lots" value={shipmentDraft.lotNumber} onChange={(event) => handleLotChange(event.target.value)} placeholder="2600646-0905" /></label>
               <label>Qté (T)<input value={shipmentDraft.quantity} onChange={(event) => setShipmentDraft({ ...shipmentDraft, quantity: event.target.value })} placeholder="25" inputMode="decimal" required /></label>
-              <label>Silo<select value={shipmentDraft.silo} onChange={(event) => setShipmentDraft({ ...shipmentDraft, silo: event.target.value })}>{SILOS.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
+              <label>Silo<select value={shipmentDraft.silo} onChange={(event) => handleSiloChange(event.target.value)} required><option value="" disabled>Choisir…</option>{siloSelectOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
               <label>Expédition<select value={shipmentDraft.shipmentType} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentType: event.target.value })}>{SHIPMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
             </div>
             <div className="silo-form-actions">
@@ -336,6 +305,7 @@ export default function SiloPfData() {
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>
+        <datalist id="silo-expedition-lots">{lotNumberSuggestions.map((lotNumber) => <option key={lotNumber} value={lotNumber} />)}</datalist>
       </section>
     </main>
   );

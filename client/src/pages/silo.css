@@ -9,6 +9,7 @@
 .silo-brand-mark img { width: 24px; height: 27px; object-fit: contain; }
 .silo-manage-link { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d0ddd1; border-radius: 7px; padding: 9px 11px; color: #356a40; background: #f3f8f1; text-decoration: none; font-size: 11px; font-weight: 700; }
 .silo-manage-link:hover { border-color: #4d7b40; background: #e9f4e7; }
+.silo-manage-links { display: flex; align-items: center; gap: 8px; }
 .silo-page { max-width: 1280px; margin: 0 auto; padding: 42px clamp(20px, 5vw, 72px) 60px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
 .silo-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; flex-wrap: wrap; min-width: 0; }
 .silo-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--signal); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
@@ -32,29 +33,28 @@
 .silo-toggle { display: inline-flex; align-items: center; gap: 8px; color: #65736e; font-size: 11px; font-weight: 600; }
 .silo-inline-link { color: #356a40; font-size: 11px; font-weight: 700; text-decoration: none; }
 .silo-inline-link:hover { color: var(--signal); }
-.silo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 18px 14px; }
-.silo-shape { position: relative; aspect-ratio: 120 / 156; }
-.silo-shape-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
-.silo-shape-outline { fill: #fbfcf8; stroke: #c4cec0; stroke-width: 4; stroke-linejoin: round; transition: fill .18s ease, stroke .18s ease; }
-.silo-shape-filled .silo-shape-outline { fill: #eef6ea; stroke: #4d7b40; }
-.silo-shape-fill { transition: y .3s ease, height .3s ease; }
-.silo-shape-fill-normal { fill: #6fa15e; }
-.silo-shape-fill-warning { fill: #e8b53a; }
-.silo-shape-fill-over { fill: #c15a3f; }
-/* L’encadré suit la sévérité du remplissage plutôt que de rester vert par défaut : un silo en alerte ou en dépassement doit se voir sans lire le chiffre. */
-.silo-shape-status-warning .silo-shape-outline { stroke: #b8860f; }
-.silo-shape-status-over .silo-shape-outline { stroke: #a24c37; }
-.silo-shape-content { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 15% 8% 38%; text-align: center; }
-.silo-shape-head { display: flex; align-items: center; justify-content: center; gap: 6px; }
-.silo-shape-name { color: var(--ink); font: 600 13px 'Space Grotesk'; }
-.silo-shape-percent { border-radius: 999px; padding: 1px 6px; font-size: 9px; font-weight: 700; color: #fffefa; }
-.silo-shape-percent-normal { background: #4d7b40; }
-.silo-shape-percent-warning { background: #b8860f; }
-.silo-shape-percent-over { background: #a24c37; }
-.silo-badge { border-radius: 999px; padding: 3px 8px; background: #e8f2e4; color: #356a40; font-size: 10px; font-weight: 700; }
+.silo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+.silo-card { display: flex; flex-direction: column; gap: 8px; border: 1px solid #e1e6dc; border-radius: 13px; padding: 14px 16px; background: rgba(255,254,250,.94); box-shadow: 0 6px 18px rgba(29,72,38,.05); transition: border-color .18s ease; }
+.silo-card-filled { border-color: #cddac8; }
+/* La bordure suit la sévérité du remplissage plutôt que de rester verte par défaut : un silo en alerte ou en dépassement doit se voir sans lire le chiffre. */
+.silo-card-status-normal.silo-card-filled { border-color: #4d7b40; }
+.silo-card-status-warning.silo-card-filled { border-color: #b8860f; }
+.silo-card-status-over.silo-card-filled { border-color: #a24c37; }
+.silo-card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.silo-card-name { color: var(--ink); font: 600 13px 'Space Grotesk'; }
+.silo-card-percent { border-radius: 999px; padding: 1px 6px; font-size: 9px; font-weight: 700; color: #fffefa; }
+.silo-card-percent-normal { background: #4d7b40; }
+.silo-card-percent-warning { background: #b8860f; }
+.silo-card-percent-over { background: #a24c37; }
+.silo-badge { align-self: flex-start; border-radius: 999px; padding: 4px 11px; background: #e8f2e4; color: #356a40; font: 700 16px 'Space Grotesk'; letter-spacing: -.01em; }
 .silo-badge-muted { background: #eef0ea; color: #86917f; }
-.silo-shape-qty { margin: auto 0 0; color: var(--ink); font: 600 16px 'Space Grotesk'; letter-spacing: -.03em; }
-.silo-shape-qty small { color: #7c8980; font: 500 10px 'IBM Plex Sans'; }
+.silo-card-qty { margin: auto 0 0; color: var(--ink); font: 600 16px 'Space Grotesk'; letter-spacing: -.03em; }
+.silo-card-qty small { color: #7c8980; font: 500 10px 'IBM Plex Sans'; }
+.silo-card-bar { position: relative; height: 6px; border-radius: 999px; overflow: hidden; background: #e7ece2; }
+.silo-card-bar-fill { position: absolute; inset: 0 auto 0 0; display: block; height: 100%; border-radius: inherit; transition: width .3s ease; }
+.silo-card-bar-fill-normal { background: #6fa15e; }
+.silo-card-bar-fill-warning { background: #e8b53a; }
+.silo-card-bar-fill-over { background: #c15a3f; }
 .silo-article-stock { display: flex; flex-wrap: wrap; gap: 10px; }
 .silo-article-chip { display: grid; gap: 3px; border: 1px solid #dbe4d8; border-radius: 10px; padding: 11px 15px; background: #fbfcf8; }
 .silo-article-chip strong { color: var(--ink); font: 600 13px 'Space Grotesk'; }

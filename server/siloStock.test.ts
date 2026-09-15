@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeArticleStock, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
+import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
 
 const SILOS = ["SPF1", "SPF2", "SPF3", "SPF4"];
 const ARTICLES = ["CM1", "CG25", "CG3"];
@@ -87,5 +87,32 @@ describe("état des silos de produits finis", () => {
     );
 
     expect(matrix.SPF1.CG3).toBe(24.55);
+  });
+
+  it("calcule la quantité encore disponible pour une expédition, comme sur la carte du silo", () => {
+    // Reprend l'exemple observé à l'écran : SPF2/CG3 affiche 3,50 T disponibles.
+    const allocations = [{ article: "CG3", silo: "SPF2", quantity: 15 }];
+    const shipments = [{ id: 1, article: "CG3", silo: "SPF2", quantity: 11.5 }];
+
+    expect(computeShipmentAvailability(allocations, shipments, "SPF2", "CG3")).toBe(3.5);
+    // Une expédition de 5 T dépasserait donc ce disponible : c'est ce que le routeur doit bloquer.
+    expect(computeShipmentAvailability(allocations, shipments, "SPF2", "CG3")).toBeLessThan(5);
+  });
+
+  it("rend à l'expédition modifiée sa propre quantité avant de calculer le disponible", () => {
+    const allocations = [{ article: "CG3", silo: "SPF2", quantity: 15 }];
+    const shipments = [{ id: 1, article: "CG3", silo: "SPF2", quantity: 11.5 }];
+
+    // Sans exclusion : 15 - 11.5 = 3.5 (l'expédition existante compte double si on veut la modifier).
+    expect(computeShipmentAvailability(allocations, shipments, "SPF2", "CG3")).toBe(3.5);
+    // En excluant l'expédition #1 (celle qu'on modifie) : toute la quantité produite redevient disponible.
+    expect(computeShipmentAvailability(allocations, shipments, "SPF2", "CG3", 1)).toBe(15);
+  });
+
+  it("ne renvoie jamais une disponibilité négative", () => {
+    const allocations = [{ article: "CG3", silo: "SPF4", quantity: 10 }];
+    const shipments = [{ id: 1, article: "CG3", silo: "SPF4", quantity: 12 }];
+
+    expect(computeShipmentAvailability(allocations, shipments, "SPF4", "CG3")).toBe(0);
   });
 });

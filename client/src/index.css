@@ -25,6 +25,11 @@ button { cursor: pointer; }
 .rail-link { width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 11px; color: #b7c7c7; border-radius: 9px; padding: 11px 11px; text-align: left; font-size: 13px; transition: all .18s ease; }
 .rail-link:hover { background: rgba(255,255,255,.07); color: white; transform: translateX(2px); }
 .rail-link.active { background: var(--signal); color: #1d4826; box-shadow: 0 7px 20px rgba(232,181,58,.22); }
+.rail-group-toggle { width: 100%; }
+.rail-group-chevron { margin-left: auto; flex-shrink: 0; transition: transform .18s ease; }
+.rail-group-chevron-open { transform: rotate(180deg); }
+.rail-subnav { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 4px 17px; padding-left: 11px; border-left: 1px solid rgba(255,255,255,.16); }
+.rail-sublink { padding: 8px 10px; font-size: 12px; }
 .rail-footer { margin-top: auto; padding: 15px 11px 0; border-top: 1px solid rgba(255,255,255,.12); color: #789397; font-size: 10px; line-height: 1.7; }
 .status-pulse { color: #c2d7bb; font-size: 11px; display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
 .status-pulse span, .live-dot, .small-status { width: 6px; height: 6px; background: #e8b53a; border-radius: 99px; display: inline-block; box-shadow: 0 0 0 3px rgba(232,181,58,.18); }

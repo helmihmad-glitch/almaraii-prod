@@ -1,16 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, Database, Download, Layers, Menu, PackageSearch, SlidersHorizontal, Truck } from "lucide-react";
+import { ArrowLeft, Boxes, Database, Download, Layers, Menu, PackageSearch, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
 import { getSiloFillStatus, SILO_CAPACITY_TONS } from "@shared/silo";
 import "./silo.css";
-
-/** Hauteur utile du pictogramme (de haut de silo à pointe du cône) dans le viewBox 120×156. */
-const SHAPE_FILL_HEIGHT = 144;
-const SHAPE_TIP_Y = 150;
 
 const fmt = (value: number | null | undefined, digits = 2) =>
   value === null || value === undefined ? "—" : new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
@@ -75,7 +71,10 @@ export default function SiloPf() {
         <button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button>
         <Link href="/" className="silo-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
         <div className="silo-brand"><div className="silo-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
-        <Link href="/silo-pf-donnee" className="silo-manage-link"><SlidersHorizontal size={15} />Gérer les mouvements</Link>
+        <div className="silo-manage-links">
+          <Link href="/silo-pf-production" className="silo-manage-link"><Boxes size={15} />Production</Link>
+          <Link href="/silo-pf-expedition" className="silo-manage-link"><Truck size={15} />Expédition</Link>
+        </div>
       </header>
 
       <section className="silo-page">
@@ -83,7 +82,6 @@ export default function SiloPf() {
           <div>
             <span className="silo-kicker"><Boxes size={14} />Produits finis</span>
             <h1>État des <em>silos</em></h1>
-            <p>Chaque silo affiche l’article qu’il contient et la quantité restante : entrées de production moins expéditions, exactement comme le classeur Silo_PF.</p>
           </div>
           <div className="silo-hero-actions">
             <button type="button" className="silo-secondary" onClick={downloadWorkbook} disabled={isExporting}><Download size={15} />{isExporting ? "Export…" : "Exporter le classeur"}</button>
@@ -104,25 +102,16 @@ export default function SiloPf() {
           {stateQuery.isLoading ? <p className="silo-empty">Chargement de l’état des silos…</p> : (
             <div className="silo-grid">
               {visibleOccupancy.map((row) => {
-                const clipId = `silo-clip-${row.silo}`;
                 const { percent, status } = getSiloFillStatus(row.quantity);
-                const fillFraction = Math.min(percent, 100) / 100;
-                const fillHeight = fillFraction * SHAPE_FILL_HEIGHT;
                 return (
-                  <article key={row.silo} className={`silo-shape ${row.article ? "silo-shape-filled" : "silo-shape-empty"} silo-shape-status-${status}`}>
-                    <svg className="silo-shape-svg" viewBox="0 0 120 156" preserveAspectRatio="none" aria-hidden="true">
-                      <defs><clipPath id={clipId}><path d="M6 6 H114 V96 L60 150 L6 96 Z" /></clipPath></defs>
-                      <path className="silo-shape-outline" d="M6 6 H114 V96 L60 150 L6 96 Z" />
-                      {fillHeight > 0 && <rect className={`silo-shape-fill silo-shape-fill-${status}`} x="0" y={SHAPE_TIP_Y - fillHeight} width="120" height={fillHeight + 8} clipPath={`url(#${clipId})`} />}
-                    </svg>
-                    <div className="silo-shape-content">
-                      <div className="silo-shape-head">
-                        <strong className="silo-shape-name">{row.silo}</strong>
-                        {status !== "empty" && <span className={`silo-shape-percent silo-shape-percent-${status}`}>{percent}%</span>}
-                      </div>
-                      {row.article ? <span className="silo-badge">{row.article}</span> : <span className="silo-badge silo-badge-muted">Vide</span>}
-                      <p className="silo-shape-qty">{row.quantity === null ? "—" : <>{fmt(row.quantity, 2)}<small> / {SILO_CAPACITY_TONS} T</small></>}</p>
+                  <article key={row.silo} className={`silo-card ${row.article ? "silo-card-filled" : "silo-card-empty"} silo-card-status-${status}`}>
+                    <div className="silo-card-head">
+                      <strong className="silo-card-name">{row.silo}</strong>
+                      {status !== "empty" && <span className={`silo-card-percent silo-card-percent-${status}`}>{percent}%</span>}
                     </div>
+                    {row.article ? <span className="silo-badge">{row.article}</span> : <span className="silo-badge silo-badge-muted">Vide</span>}
+                    <p className="silo-card-qty">{row.quantity === null ? "—" : `${fmt(row.quantity, 2)} T`}</p>
+                    <div className="silo-card-bar"><i className={`silo-card-bar-fill silo-card-bar-fill-${status}`} style={{ width: `${Math.min(percent, 100)}%` }} /></div>
                   </article>
                 );
               })}
@@ -140,31 +129,10 @@ export default function SiloPf() {
             {!stateQuery.isLoading && (state?.articleStock ?? []).every((row) => row.quantity <= 0) && <p className="silo-empty">Aucun stock enregistré.</p>}
           </div>
         </section>
-
-        <section className="silo-section">
-          <div className="silo-section-head"><div><span className="silo-section-label"><Layers size={14} />Détail</span><h2>Matrice silo × article</h2></div></div>
-          <div className="silo-table-wrap">
-            <table className="silo-matrix-table">
-              <thead><tr><th>Silo</th>{articles.map((article) => <th key={article}>{article}</th>)}</tr></thead>
-              <tbody>
-                {silos.map((silo) => (
-                  <tr key={silo}>
-                    <th scope="row">{silo}</th>
-                    {articles.map((article) => {
-                      const value = state?.matrix?.[silo]?.[article] ?? null;
-                      return <td key={article} className={value === null ? "silo-cell-empty" : "silo-cell-filled"}>{value === null ? "" : fmt(value, 2)}</td>;
-                    })}
-                  </tr>
-                ))}
-                {articles.length === 0 && <tr><td className="silo-empty-cell" colSpan={1}>Aucun article configuré.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
+        
         <div className="silo-recent-grid">
           <section className="silo-section">
-            <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>Dernières productions</h2></div><Link href="/silo-pf-donnee" className="silo-inline-link">Gérer</Link></div>
+            <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>Dernières productions</h2></div><Link href="/silo-pf-production" className="silo-inline-link">Gérer</Link></div>
             {recentEntries.length ? <div className="silo-table-wrap">
               <table className="silo-list-table">
                 <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th></tr></thead>
@@ -184,7 +152,7 @@ export default function SiloPf() {
           </section>
 
           <section className="silo-section">
-            <div className="silo-section-head"><div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>Dernières expéditions</h2></div><Link href="/silo-pf-donnee" className="silo-inline-link">Gérer</Link></div>
+            <div className="silo-section-head"><div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>Dernières expéditions</h2></div><Link href="/silo-pf-expedition" className="silo-inline-link">Gérer</Link></div>
             {recentShipments.length ? <div className="silo-table-wrap">
               <table className="silo-list-table">
                 <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th></tr></thead>

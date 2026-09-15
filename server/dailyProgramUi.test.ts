@@ -34,7 +34,8 @@ describe("Programme journalier", () => {
     expect(app).toContain('path="/programme-journalier"');
     expect(app).toContain('path="/programme-journalier-donnee"');
     expect(appShell).toContain("Programme journalier");
-    expect(appShell).toContain("Programme journalier donnée");
+    expect(appShell).toContain("Liste des programmes");
+    expect(appShell).toContain("Ajouter un programme");
     expect(appShell).not.toContain("Analyse des lignes");
     expect(dailyProgram).toContain('type="date"');
     expect(dailyProgram).toContain("Quantité (tonne)");

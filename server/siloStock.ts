@@ -95,3 +95,26 @@ export function computeArticleStock(occupancy: SiloOccupancy[], articles: readon
 export function computeTotalStock(occupancy: SiloOccupancy[]) {
   return roundQuantity(occupancy.reduce((total, row) => total + (row.quantity ?? 0), 0));
 }
+
+export type SiloShipmentRecord = SiloShipmentInput & { id: number };
+
+/**
+ * Quantité d'un article encore disponible dans un silo pour une expédition :
+ * la même formule que `computeSiloMatrix`, mais en excluant au besoin
+ * l'expédition en cours de modification (`excludeShipmentId`) de ses propres
+ * expéditions déjà comptées — sans quoi modifier une expédition existante se
+ * heurterait à sa propre quantité déjà déduite du stock.
+ */
+export function computeShipmentAvailability(
+  allocations: SiloAllocationInput[],
+  shipments: SiloShipmentRecord[],
+  silo: string,
+  article: string,
+  excludeShipmentId?: number,
+): number {
+  const remainingShipments = excludeShipmentId === undefined
+    ? shipments
+    : shipments.filter((shipment) => shipment.id !== excludeShipmentId);
+  const matrix = computeSiloMatrix(allocations, remainingShipments, [silo], [article]);
+  return matrix[silo]?.[article] ?? 0;
+}
