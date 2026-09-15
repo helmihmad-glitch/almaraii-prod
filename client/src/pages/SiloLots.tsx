@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, ChevronDown, Database, Menu, PackageSearch, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Boxes, ChevronDown, Database, Download, Menu, PackageSearch, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
@@ -20,6 +21,8 @@ export default function SiloLots() {
   const [lotQuery, setLotQuery] = useState("");
   const [showDepleted, setShowDepleted] = useState(true);
   const [expandedEntryId, setExpandedEntryId] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportLedger = trpc.useUtils().silo.exportLotLedger;
 
   // Voir client/src/lib/trpc.ts (LIVE_QUERY_OPTIONS) : cette vue de lecture
   // doit refléter les modifications faites depuis un autre onglet ou par
@@ -27,6 +30,25 @@ export default function SiloLots() {
   const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const lots = ledgerQuery.data?.lots ?? [];
   const unattributed = ledgerQuery.data?.unattributed ?? [];
+
+  const downloadLedger = async () => {
+    setIsExporting(true);
+    try {
+      const { fileName, fileBase64 } = await exportLedger.fetch();
+      const bytes = Uint8Array.from(atob(fileBase64), (character) => character.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Traçabilité des lots exportée", { description: fileName });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’export de la traçabilité a échoué.");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const silos = useMemo(() => Array.from(new Set(lots.map((lot) => lot.silo))).sort(), [lots]);
   const articles = useMemo(() => Array.from(new Set(lots.map((lot) => lot.article))).sort(), [lots]);
@@ -64,33 +86,19 @@ export default function SiloLots() {
           <div>
             <span className="silo-kicker"><PackageSearch size={14} />Produits finis</span>
             <h1>Traçabilité des <em>lots</em></h1>
-            <p>Chaque lot produit est suivi jusqu’à épuisement : les expéditions et corrections consomment toujours le lot le plus ancien en premier (FIFO), silo par silo.</p>
           </div>
-          <div className="silo-total-card">
-            <span>Quantité tracée restante</span>
-            <strong>{ledgerQuery.isLoading ? "…" : `${fmt(totalRemaining)} T`}</strong>
-            <small>{activeCount} lot(s) actif(s) sur {lots.length}</small>
-          </div>
-        </div>
-
-        {unattributed.length > 0 && (
-          <div className="silo-error-card silo-warning-card">
-            <TriangleAlert size={20} />
-            <div>
-              <strong>{unattributed.length} sortie(s) sans lot d’origine connu</strong>
-              <span>Une expédition ou une correction dépasse la production tracée pour cet article et ce silo — vérifiez si un lot ancien manque à la saisie.</span>
-              <ul>
-                {unattributed.map((item, index) => (
-                  <li key={index}>{item.silo} · {item.article} : {fmt(item.quantity)} T non attribuée ({describeSource(item.source)})</li>
-                ))}
-              </ul>
+          <div className="silo-hero-actions">
+            <button type="button" className="silo-secondary" onClick={downloadLedger} disabled={isExporting || ledgerQuery.isLoading}><Download size={15} />{isExporting ? "Export…" : "Exporter en Excel"}</button>
+            <div className="silo-total-card">
+              <span>Quantité tracée restante</span>
+              <strong>{ledgerQuery.isLoading ? "…" : `${fmt(totalRemaining)} T`}</strong>
+              <small>{activeCount} lot(s) actif(s) sur {lots.length}</small>
             </div>
           </div>
-        )}
-
+        </div>
         <section className="silo-section">
           <div className="silo-section-head">
-            <div><span className="silo-section-label"><Boxes size={14} />Détail</span><h2>Lots suivis</h2></div>
+            <div><span className="silo-section-label"><Boxes size={14} />Détail</span><h2>Historique de Lots</h2></div>
             <div className="silo-lot-filters">
               <label>Silo<select value={siloFilter} onChange={(event) => setSiloFilter(event.target.value)}><option value="all">Tous</option>{silos.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
               <label>Article<select value={articleFilter} onChange={(event) => setArticleFilter(event.target.value)}><option value="all">Tous</option>{articles.map((article) => <option key={article} value={article}>{article}</option>)}</select></label>
@@ -141,6 +149,20 @@ export default function SiloLots() {
             </div>
           )}
         </section>
+           {unattributed.length > 0 && (
+          <div className="silo-error-card silo-warning-card">
+            <TriangleAlert size={20} />
+            <div>
+              <strong>{unattributed.length} sortie(s) sans lot d’origine connu</strong>
+              <span>Une expédition ou une correction dépasse la production tracée pour cet article et ce silo — vérifiez si un lot ancien manque à la saisie.</span>
+              <ul>
+                {unattributed.map((item, index) => (
+                  <li key={index}>{item.silo} · {item.article} : {fmt(item.quantity)} T non attribuée ({describeSource(item.source)})</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </section>
     </main>
   );

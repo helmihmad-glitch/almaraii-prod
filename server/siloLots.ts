@@ -1,3 +1,7 @@
+import ExcelJS from "exceljs";
+import { columnLetter, TITLE_FILL, writeTitle } from "./siloExcel";
+import { SILOS } from "../shared/silo";
+
 // Tracabilite FIFO des lots de produits finis, silo par silo.
 //
 // Chaque entree de production depose un lot dans un silo (une meme entree
@@ -171,4 +175,191 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
   }
 
   return { lots, unattributed };
+}
+
+const LEDGER_SHEET_NAME = "Traçabilité des lots";
+const LEDGER_FIRST_COL = 2; // colonne B : une marge à gauche, comme les classeurs existants de l'application.
+const LEDGER_LAST_COL = LEDGER_FIRST_COL + 5; // Silo, Article, Date, N° Lot, Qté par lot, Qté silo.
+const LEDGER_TITLE_ROW = 2;
+const LEDGER_SUMMARY_ROW = 3;
+const LEDGER_HEADER_ROW = 5;
+const LEDGER_FIRST_DATA_ROW = 6;
+const LEDGER_COLUMN_WIDTH = 25;
+const LEDGER_ROW_HEIGHT = 30;
+
+/** Couleur alignée sur la pastille « Actif » de la page à l'écran (voir silo.css `.silo-lot-status-active`). */
+const ACTIVE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F2E4" } };
+const ZEBRA_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7FBF4" } };
+const GRID_BORDER_SIDE: ExcelJS.Border = { style: "thin", color: { argb: "FFC4CEC0" } };
+/** Quadrillage du tableau (en-tête, lignes de données et total) — pas la bannière titre/date au-dessus. */
+const GRID_BORDER: Partial<ExcelJS.Borders> = { top: GRID_BORDER_SIDE, left: GRID_BORDER_SIDE, bottom: GRID_BORDER_SIDE, right: GRID_BORDER_SIDE };
+
+const LEDGER_DATE_FORMATTER = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+const formatLedgerDate = (value: string | null) => (value ? LEDGER_DATE_FORMATTER.format(new Date(`${value}T00:00:00`)) : "—");
+
+/**
+ * Construit un classeur Excel de la traçabilité des lots : une ligne par lot
+ * ENCORE ACTIF (silo, article, date d'entrée, n° lot, quantité restante DE CE
+ * LOT) — les lots épuisés n'apportent rien à un inventaire courant et sont
+ * exclus. Les silos regroupent leurs lots sous une cellule fusionnée (silo
+ * par silo, dans l'ordre SPF1 → SPF12, pas un tri alphabétique qui placerait
+ * SPF10 avant SPF2), avec la « Quantité silo » — la somme des quantités
+ * restantes de tous ses lots (ex. 14,78 + 10 = 24,78) — indiquée une seule
+ * fois pour tout le groupe ; à l'intérieur d'un silo, les lots consécutifs
+ * d'un même article partagent aussi leur cellule Article. Un silo sans lot
+ * actif reste visible avec une ligne « Vide », comme à l'écran. Un total en
+ * pied de colonne clôt le tableau. Reprend les couleurs déjà utilisées pour
+ * le classeur Silo_PF (voir server/siloExcel.ts) afin de rester cohérent.
+ */
+export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Almaraïi Production Pulse";
+  workbook.created = new Date();
+  workbook.modified = new Date();
+
+  const activeLots = ledger.lots.filter((lot) => lot.status === "active");
+  const groups: { silo: string; lots: LotBalance[] }[] = SILOS.map((silo) => ({
+    silo,
+    lots: activeLots
+      .filter((lot) => lot.silo === silo)
+      .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || a.entryId - b.entryId),
+  }));
+  const totalRemaining = activeLots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+
+  const worksheet = workbook.addWorksheet(LEDGER_SHEET_NAME, { views: [{ state: "frozen", ySplit: LEDGER_HEADER_ROW }] });
+
+  writeTitle(worksheet, LEDGER_TITLE_ROW, LEDGER_FIRST_COL, LEDGER_LAST_COL, "🌾  TRAÇABILITÉ DES LOTS — Almaraïi Production");
+
+  const summaryRow = worksheet.getRow(LEDGER_SUMMARY_ROW);
+  const summaryCell = summaryRow.getCell(LEDGER_FIRST_COL);
+  summaryCell.value = `Exporté le ${LEDGER_DATE_FORMATTER.format(new Date())}`;
+  worksheet.mergeCells(LEDGER_SUMMARY_ROW, LEDGER_FIRST_COL, LEDGER_SUMMARY_ROW, LEDGER_LAST_COL);
+  summaryCell.font = { italic: true, color: { argb: "FF356A40" } };
+  summaryCell.alignment = { vertical: "middle", horizontal: "center" };
+  summaryCell.fill = ACTIVE_FILL;
+  summaryRow.height = 20;
+
+  const headerRow = worksheet.getRow(LEDGER_HEADER_ROW);
+  ["Silo", "Article", "Date d’entrée", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"].forEach((label, index) => {
+    const cell = headerRow.getCell(LEDGER_FIRST_COL + index);
+    cell.value = label;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = TITLE_FILL;
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = GRID_BORDER;
+  });
+  headerRow.height = LEDGER_ROW_HEIGHT;
+
+  for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) worksheet.getColumn(col).width = LEDGER_COLUMN_WIDTH;
+
+  const ARTICLE_COL = LEDGER_FIRST_COL + 1;
+
+  let currentRow = LEDGER_FIRST_DATA_ROW;
+  groups.forEach((group, groupIndex) => {
+    const startRow = currentRow;
+    const shouldStripe = groupIndex % 2 === 1;
+
+    if (group.lots.length === 0) {
+      const row = worksheet.getRow(currentRow);
+      const articleCell = row.getCell(ARTICLE_COL);
+      articleCell.value = "Vide";
+      articleCell.font = { italic: true, color: { argb: "FF86917F" } };
+      articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) articleCell.fill = ZEBRA_FILL;
+      row.getCell(LEDGER_FIRST_COL + 2).value = "—";
+      row.getCell(LEDGER_FIRST_COL + 3).value = "—";
+      row.getCell(LEDGER_FIRST_COL + 4).value = "—";
+      const emptyTotalCell = row.getCell(LEDGER_FIRST_COL + 5);
+      emptyTotalCell.value = "—";
+      emptyTotalCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) emptyTotalCell.fill = ZEBRA_FILL;
+      currentRow += 1;
+    } else {
+      group.lots.forEach((lot) => {
+        const row = worksheet.getRow(currentRow);
+        // Article et Quantité silo (colonnes fusionnables) sont renseignées plus bas, une fois par groupe.
+        row.getCell(LEDGER_FIRST_COL + 2).value = formatLedgerDate(lot.entryDate);
+        row.getCell(LEDGER_FIRST_COL + 3).value = lot.lotNumber || "—";
+        // « Quantité par lot » = ce qu'il reste DE CE LOT précisément (et non la quantité produite à l'origine).
+        row.getCell(LEDGER_FIRST_COL + 4).value = lot.remainingQuantity;
+        row.getCell(LEDGER_FIRST_COL + 4).numFmt = '0.00" T"';
+        currentRow += 1;
+      });
+    }
+
+    const endRow = currentRow - 1;
+    for (let r = startRow; r <= endRow; r += 1) {
+      const row = worksheet.getRow(r);
+      row.height = LEDGER_ROW_HEIGHT;
+      for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) row.getCell(col).border = GRID_BORDER;
+      if (shouldStripe) {
+        for (let col = LEDGER_FIRST_COL + 2; col < LEDGER_LAST_COL; col += 1) row.getCell(col).fill = ZEBRA_FILL;
+      }
+    }
+
+    // Une cellule fusionnée ne peut être stylée (ou revalorisée) que via sa
+    // cellule maîtresse (coin haut-gauche) : on fusionne d'abord, puis on la
+    // stylise. Ordre appliqué au silo (tout le groupe), à l'article
+    // (uniquement les lots consécutifs qui le partagent) et à la quantité
+    // silo (somme des lots restants, une fois pour tout le groupe).
+    if (endRow > startRow) worksheet.mergeCells(startRow, LEDGER_FIRST_COL, endRow, LEDGER_FIRST_COL);
+    const siloCell = worksheet.getCell(startRow, LEDGER_FIRST_COL);
+    siloCell.value = group.silo;
+    siloCell.font = { bold: true };
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (shouldStripe) siloCell.fill = ZEBRA_FILL;
+
+    let runStart = startRow;
+    group.lots.forEach((lot, lotIndex) => {
+      const isLastOfGroup = lotIndex === group.lots.length - 1;
+      const sharesNextArticle = !isLastOfGroup && group.lots[lotIndex + 1].article === lot.article;
+      if (sharesNextArticle) return;
+      const runEnd = startRow + lotIndex;
+      if (runEnd > runStart) worksheet.mergeCells(runStart, ARTICLE_COL, runEnd, ARTICLE_COL);
+      const articleCell = worksheet.getCell(runStart, ARTICLE_COL);
+      articleCell.value = lot.article;
+      articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) articleCell.fill = ZEBRA_FILL;
+      runStart = runEnd + 1;
+    });
+
+    if (group.lots.length > 0) {
+      // « Quantité silo » = la somme de ce qu'il reste sur TOUS les lots de ce silo (exemple demandé : 14,78 + 10 = 24,78).
+      const siloRemaining = group.lots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+      if (endRow > startRow) worksheet.mergeCells(startRow, LEDGER_FIRST_COL + 5, endRow, LEDGER_FIRST_COL + 5);
+      const siloTotalCell = worksheet.getCell(startRow, LEDGER_FIRST_COL + 5);
+      siloTotalCell.value = siloRemaining;
+      siloTotalCell.numFmt = '0.00" T"';
+      siloTotalCell.font = { bold: true };
+      siloTotalCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) siloTotalCell.fill = ZEBRA_FILL;
+    }
+  });
+
+  if (currentRow > LEDGER_FIRST_DATA_ROW) {
+    worksheet.autoFilter = {
+      from: { row: LEDGER_HEADER_ROW, column: LEDGER_FIRST_COL },
+      to: { row: currentRow - 1, column: LEDGER_LAST_COL },
+    };
+  }
+
+  const totalRowNumber = currentRow;
+  const totalRow = worksheet.getRow(totalRowNumber);
+  totalRow.getCell(LEDGER_FIRST_COL).value = "Total";
+  totalRow.getCell(LEDGER_FIRST_COL).font = { bold: true };
+  worksheet.mergeCells(totalRowNumber, LEDGER_FIRST_COL, totalRowNumber, LEDGER_FIRST_COL + 3);
+  const totalCell = totalRow.getCell(LEDGER_FIRST_COL + 5);
+  if (totalRowNumber > LEDGER_FIRST_DATA_ROW) {
+    const remainingColLetter = columnLetter(LEDGER_FIRST_COL + 5);
+    const formula = `SUM(${remainingColLetter}${LEDGER_FIRST_DATA_ROW}:${remainingColLetter}${totalRowNumber - 1})`;
+    totalCell.value = { formula, result: totalRemaining } as ExcelJS.CellFormulaValue;
+  } else {
+    totalCell.value = 0;
+  }
+  totalCell.numFmt = '0.00" T"';
+  totalCell.font = { bold: true };
+  totalRow.height = LEDGER_ROW_HEIGHT;
+  for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) totalRow.getCell(col).border = GRID_BORDER;
+
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }

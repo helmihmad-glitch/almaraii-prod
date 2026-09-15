@@ -65,6 +65,29 @@ type FallbackRecord = {
   updatedAt: Date;
 };
 
+type FallbackDailyProgram = {
+  id: number;
+  programDate: string;
+  operatorName: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackDailyProgramLine = {
+  id: number;
+  programId: number;
+  sequence: number;
+  article: string | null;
+  version: string | null;
+  bagQuantity: string | null;
+  bulkQuantity: string | null;
+  plannedStart: string;
+  plannedEnd: string;
+  observation: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type FallbackSynchronizedFile = {
   id: number;
   fileName: string;
@@ -84,9 +107,13 @@ function loadFallbackStore() {
       records: [],
       settings: undefined,
       synchronizedFile: undefined,
+      dailyPrograms: [],
+      dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
       nextRecordId: 1,
+      nextDailyProgramId: 1,
+      nextDailyProgramLineId: 1,
     };
   }
 
@@ -98,9 +125,13 @@ function loadFallbackStore() {
       records?: FallbackRecord[];
       settings?: FallbackProductionSettings | undefined;
       synchronizedFile?: FallbackSynchronizedFile | undefined;
+      dailyPrograms?: FallbackDailyProgram[];
+      dailyProgramLines?: FallbackDailyProgramLine[];
       nextArticleId?: number;
       nextOperatorId?: number;
       nextRecordId?: number;
+      nextDailyProgramId?: number;
+      nextDailyProgramLineId?: number;
     };
 
     return {
@@ -109,9 +140,13 @@ function loadFallbackStore() {
       records: parsed.records ?? [],
       settings: parsed.settings,
       synchronizedFile: parsed.synchronizedFile,
+      dailyPrograms: parsed.dailyPrograms ?? [],
+      dailyProgramLines: parsed.dailyProgramLines ?? [],
       nextArticleId: parsed.nextArticleId ?? 1,
       nextOperatorId: parsed.nextOperatorId ?? 1,
       nextRecordId: parsed.nextRecordId ?? 1,
+      nextDailyProgramId: parsed.nextDailyProgramId ?? 1,
+      nextDailyProgramLineId: parsed.nextDailyProgramLineId ?? 1,
     };
   } catch {
     return {
@@ -120,9 +155,13 @@ function loadFallbackStore() {
       records: [],
       settings: undefined,
       synchronizedFile: undefined,
+      dailyPrograms: [],
+      dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
       nextRecordId: 1,
+      nextDailyProgramId: 1,
+      nextDailyProgramLineId: 1,
     };
   }
 }
@@ -137,9 +176,13 @@ function persistFallbackStore() {
     records: fallbackRecords,
     settings: fallbackSettings,
     synchronizedFile: fallbackSynchronizedFile,
+    dailyPrograms: fallbackDailyPrograms,
+    dailyProgramLines: fallbackDailyProgramLines,
     nextArticleId: nextFallbackArticleId,
     nextOperatorId: nextFallbackOperatorId,
     nextRecordId: nextFallbackRecordId,
+    nextDailyProgramId: nextFallbackDailyProgramId,
+    nextDailyProgramLineId: nextFallbackDailyProgramLineId,
   }, null, 2);
 
   // Ce stockage de secours n’existe que pour le développement local. Sur une
@@ -163,9 +206,13 @@ const fallbackOperators: FallbackOperator[] = persistedFallback.operators;
 const fallbackRecords: FallbackRecord[] = persistedFallback.records;
 let fallbackSettings: FallbackProductionSettings | undefined = persistedFallback.settings;
 let fallbackSynchronizedFile: FallbackSynchronizedFile | undefined = persistedFallback.synchronizedFile;
+const fallbackDailyPrograms: FallbackDailyProgram[] = persistedFallback.dailyPrograms;
+const fallbackDailyProgramLines: FallbackDailyProgramLine[] = persistedFallback.dailyProgramLines;
 let nextFallbackArticleId = persistedFallback.nextArticleId;
 let nextFallbackOperatorId = persistedFallback.nextOperatorId;
 let nextFallbackRecordId = persistedFallback.nextRecordId;
+let nextFallbackDailyProgramId = persistedFallback.nextDailyProgramId;
+let nextFallbackDailyProgramLineId = persistedFallback.nextDailyProgramLineId;
 
 /**
  * Vercel provisionne `DATABASE_URL` en connectant une base Postgres au projet
@@ -322,13 +369,20 @@ export async function deleteProductionRecord(id: number) {
 
 export async function listDailyPrograms() {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) return [...fallbackDailyPrograms].sort((a, b) => b.programDate.localeCompare(a.programDate));
   return db.select().from(dailyPrograms).orderBy(desc(dailyPrograms.programDate));
 }
 
 export async function getDailyProgramByDate(programDate: string) {
   const db = await getDb();
-  if (!db) return null;
+  if (!db) {
+    const program = fallbackDailyPrograms.find((item) => item.programDate === programDate);
+    if (!program) return null;
+    const lines = fallbackDailyProgramLines
+      .filter((line) => line.programId === program.id)
+      .sort((a, b) => a.sequence - b.sequence || a.id - b.id);
+    return { ...program, lines };
+  }
   const programs = await db.select().from(dailyPrograms).where(eq(dailyPrograms.programDate, programDate)).limit(1);
   const program = programs[0];
   if (!program) return null;
@@ -338,21 +392,48 @@ export async function getDailyProgramByDate(programDate: string) {
 
 export async function createDailyProgram(program: InsertDailyProgram) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const created: FallbackDailyProgram = {
+      id: nextFallbackDailyProgramId++,
+      programDate: String(program.programDate),
+      operatorName: String(program.operatorName ?? ""),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackDailyPrograms.push(created);
+    persistFallbackStore();
+    return created;
+  }
   const [created] = await db.insert(dailyPrograms).values(program).returning();
   return created;
 }
 
 export async function updateDailyProgram(id: number, program: Partial<InsertDailyProgram>) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const existing = fallbackDailyPrograms.find((item) => item.id === id);
+    if (!existing) return undefined;
+    if (program.programDate !== undefined) existing.programDate = String(program.programDate);
+    if (program.operatorName !== undefined) existing.operatorName = String(program.operatorName);
+    existing.updatedAt = new Date();
+    persistFallbackStore();
+    return existing;
+  }
   const [updated] = await db.update(dailyPrograms).set({ ...program, updatedAt: new Date() }).where(eq(dailyPrograms.id, id)).returning();
   return updated;
 }
 
 export async function deleteDailyProgram(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    for (let index = fallbackDailyProgramLines.length - 1; index >= 0; index -= 1) {
+      if (fallbackDailyProgramLines[index].programId === id) fallbackDailyProgramLines.splice(index, 1);
+    }
+    const programIndex = fallbackDailyPrograms.findIndex((item) => item.id === id);
+    if (programIndex >= 0) fallbackDailyPrograms.splice(programIndex, 1);
+    persistFallbackStore();
+    return { success: true } as const;
+  }
   await db.delete(dailyProgramLines).where(eq(dailyProgramLines.programId, id));
   await db.delete(dailyPrograms).where(eq(dailyPrograms.id, id));
   return { success: true } as const;
@@ -360,23 +441,85 @@ export async function deleteDailyProgram(id: number) {
 
 export async function createDailyProgramLine(line: InsertDailyProgramLine) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const created: FallbackDailyProgramLine = {
+      id: nextFallbackDailyProgramLineId++,
+      programId: Number(line.programId),
+      sequence: Number(line.sequence ?? 1),
+      article: line.article ?? null,
+      version: line.version ?? null,
+      bagQuantity: line.bagQuantity ?? null,
+      bulkQuantity: line.bulkQuantity ?? null,
+      plannedStart: String(line.plannedStart),
+      plannedEnd: String(line.plannedEnd),
+      observation: line.observation ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackDailyProgramLines.push(created);
+    persistFallbackStore();
+    return created;
+  }
   const [created] = await db.insert(dailyProgramLines).values(line).returning();
   return created;
 }
 
 export async function updateDailyProgramLine(id: number, line: Partial<InsertDailyProgramLine>) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const existing = fallbackDailyProgramLines.find((item) => item.id === id);
+    if (!existing) return undefined;
+    if (line.sequence !== undefined) existing.sequence = Number(line.sequence);
+    if (line.article !== undefined) existing.article = line.article;
+    if (line.version !== undefined) existing.version = line.version;
+    if (line.bagQuantity !== undefined) existing.bagQuantity = line.bagQuantity;
+    if (line.bulkQuantity !== undefined) existing.bulkQuantity = line.bulkQuantity;
+    if (line.plannedStart !== undefined) existing.plannedStart = String(line.plannedStart);
+    if (line.plannedEnd !== undefined) existing.plannedEnd = String(line.plannedEnd);
+    if (line.observation !== undefined) existing.observation = line.observation;
+    existing.updatedAt = new Date();
+    persistFallbackStore();
+    return existing;
+  }
   const [updated] = await db.update(dailyProgramLines).set({ ...line, updatedAt: new Date() }).where(eq(dailyProgramLines.id, id)).returning();
   return updated;
 }
 
 export async function deleteDailyProgramLine(id: number) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const index = fallbackDailyProgramLines.findIndex((item) => item.id === id);
+    if (index >= 0) {
+      fallbackDailyProgramLines.splice(index, 1);
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
   await db.delete(dailyProgramLines).where(eq(dailyProgramLines.id, id));
   return { success: true } as const;
+}
+
+/**
+ * Import Excel du programme journalier : remplace intégralement l'en-tête et
+ * les lignes d'une journée par celles du classeur (même logique que
+ * replaceSiloMovements pour Silo PF), plutôt que de les fusionner — un
+ * ré-import du même fichier produit donc toujours le même résultat, sans
+ * lignes dupliquées.
+ */
+export async function importDailyProgramDay(day: { programDate: string; operatorName: string; lines: Omit<InsertDailyProgramLine, "programId">[] }) {
+  const existing = await getDailyProgramByDate(day.programDate);
+  const program = existing
+    ? await updateDailyProgram(existing.id, { operatorName: day.operatorName })
+    : await createDailyProgram({ programDate: day.programDate, operatorName: day.operatorName });
+  if (!program) throw new Error(`Impossible d’enregistrer le programme du ${day.programDate}.`);
+
+  if (existing) {
+    for (const line of existing.lines) await deleteDailyProgramLine(line.id);
+  }
+  for (const line of day.lines) {
+    await createDailyProgramLine({ ...line, programId: program.id });
+  }
+  return program;
 }
 
 export async function initializeProductionArticles() {

@@ -15,6 +15,7 @@ import {
   deleteProductionRecord,
   getDailyProgramByDate,
   getProductionSettings,
+  importDailyProgramDay,
   initializeProductionArticles,
   listActiveProductionArticles,
   listActiveProductionOperators,
@@ -27,6 +28,7 @@ import {
 } from "./db";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
 import { importProductionRows, parseImportedWorkbook } from "./excelImport";
+import { parseDailyProgramWorkbook } from "./dailyProgramExcel";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
 import { isVercelBlobConfigured, storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
 import {
@@ -44,8 +46,8 @@ import {
   updateSiloShipment,
 } from "./siloDb";
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
-import { computeLotLedger } from "./siloLots";
-import { computeArticleStock, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
+import { buildLotLedgerWorkbook, computeLotLedger } from "./siloLots";
+import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
 import { SHIPMENT_TYPES, SILOS } from "../shared/silo";
 
 export const recordInput = z.object({
@@ -85,6 +87,19 @@ export async function assertProductionActionAuthorized(password: string | undefi
   }
 }
 
+/** Bloque une expédition (création ou modification) qui dépasserait le stock réellement disponible dans le silo. */
+async function assertShipmentWithinStock(silo: string, article: string, quantity: number, excludeShipmentId?: number) {
+  const [{ allocations }, shipmentRows] = await Promise.all([loadSiloMovements(), listSiloShipments()]);
+  const shipments = shipmentRows.map((shipment) => ({ id: shipment.id, article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }));
+  const available = computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId);
+  if (quantity > available + 0.005) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `La quantité expédiée (${quantity.toFixed(2)} T) dépasse le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`,
+    });
+  }
+}
+
 const recordWithCommentInput = recordInput.safeExtend({
   comment: z.string().trim().max(1000, "Le commentaire ne peut pas dépasser 1 000 caractères.").optional(),
 });
@@ -107,6 +122,7 @@ const dailyProgramLineInput = z.object({
   observation: optionalProgramText(4000),
 });
 const SILO_IMPORT_PREFIX = "silo-import/";
+const PROGRAM_IMPORT_PREFIX = "program-import/";
 const siloInput = z.enum(SILOS);
 const optionalDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ").optional().or(z.literal("").transform(() => undefined));
 const siloArticleInput = z.string().trim().min(1, "Indiquez l’article.").max(64);
@@ -226,6 +242,45 @@ export const appRouter = router({
       await assertProductionActionAuthorized(input.actionPassword);
       return deleteDailyProgramLine(input.id);
     }),
+    /** Prépare le téléversement direct du classeur Programme de Production (hors corps de fonction). */
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const relKey = `${PROGRAM_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      if (isVercelBlobConfigured()) return { mode: "vercel-blob" as const, key: relKey };
+      const prepared = await storageCreatePresignedUpload(relKey);
+      return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
+    }),
+    /** Lit le classeur téléversé : chaque journée trouvée remplace intégralement le programme existant à cette date. */
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith(PROGRAM_IMPORT_PREFIX), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ProgramImport] Échec de la récupération du fichier téléversé (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Le fichier Excel téléversé est indisponible (${response.status}). Réessayez l’import.` });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });
+
+      const parsed = await parseDailyProgramWorkbook(buffer);
+      if (parsed.days.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune journée de programme n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
+      }
+
+      // Séquentiel, pas Promise.all : si une date apparaît deux fois dans le fichier, c'est la
+      // dernière occurrence rencontrée dans l'ordre du classeur qui doit l'emporter.
+      for (const day of parsed.days) {
+        await importDailyProgramDay({ programDate: day.programDate, operatorName: day.operatorName, lines: day.lines });
+      }
+
+      return {
+        days: parsed.days.length,
+        lines: parsed.days.reduce((sum, day) => sum + day.lines.length, 0),
+        rejected: parsed.errors.length,
+        rejectedLines: parsed.errors.slice(0, 8),
+      };
+    }),
   }),
   silo: router({
     /** État courant des silos : matrice, occupation et stock par article. */
@@ -268,11 +323,13 @@ export const appRouter = router({
     listShipments: publicProcedure.query(() => listSiloShipments()),
     createShipment: publicProcedure.input(siloShipmentInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
+      await assertShipmentWithinStock(input.silo, input.article, input.quantity);
       const { actionPassword, quantity, ...shipment } = input;
       return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
+      await assertShipmentWithinStock(input.silo, input.article, input.quantity, input.id);
       const { id, actionPassword, quantity, ...shipment } = input;
       return updateSiloShipment(id, { ...shipment, quantity: quantity.toFixed(2) });
     }),
@@ -347,6 +404,16 @@ export const appRouter = router({
     lotLedger: publicProcedure.query(async () => {
       const { allocations, shipments } = await loadLotMovements();
       return computeLotLedger(allocations, shipments);
+    }),
+    /** Export Excel de la traçabilité des lots (une ligne par lot). */
+    exportLotLedger: publicProcedure.query(async () => {
+      const { allocations, shipments } = await loadLotMovements();
+      const ledger = computeLotLedger(allocations, shipments);
+      const workbook = await buildLotLedgerWorkbook(ledger);
+      return {
+        fileName: `Tracabilite_Lots_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64"),
+      };
     }),
   }),
   production: router({

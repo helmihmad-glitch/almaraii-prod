@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarDays, Clock, Database, Menu, Pencil, Plus, Save, ShieldCheck, Trash2, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, CalendarDays, Clock, Database, Menu, Pencil, Plus, Save, ShieldCheck, Trash2, Upload, Users } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
@@ -19,6 +20,10 @@ export default function DailyProgramData() {
   const [actionPassword, setActionPassword] = useState("");
   const [lineDraft, setLineDraft] = useState<LineDraft>(emptyLine());
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
+  const [pendingImport, setPendingImport] = useState<File | null>(null);
+  const [importPassword, setImportPassword] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const programInput = useMemo(() => ({ programDate: selectedDate }), [selectedDate]);
   const programsQuery = trpc.dailyProgram.list.useQuery();
   const programQuery = trpc.dailyProgram.byDate.useQuery(programInput);
@@ -40,6 +45,48 @@ export default function DailyProgramData() {
   const createLine = trpc.dailyProgram.createLine.useMutation({ onSuccess: async () => { await refreshPrograms(); setLineDraft(emptyLine(String(lines.length + 2))); toast.success("Ligne de programme ajoutée"); }, onError: (error) => toast.error(error.message || "Impossible d’ajouter cette ligne.") });
   const updateLine = trpc.dailyProgram.updateLine.useMutation({ onSuccess: async () => { await refreshPrograms(); setEditingLineId(null); setLineDraft(emptyLine(String(lines.length + 1))); toast.success("Ligne de programme mise à jour"); }, onError: (error) => toast.error(error.message || "Impossible de modifier cette ligne.") });
   const deleteLine = trpc.dailyProgram.deleteLine.useMutation({ onSuccess: async () => { await refreshPrograms(); toast.success("Ligne de programme supprimée"); }, onError: (error) => toast.error(error.message || "Impossible de supprimer cette ligne.") });
+  const prepareImport = trpc.dailyProgram.prepareExcelUpload.useMutation();
+  const importFromStorage = trpc.dailyProgram.importExcelFromStorage.useMutation();
+
+  const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".xlsx")) { toast.error("Sélectionnez un classeur Excel au format .xlsx."); return; }
+    setPendingImport(file);
+  };
+
+  const submitImport = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!pendingImport) return;
+    if (!importPassword) { toast.error("Saisissez le mot de passe de gestion pour importer ce classeur."); return; }
+    setIsImporting(true);
+    try {
+      const prepared = await prepareImport.mutateAsync({ fileName: pendingImport.name, actionPassword: importPassword });
+      const contentType = pendingImport.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      if (prepared.mode === "vercel-blob") {
+        await uploadToVercelBlob(prepared.key, pendingImport, {
+          access: "private",
+          handleUploadUrl: "/api/blob-upload",
+          contentType,
+          clientPayload: JSON.stringify({ actionPassword: importPassword }),
+        });
+      } else {
+        const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingImport });
+        if (!upload.ok) throw new Error("Le téléversement du classeur a échoué. Vérifiez votre connexion puis réessayez.");
+      }
+      const result = await importFromStorage.mutateAsync({ storageKey: prepared.key, actionPassword: importPassword });
+      await refreshPrograms();
+      toast.success("Import du classeur terminé", { description: `${result.days} journée(s) et ${result.lines} ligne(s) de planning reprises depuis le fichier.` });
+      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s) ou à vérifier`, { description: result.rejectedLines.join(" ") });
+      setPendingImport(null);
+      setImportPassword("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’import du classeur a échoué.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   useEffect(() => {
     setSelectedOperatorIds(operators.filter((operator) => storedOperatorNames.some((name) => name.toLocaleLowerCase() === operator.name.toLocaleLowerCase())).map((operator) => operator.id));
@@ -78,7 +125,32 @@ export default function DailyProgramData() {
     <main className="daily-program-screen">
       <header className="daily-program-topbar"><button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button><Link href="/programme-journalier" className="daily-program-back"><ArrowLeft size={16} />Voir le programme</Link><div className="daily-program-brand"><div className="daily-program-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div></header>
       <section className="daily-program-page">
-        <div className="daily-program-hero daily-program-data-hero"><div><span className="daily-program-kicker"><Database size={14} />Administration</span><h1>Programme journalier <em>donnée</em></h1></div><label className="daily-program-date"><span>Date à gérer</span><div><CalendarDays size={16} /><input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Choisir la date à gérer" /></div></label></div>
+        <div className="daily-program-hero daily-program-data-hero">
+          <div><span className="daily-program-kicker"><Database size={14} />Administration</span><h1>Programme journalier <em>donnée</em></h1></div>
+          <div className="daily-program-sheet-actions">
+            <input ref={importInputRef} type="file" accept=".xlsx" onChange={handleImportFile} hidden />
+            <button type="button" className="daily-program-secondary" onClick={() => importInputRef.current?.click()}><Upload size={15} />Importer le classeur</button>
+            <label className="daily-program-date"><span>Date à gérer</span><div><CalendarDays size={16} /><input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} aria-label="Choisir la date à gérer" /></div></label>
+          </div>
+        </div>
+
+        {pendingImport && (
+          <div className="entry-overlay" role="dialog" aria-modal="true" aria-label="Confirmer l’import du classeur">
+            <form className="entry-modal" onSubmit={submitImport}>
+              <div className="entry-modal-head">
+                <div><span className="daily-program-sheet-label"><Upload size={14} style={{ marginRight: 6 }} />Confirmation d’import</span><h3>Importer {pendingImport.name}</h3><p>Chaque journée trouvée dans le classeur (« date : », « Pupitreur : » puis son tableau) <strong>remplace</strong> le programme déjà enregistré à cette date.</p></div>
+              </div>
+              <div className="entry-grid" style={{ gridTemplateColumns: "1fr" }}>
+                <label>Mot de passe de gestion<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" /></label>
+              </div>
+              <div className="entry-modal-actions">
+                <button type="button" className="daily-program-secondary" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={isImporting}>Annuler</button>
+                <button type="submit" className="daily-program-primary" disabled={isImporting}><Upload size={15} />{isImporting ? "Import en cours…" : "Confirmer l’import"}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
         <div className="daily-program-data-layout">
           <aside className="daily-program-list-card"><div className="daily-program-list-heading"><div><span>Programmes enregistrés</span><strong>{programsQuery.data?.length ?? 0}</strong></div><CalendarDays size={17} /></div>{programsQuery.isLoading ? <p>Chargement…</p> : programsQuery.data?.length ? <div className="daily-program-date-list">{programsQuery.data.map((item) => <button key={item.id} type="button" className={item.programDate === selectedDate ? "active" : ""} onClick={() => setSelectedDate(item.programDate)}><strong>{formatDate(item.programDate)}</strong><span>{item.operatorName}</span></button>)}</div> : <p>Aucun programme n’est encore enregistré.</p>}</aside>
           <div className="daily-program-management">

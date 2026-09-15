@@ -201,9 +201,13 @@ function loadFallbackStore() {
       records: [],
       settings: void 0,
       synchronizedFile: void 0,
+      dailyPrograms: [],
+      dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
-      nextRecordId: 1
+      nextRecordId: 1,
+      nextDailyProgramId: 1,
+      nextDailyProgramLineId: 1
     };
   }
   try {
@@ -215,9 +219,13 @@ function loadFallbackStore() {
       records: parsed.records ?? [],
       settings: parsed.settings,
       synchronizedFile: parsed.synchronizedFile,
+      dailyPrograms: parsed.dailyPrograms ?? [],
+      dailyProgramLines: parsed.dailyProgramLines ?? [],
       nextArticleId: parsed.nextArticleId ?? 1,
       nextOperatorId: parsed.nextOperatorId ?? 1,
-      nextRecordId: parsed.nextRecordId ?? 1
+      nextRecordId: parsed.nextRecordId ?? 1,
+      nextDailyProgramId: parsed.nextDailyProgramId ?? 1,
+      nextDailyProgramLineId: parsed.nextDailyProgramLineId ?? 1
     };
   } catch {
     return {
@@ -226,9 +234,13 @@ function loadFallbackStore() {
       records: [],
       settings: void 0,
       synchronizedFile: void 0,
+      dailyPrograms: [],
+      dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
-      nextRecordId: 1
+      nextRecordId: 1,
+      nextDailyProgramId: 1,
+      nextDailyProgramLineId: 1
     };
   }
 }
@@ -241,9 +253,13 @@ function persistFallbackStore() {
     records: fallbackRecords,
     settings: fallbackSettings,
     synchronizedFile: fallbackSynchronizedFile,
+    dailyPrograms: fallbackDailyPrograms,
+    dailyProgramLines: fallbackDailyProgramLines,
     nextArticleId: nextFallbackArticleId,
     nextOperatorId: nextFallbackOperatorId,
-    nextRecordId: nextFallbackRecordId
+    nextRecordId: nextFallbackRecordId,
+    nextDailyProgramId: nextFallbackDailyProgramId,
+    nextDailyProgramLineId: nextFallbackDailyProgramLineId
   }, null, 2);
   try {
     mkdirSync(directory, { recursive: true });
@@ -261,9 +277,13 @@ var fallbackOperators = persistedFallback.operators;
 var fallbackRecords = persistedFallback.records;
 var fallbackSettings = persistedFallback.settings;
 var fallbackSynchronizedFile = persistedFallback.synchronizedFile;
+var fallbackDailyPrograms = persistedFallback.dailyPrograms;
+var fallbackDailyProgramLines = persistedFallback.dailyProgramLines;
 var nextFallbackArticleId = persistedFallback.nextArticleId;
 var nextFallbackOperatorId = persistedFallback.nextOperatorId;
 var nextFallbackRecordId = persistedFallback.nextRecordId;
+var nextFallbackDailyProgramId = persistedFallback.nextDailyProgramId;
+var nextFallbackDailyProgramLineId = persistedFallback.nextDailyProgramLineId;
 function getDatabaseUrl() {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
 }
@@ -362,12 +382,17 @@ async function deleteProductionRecord(id) {
 }
 async function listDailyPrograms() {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) return [...fallbackDailyPrograms].sort((a, b) => b.programDate.localeCompare(a.programDate));
   return db.select().from(dailyPrograms).orderBy(desc(dailyPrograms.programDate));
 }
 async function getDailyProgramByDate(programDate) {
   const db = await getDb();
-  if (!db) return null;
+  if (!db) {
+    const program2 = fallbackDailyPrograms.find((item) => item.programDate === programDate);
+    if (!program2) return null;
+    const lines2 = fallbackDailyProgramLines.filter((line) => line.programId === program2.id).sort((a, b) => a.sequence - b.sequence || a.id - b.id);
+    return { ...program2, lines: lines2 };
+  }
   const programs = await db.select().from(dailyPrograms).where(eq(dailyPrograms.programDate, programDate)).limit(1);
   const program = programs[0];
   if (!program) return null;
@@ -376,40 +401,118 @@ async function getDailyProgramByDate(programDate) {
 }
 async function createDailyProgram(program) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const created2 = {
+      id: nextFallbackDailyProgramId++,
+      programDate: String(program.programDate),
+      operatorName: String(program.operatorName ?? ""),
+      createdAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date()
+    };
+    fallbackDailyPrograms.push(created2);
+    persistFallbackStore();
+    return created2;
+  }
   const [created] = await db.insert(dailyPrograms).values(program).returning();
   return created;
 }
 async function updateDailyProgram(id, program) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const existing = fallbackDailyPrograms.find((item) => item.id === id);
+    if (!existing) return void 0;
+    if (program.programDate !== void 0) existing.programDate = String(program.programDate);
+    if (program.operatorName !== void 0) existing.operatorName = String(program.operatorName);
+    existing.updatedAt = /* @__PURE__ */ new Date();
+    persistFallbackStore();
+    return existing;
+  }
   const [updated] = await db.update(dailyPrograms).set({ ...program, updatedAt: /* @__PURE__ */ new Date() }).where(eq(dailyPrograms.id, id)).returning();
   return updated;
 }
 async function deleteDailyProgram(id) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    for (let index2 = fallbackDailyProgramLines.length - 1; index2 >= 0; index2 -= 1) {
+      if (fallbackDailyProgramLines[index2].programId === id) fallbackDailyProgramLines.splice(index2, 1);
+    }
+    const programIndex = fallbackDailyPrograms.findIndex((item) => item.id === id);
+    if (programIndex >= 0) fallbackDailyPrograms.splice(programIndex, 1);
+    persistFallbackStore();
+    return { success: true };
+  }
   await db.delete(dailyProgramLines).where(eq(dailyProgramLines.programId, id));
   await db.delete(dailyPrograms).where(eq(dailyPrograms.id, id));
   return { success: true };
 }
 async function createDailyProgramLine(line) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const created2 = {
+      id: nextFallbackDailyProgramLineId++,
+      programId: Number(line.programId),
+      sequence: Number(line.sequence ?? 1),
+      article: line.article ?? null,
+      version: line.version ?? null,
+      bagQuantity: line.bagQuantity ?? null,
+      bulkQuantity: line.bulkQuantity ?? null,
+      plannedStart: String(line.plannedStart),
+      plannedEnd: String(line.plannedEnd),
+      observation: line.observation ?? null,
+      createdAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date()
+    };
+    fallbackDailyProgramLines.push(created2);
+    persistFallbackStore();
+    return created2;
+  }
   const [created] = await db.insert(dailyProgramLines).values(line).returning();
   return created;
 }
 async function updateDailyProgramLine(id, line) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const existing = fallbackDailyProgramLines.find((item) => item.id === id);
+    if (!existing) return void 0;
+    if (line.sequence !== void 0) existing.sequence = Number(line.sequence);
+    if (line.article !== void 0) existing.article = line.article;
+    if (line.version !== void 0) existing.version = line.version;
+    if (line.bagQuantity !== void 0) existing.bagQuantity = line.bagQuantity;
+    if (line.bulkQuantity !== void 0) existing.bulkQuantity = line.bulkQuantity;
+    if (line.plannedStart !== void 0) existing.plannedStart = String(line.plannedStart);
+    if (line.plannedEnd !== void 0) existing.plannedEnd = String(line.plannedEnd);
+    if (line.observation !== void 0) existing.observation = line.observation;
+    existing.updatedAt = /* @__PURE__ */ new Date();
+    persistFallbackStore();
+    return existing;
+  }
   const [updated] = await db.update(dailyProgramLines).set({ ...line, updatedAt: /* @__PURE__ */ new Date() }).where(eq(dailyProgramLines.id, id)).returning();
   return updated;
 }
 async function deleteDailyProgramLine(id) {
   const db = await getDb();
-  if (!db) throw new Error("Database unavailable");
+  if (!db) {
+    const index2 = fallbackDailyProgramLines.findIndex((item) => item.id === id);
+    if (index2 >= 0) {
+      fallbackDailyProgramLines.splice(index2, 1);
+      persistFallbackStore();
+    }
+    return { success: true };
+  }
   await db.delete(dailyProgramLines).where(eq(dailyProgramLines.id, id));
   return { success: true };
+}
+async function importDailyProgramDay(day) {
+  const existing = await getDailyProgramByDate(day.programDate);
+  const program = existing ? await updateDailyProgram(existing.id, { operatorName: day.operatorName }) : await createDailyProgram({ programDate: day.programDate, operatorName: day.operatorName });
+  if (!program) throw new Error(`Impossible d\u2019enregistrer le programme du ${day.programDate}.`);
+  if (existing) {
+    for (const line of existing.lines) await deleteDailyProgramLine(line.id);
+  }
+  for (const line of day.lines) {
+    await createDailyProgramLine({ ...line, programId: program.id });
+  }
+  return program;
 }
 async function initializeProductionArticles() {
   const db = await getDb();
@@ -3533,6 +3636,172 @@ async function importProductionRows(rows) {
   return { created, updated, skipped, total: rows.length };
 }
 
+// server/dailyProgramExcel.ts
+import ExcelJS3 from "exceljs";
+function normalizeHeader2(value) {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function readText(cell) {
+  if (!cell) return "";
+  const value = cell.value;
+  if (value === null || value === void 0) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value).trim();
+  if (value instanceof Date) return "";
+  if (typeof value === "object" && "richText" in value) {
+    return value.richText.map((part) => part.text).join("").trim();
+  }
+  try {
+    return String(cell.text ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+function readTime(cell) {
+  const value = cell?.value;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const hours = String(value.getUTCHours()).padStart(2, "0");
+    const minutes = String(value.getUTCMinutes()).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  }
+  if (typeof value === "number") {
+    const fraction = (value % 1 + 1) % 1;
+    const totalMinutes = Math.round(fraction * 24 * 60) % (24 * 60);
+    return `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
+  }
+  const match = readText(cell).match(/^(\d{1,2})[:h](\d{2})/i);
+  return match ? `${match[1].padStart(2, "0")}:${match[2]}` : void 0;
+}
+function findCellTextMatching(row, columnCount, pattern) {
+  for (let col = 1; col <= columnCount; col += 1) {
+    const text2 = readText(row.getCell(col));
+    if (pattern.test(text2)) return text2;
+  }
+  return void 0;
+}
+function isRowEmpty(row, columnCount) {
+  for (let col = 1; col <= columnCount; col += 1) {
+    if (readText(row.getCell(col))) return false;
+  }
+  return true;
+}
+var DATE_LABEL_RE = /date\s*:/i;
+var PUPITREUR_LABEL_RE = /pupitreur\s*:/i;
+var DATE_VALUE_RE = /(\d{1,2})\s*\/+\s*(\d{1,2})\s*\/\s*(\d{4})/;
+var SHIFT_RANGE_RE = /de\s*\d{1,2}[:h]\d{2}\s*[àa]\s*\d{1,2}[:h]\d{2}/gi;
+function parseProgramDate(text2) {
+  const match = text2.match(DATE_VALUE_RE);
+  if (!match) return void 0;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || day < 1 || day > 31 || month < 1 || month > 12) return void 0;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+function parseOperatorNames(text2) {
+  return text2.replace(PUPITREUR_LABEL_RE, "").replace(SHIFT_RANGE_RE, " ").split(/[&\n]/).map((part) => part.trim()).filter(Boolean);
+}
+var HEADER_ALIASES = {
+  sequence: ["N"],
+  article: ["ARTICLE"],
+  version: ["VERSION"],
+  bag: ["SAC"],
+  bulk: ["VRAC"],
+  start: ["HDEBUTPREVUE", "HDEBUT"],
+  end: ["HFINPREVUE", "HFIN"],
+  observation: ["OBSERVATION"]
+};
+function findHeaderColumns(row, columnCount) {
+  const found = {};
+  for (let col = 1; col <= columnCount; col += 1) {
+    const header = normalizeHeader2(readText(row.getCell(col)));
+    if (!header) continue;
+    for (const key of Object.keys(HEADER_ALIASES)) {
+      if (found[key] === void 0 && HEADER_ALIASES[key].includes(header)) found[key] = col;
+    }
+  }
+  if (found.bag === void 0 || found.bulk === void 0 || found.sequence === void 0 || found.start === void 0 || found.end === void 0) return void 0;
+  return found;
+}
+async function parseDailyProgramWorkbook(buffer) {
+  const workbook = new ExcelJS3.Workbook();
+  await workbook.xlsx.load(buffer);
+  const days = [];
+  const errors = [];
+  for (const worksheet of workbook.worksheets) {
+    const columnCount = Math.max(worksheet.columnCount, 9);
+    let current = null;
+    let columns;
+    let awaitingHeader = false;
+    const finalizeCurrent = () => {
+      if (!current) return;
+      if (!columns && current.lines.length === 0) {
+        errors.push(`Feuille "${worksheet.name}" : tableau introuvable pour le ${current.programDate} (colonnes Sac/Vrac non trouv\xE9es).`);
+      }
+      days.push({ programDate: current.programDate, operatorName: current.operatorNames.join(" \xB7 "), lines: current.lines });
+      current = null;
+      columns = void 0;
+      awaitingHeader = false;
+    };
+    for (let r = 1; r <= worksheet.rowCount; r += 1) {
+      const row = worksheet.getRow(r);
+      const dateCellText = findCellTextMatching(row, columnCount, DATE_LABEL_RE);
+      if (dateCellText) {
+        const programDate = parseProgramDate(dateCellText);
+        if (programDate) {
+          finalizeCurrent();
+          current = { programDate, operatorNames: [], lines: [] };
+          awaitingHeader = true;
+        }
+        continue;
+      }
+      if (!current) continue;
+      const pupitreurCellText = findCellTextMatching(row, columnCount, PUPITREUR_LABEL_RE);
+      if (pupitreurCellText) {
+        current.operatorNames = parseOperatorNames(pupitreurCellText);
+        continue;
+      }
+      if (awaitingHeader) {
+        const found = findHeaderColumns(row, columnCount);
+        if (found) {
+          columns = found;
+          awaitingHeader = false;
+        }
+        continue;
+      }
+      if (!columns) continue;
+      if (isRowEmpty(row, columnCount)) {
+        finalizeCurrent();
+        continue;
+      }
+      const sequence = Number(readText(row.getCell(columns.sequence)));
+      const plannedStart = readTime(row.getCell(columns.start));
+      const plannedEnd = readTime(row.getCell(columns.end));
+      if (!Number.isFinite(sequence) || !plannedStart || !plannedEnd) {
+        errors.push(`Feuille "${worksheet.name}", ligne ${r} : ligne de planning illisible (N\xB0, heure de d\xE9but ou de fin manquante), ignor\xE9e.`);
+        continue;
+      }
+      current.lines.push({
+        sequence,
+        article: readText(row.getCell(columns.article)) || null,
+        version: readText(row.getCell(columns.version)) || null,
+        bagQuantity: readText(row.getCell(columns.bag)) || null,
+        bulkQuantity: readText(row.getCell(columns.bulk)) || null,
+        plannedStart,
+        plannedEnd,
+        observation: readText(row.getCell(columns.observation)) || null
+      });
+    }
+    finalizeCurrent();
+  }
+  const occurrences = /* @__PURE__ */ new Map();
+  for (const day of days) occurrences.set(day.programDate, (occurrences.get(day.programDate) ?? 0) + 1);
+  Array.from(occurrences.entries()).forEach(([programDate, count]) => {
+    if (count > 1) errors.push(`Le ${programDate} appara\xEEt ${count} fois dans le classeur : seule la derni\xE8re occurrence sera conserv\xE9e.`);
+  });
+  return { days, errors };
+}
+
 // server/settingsSecurity.ts
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 function createActionPasswordDigest(password) {
@@ -3872,7 +4141,7 @@ async function listSiloMovementArticles() {
 }
 
 // server/siloExcel.ts
-import ExcelJS3 from "exceljs";
+import ExcelJS4 from "exceljs";
 
 // shared/silo.ts
 var SILOS = ["SPF1", "SPF2", "SPF3", "SPF4", "SPF5", "SPF6", "SPF7", "SPF8", "SPF9", "SPF10", "SPF11", "SPF12"];
@@ -3921,6 +4190,11 @@ function computeArticleStock(occupancy, articles) {
 function computeTotalStock(occupancy) {
   return roundQuantity(occupancy.reduce((total, row) => total + (row.quantity ?? 0), 0));
 }
+function computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId) {
+  const remainingShipments = excludeShipmentId === void 0 ? shipments : shipments.filter((shipment) => shipment.id !== excludeShipmentId);
+  const matrix = computeSiloMatrix(allocations, remainingShipments, [silo], [article]);
+  return matrix[silo]?.[article] ?? 0;
+}
 
 // server/siloExcel.ts
 var PRODUCTION_SHEET = "Production ";
@@ -3948,10 +4222,10 @@ function columnLetter(index2) {
   }
   return letter;
 }
-function normalizeHeader2(value) {
+function normalizeHeader3(value) {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
-function readText(cell) {
+function readText2(cell) {
   if (!cell) return "";
   try {
     return cell.text?.trim() ?? "";
@@ -3965,7 +4239,7 @@ function readNumber(cell) {
   const value = cell.value;
   if (typeof value === "number") return value;
   if (value && typeof value === "object" && "result" in value && typeof value.result === "number") return value.result;
-  const text2 = readText(cell).replace(/\s/g, "").replace(",", ".");
+  const text2 = readText2(cell).replace(/\s/g, "").replace(",", ".");
   if (!text2) return void 0;
   const parsed = Number(text2);
   return Number.isFinite(parsed) ? parsed : void 0;
@@ -3980,7 +4254,7 @@ function readDate(cell) {
     const date = new Date(Date.UTC(1899, 11, 30) + value * 864e5);
     if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
   }
-  const text2 = readText(cell);
+  const text2 = readText2(cell);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) return text2;
   const french = text2.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`;
@@ -3991,7 +4265,7 @@ function findHeaderRow2(worksheet, isMatch) {
     const row = worksheet.getRow(rowNumber);
     const columns = /* @__PURE__ */ new Map();
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      const header = normalizeHeader2(readText(cell));
+      const header = normalizeHeader3(readText2(cell));
       if (header && !columns.has(header)) columns.set(header, colNumber);
     });
     if (isMatch(columns)) return { rowNumber, columns };
@@ -4013,7 +4287,7 @@ var SILO_ALIASES = ["SILO"];
 var SHIPMENT_TYPE_ALIASES = ["EXPEDITION", "TYPE", "TYPEEXPEDITION"];
 var IGNORED_ROW_LABELS = ["ARTICLE", "TOTAL", "TOTAUX", "TOTALGENERAL"];
 async function parseSiloWorkbook(buffer) {
-  const workbook = new ExcelJS3.Workbook();
+  const workbook = new ExcelJS4.Workbook();
   await workbook.xlsx.load(buffer);
   const entries = [];
   const shipments = [];
@@ -4028,14 +4302,14 @@ async function parseSiloWorkbook(buffer) {
     const totalCol = findColumn(header.columns, QUANTITY_ALIASES);
     const siloColumns = [];
     SILOS.forEach((silo) => {
-      const column = header.columns.get(normalizeHeader2(silo));
+      const column = header.columns.get(normalizeHeader3(silo));
       if (column !== void 0) siloColumns.push({ silo, column });
     });
     let lastDate;
     for (let rowNumber = header.rowNumber + 1; rowNumber <= productionSheet.rowCount; rowNumber += 1) {
       const row = productionSheet.getRow(rowNumber);
-      const article = readText(row.getCell(articleCol));
-      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader2(article))) continue;
+      const article = readText2(row.getCell(articleCol));
+      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader3(article))) continue;
       const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
       if (rowDate) lastDate = rowDate;
       const allocations = [];
@@ -4047,7 +4321,7 @@ async function parseSiloWorkbook(buffer) {
       entries.push({
         entryDate: rowDate ?? lastDate,
         article,
-        lotNumber: lotCol ? readText(row.getCell(lotCol)) || void 0 : void 0,
+        lotNumber: lotCol ? readText2(row.getCell(lotCol)) || void 0 : void 0,
         totalQuantity: totalCol ? readNumber(row.getCell(totalCol)) : void 0,
         allocations
       });
@@ -4066,9 +4340,9 @@ async function parseSiloWorkbook(buffer) {
     let lastDate;
     for (let rowNumber = header.rowNumber + 1; rowNumber <= shipmentSheet.rowCount; rowNumber += 1) {
       const row = shipmentSheet.getRow(rowNumber);
-      const article = readText(row.getCell(articleCol));
-      const silo = readText(row.getCell(siloCol)).toUpperCase();
-      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader2(article))) continue;
+      const article = readText2(row.getCell(articleCol));
+      const silo = readText2(row.getCell(siloCol)).toUpperCase();
+      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader3(article))) continue;
       if (!silo && readNumber(row.getCell(quantityCol)) === void 0) continue;
       const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
       if (rowDate) lastDate = rowDate;
@@ -4081,12 +4355,12 @@ async function parseSiloWorkbook(buffer) {
         errors.push(`Feuille ${shipmentSheet.name}, ligne ${rowNumber} : silo \xAB ${silo || "vide"} \xBB inconnu.`);
         continue;
       }
-      const rawType = typeCol ? readText(row.getCell(typeCol)) : "";
-      const shipmentType = SHIPMENT_TYPES.find((type) => normalizeHeader2(type) === normalizeHeader2(rawType)) ?? SHIPMENT_TYPES[0];
+      const rawType = typeCol ? readText2(row.getCell(typeCol)) : "";
+      const shipmentType = SHIPMENT_TYPES.find((type) => normalizeHeader3(type) === normalizeHeader3(rawType)) ?? SHIPMENT_TYPES[0];
       shipments.push({
         shipmentDate: rowDate ?? lastDate,
         article,
-        lotNumber: lotCol ? readText(row.getCell(lotCol)) || void 0 : void 0,
+        lotNumber: lotCol ? readText2(row.getCell(lotCol)) || void 0 : void 0,
         quantity,
         silo,
         shipmentType
@@ -4119,7 +4393,7 @@ function writeTitle(worksheet, rowNumber, firstCol, lastCol, title) {
   row.height = 26;
 }
 async function buildSiloWorkbook(entries, shipments, articles) {
-  const workbook = new ExcelJS3.Workbook();
+  const workbook = new ExcelJS4.Workbook();
   workbook.creator = "Almara\xEFi Production Pulse";
   workbook.created = /* @__PURE__ */ new Date();
   workbook.modified = /* @__PURE__ */ new Date();
@@ -4277,6 +4551,7 @@ async function buildSiloWorkbook(entries, shipments, articles) {
 }
 
 // server/siloLots.ts
+import ExcelJS5 from "exceljs";
 var UNDATED_SORT_KEY = "9999-99-99";
 function roundTons(value) {
   return Math.round(value * 1e6) / 1e6;
@@ -4373,6 +4648,147 @@ function computeLotLedger(allocations, shipments) {
   }
   return { lots, unattributed };
 }
+var LEDGER_SHEET_NAME = "Tra\xE7abilit\xE9 des lots";
+var LEDGER_FIRST_COL = 2;
+var LEDGER_LAST_COL = LEDGER_FIRST_COL + 5;
+var LEDGER_TITLE_ROW = 2;
+var LEDGER_SUMMARY_ROW = 3;
+var LEDGER_HEADER_ROW = 5;
+var LEDGER_FIRST_DATA_ROW = 6;
+var LEDGER_COLUMN_WIDTH = 25;
+var LEDGER_ROW_HEIGHT = 30;
+var ACTIVE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F2E4" } };
+var ZEBRA_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7FBF4" } };
+var GRID_BORDER_SIDE = { style: "thin", color: { argb: "FFC4CEC0" } };
+var GRID_BORDER = { top: GRID_BORDER_SIDE, left: GRID_BORDER_SIDE, bottom: GRID_BORDER_SIDE, right: GRID_BORDER_SIDE };
+var LEDGER_DATE_FORMATTER = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+var formatLedgerDate = (value) => value ? LEDGER_DATE_FORMATTER.format(/* @__PURE__ */ new Date(`${value}T00:00:00`)) : "\u2014";
+async function buildLotLedgerWorkbook(ledger) {
+  const workbook = new ExcelJS5.Workbook();
+  workbook.creator = "Almara\xEFi Production Pulse";
+  workbook.created = /* @__PURE__ */ new Date();
+  workbook.modified = /* @__PURE__ */ new Date();
+  const activeLots = ledger.lots.filter((lot) => lot.status === "active");
+  const groups = SILOS.map((silo) => ({
+    silo,
+    lots: activeLots.filter((lot) => lot.silo === silo).sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || a.entryId - b.entryId)
+  }));
+  const totalRemaining = activeLots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+  const worksheet = workbook.addWorksheet(LEDGER_SHEET_NAME, { views: [{ state: "frozen", ySplit: LEDGER_HEADER_ROW }] });
+  writeTitle(worksheet, LEDGER_TITLE_ROW, LEDGER_FIRST_COL, LEDGER_LAST_COL, "\u{1F33E}  TRA\xC7ABILIT\xC9 DES LOTS \u2014 Almara\xEFi Production");
+  const summaryRow = worksheet.getRow(LEDGER_SUMMARY_ROW);
+  const summaryCell = summaryRow.getCell(LEDGER_FIRST_COL);
+  summaryCell.value = `Export\xE9 le ${LEDGER_DATE_FORMATTER.format(/* @__PURE__ */ new Date())}`;
+  worksheet.mergeCells(LEDGER_SUMMARY_ROW, LEDGER_FIRST_COL, LEDGER_SUMMARY_ROW, LEDGER_LAST_COL);
+  summaryCell.font = { italic: true, color: { argb: "FF356A40" } };
+  summaryCell.alignment = { vertical: "middle", horizontal: "center" };
+  summaryCell.fill = ACTIVE_FILL;
+  summaryRow.height = 20;
+  const headerRow = worksheet.getRow(LEDGER_HEADER_ROW);
+  ["Silo", "Article", "Date d\u2019entr\xE9e", "N\xB0 Lot", "Quantit\xE9 par lot (T)", "Quantit\xE9 silo (T)"].forEach((label, index2) => {
+    const cell = headerRow.getCell(LEDGER_FIRST_COL + index2);
+    cell.value = label;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = TITLE_FILL;
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = GRID_BORDER;
+  });
+  headerRow.height = LEDGER_ROW_HEIGHT;
+  for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) worksheet.getColumn(col).width = LEDGER_COLUMN_WIDTH;
+  const ARTICLE_COL = LEDGER_FIRST_COL + 1;
+  let currentRow = LEDGER_FIRST_DATA_ROW;
+  groups.forEach((group, groupIndex) => {
+    const startRow = currentRow;
+    const shouldStripe = groupIndex % 2 === 1;
+    if (group.lots.length === 0) {
+      const row = worksheet.getRow(currentRow);
+      const articleCell = row.getCell(ARTICLE_COL);
+      articleCell.value = "Vide";
+      articleCell.font = { italic: true, color: { argb: "FF86917F" } };
+      articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) articleCell.fill = ZEBRA_FILL;
+      row.getCell(LEDGER_FIRST_COL + 2).value = "\u2014";
+      row.getCell(LEDGER_FIRST_COL + 3).value = "\u2014";
+      row.getCell(LEDGER_FIRST_COL + 4).value = "\u2014";
+      const emptyTotalCell = row.getCell(LEDGER_FIRST_COL + 5);
+      emptyTotalCell.value = "\u2014";
+      emptyTotalCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) emptyTotalCell.fill = ZEBRA_FILL;
+      currentRow += 1;
+    } else {
+      group.lots.forEach((lot) => {
+        const row = worksheet.getRow(currentRow);
+        row.getCell(LEDGER_FIRST_COL + 2).value = formatLedgerDate(lot.entryDate);
+        row.getCell(LEDGER_FIRST_COL + 3).value = lot.lotNumber || "\u2014";
+        row.getCell(LEDGER_FIRST_COL + 4).value = lot.remainingQuantity;
+        row.getCell(LEDGER_FIRST_COL + 4).numFmt = '0.00" T"';
+        currentRow += 1;
+      });
+    }
+    const endRow = currentRow - 1;
+    for (let r = startRow; r <= endRow; r += 1) {
+      const row = worksheet.getRow(r);
+      row.height = LEDGER_ROW_HEIGHT;
+      for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) row.getCell(col).border = GRID_BORDER;
+      if (shouldStripe) {
+        for (let col = LEDGER_FIRST_COL + 2; col < LEDGER_LAST_COL; col += 1) row.getCell(col).fill = ZEBRA_FILL;
+      }
+    }
+    if (endRow > startRow) worksheet.mergeCells(startRow, LEDGER_FIRST_COL, endRow, LEDGER_FIRST_COL);
+    const siloCell = worksheet.getCell(startRow, LEDGER_FIRST_COL);
+    siloCell.value = group.silo;
+    siloCell.font = { bold: true };
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (shouldStripe) siloCell.fill = ZEBRA_FILL;
+    let runStart = startRow;
+    group.lots.forEach((lot, lotIndex) => {
+      const isLastOfGroup = lotIndex === group.lots.length - 1;
+      const sharesNextArticle = !isLastOfGroup && group.lots[lotIndex + 1].article === lot.article;
+      if (sharesNextArticle) return;
+      const runEnd = startRow + lotIndex;
+      if (runEnd > runStart) worksheet.mergeCells(runStart, ARTICLE_COL, runEnd, ARTICLE_COL);
+      const articleCell = worksheet.getCell(runStart, ARTICLE_COL);
+      articleCell.value = lot.article;
+      articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) articleCell.fill = ZEBRA_FILL;
+      runStart = runEnd + 1;
+    });
+    if (group.lots.length > 0) {
+      const siloRemaining = group.lots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+      if (endRow > startRow) worksheet.mergeCells(startRow, LEDGER_FIRST_COL + 5, endRow, LEDGER_FIRST_COL + 5);
+      const siloTotalCell = worksheet.getCell(startRow, LEDGER_FIRST_COL + 5);
+      siloTotalCell.value = siloRemaining;
+      siloTotalCell.numFmt = '0.00" T"';
+      siloTotalCell.font = { bold: true };
+      siloTotalCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (shouldStripe) siloTotalCell.fill = ZEBRA_FILL;
+    }
+  });
+  if (currentRow > LEDGER_FIRST_DATA_ROW) {
+    worksheet.autoFilter = {
+      from: { row: LEDGER_HEADER_ROW, column: LEDGER_FIRST_COL },
+      to: { row: currentRow - 1, column: LEDGER_LAST_COL }
+    };
+  }
+  const totalRowNumber = currentRow;
+  const totalRow = worksheet.getRow(totalRowNumber);
+  totalRow.getCell(LEDGER_FIRST_COL).value = "Total";
+  totalRow.getCell(LEDGER_FIRST_COL).font = { bold: true };
+  worksheet.mergeCells(totalRowNumber, LEDGER_FIRST_COL, totalRowNumber, LEDGER_FIRST_COL + 3);
+  const totalCell = totalRow.getCell(LEDGER_FIRST_COL + 5);
+  if (totalRowNumber > LEDGER_FIRST_DATA_ROW) {
+    const remainingColLetter = columnLetter(LEDGER_FIRST_COL + 5);
+    const formula = `SUM(${remainingColLetter}${LEDGER_FIRST_DATA_ROW}:${remainingColLetter}${totalRowNumber - 1})`;
+    totalCell.value = { formula, result: totalRemaining };
+  } else {
+    totalCell.value = 0;
+  }
+  totalCell.numFmt = '0.00" T"';
+  totalCell.font = { bold: true };
+  totalRow.height = LEDGER_ROW_HEIGHT;
+  for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) totalRow.getCell(col).border = GRID_BORDER;
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
 
 // server/routers.ts
 var recordInput = z2.object({
@@ -4407,6 +4823,17 @@ async function assertProductionActionAuthorized(password) {
     throw new TRPCError2({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou g\xE9rer les param\xE8tres." });
   }
 }
+async function assertShipmentWithinStock(silo, article, quantity, excludeShipmentId) {
+  const [{ allocations }, shipmentRows] = await Promise.all([loadSiloMovements(), listSiloShipments()]);
+  const shipments = shipmentRows.map((shipment) => ({ id: shipment.id, article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }));
+  const available = computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId);
+  if (quantity > available + 5e-3) {
+    throw new TRPCError2({
+      code: "BAD_REQUEST",
+      message: `La quantit\xE9 exp\xE9di\xE9e (${quantity.toFixed(2)} T) d\xE9passe le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`
+    });
+  }
+}
 var recordWithCommentInput = recordInput.safeExtend({
   comment: z2.string().trim().max(1e3, "Le commentaire ne peut pas d\xE9passer 1 000 caract\xE8res.").optional()
 });
@@ -4428,6 +4855,7 @@ var dailyProgramLineInput = z2.object({
   observation: optionalProgramText(4e3)
 });
 var SILO_IMPORT_PREFIX = "silo-import/";
+var PROGRAM_IMPORT_PREFIX = "program-import/";
 var siloInput = z2.enum(SILOS);
 var optionalDateInput = z2.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit \xEAtre au format AAAA-MM-JJ").optional().or(z2.literal("").transform(() => void 0));
 var siloArticleInput = z2.string().trim().min(1, "Indiquez l\u2019article.").max(64);
@@ -4539,6 +4967,40 @@ var appRouter = router({
     deleteLine: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
       return deleteDailyProgramLine(input.id);
+    }),
+    /** Prépare le téléversement direct du classeur Programme de Production (hors corps de fonction). */
+    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const relKey = `${PROGRAM_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      if (isVercelBlobConfigured()) return { mode: "vercel-blob", key: relKey };
+      const prepared = await storageCreatePresignedUpload(relKey);
+      return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
+    }),
+    /** Lit le classeur téléversé : chaque journée trouvée remplace intégralement le programme existant à cette date. */
+    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(PROGRAM_IMPORT_PREFIX), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
+      await assertProductionActionAuthorized(input.actionPassword);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ProgramImport] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
+      const parsed = await parseDailyProgramWorkbook(buffer);
+      if (parsed.days.length === 0) {
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucune journ\xE9e de programme n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
+      }
+      for (const day of parsed.days) {
+        await importDailyProgramDay({ programDate: day.programDate, operatorName: day.operatorName, lines: day.lines });
+      }
+      return {
+        days: parsed.days.length,
+        lines: parsed.days.reduce((sum, day) => sum + day.lines.length, 0),
+        rejected: parsed.errors.length,
+        rejectedLines: parsed.errors.slice(0, 8)
+      };
     })
   }),
   silo: router({
@@ -4580,11 +5042,13 @@ var appRouter = router({
     listShipments: publicProcedure.query(() => listSiloShipments()),
     createShipment: publicProcedure.input(siloShipmentInput.safeExtend({ actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
+      await assertShipmentWithinStock(input.silo, input.article, input.quantity);
       const { actionPassword, quantity, ...shipment } = input;
       return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
       await assertProductionActionAuthorized(input.actionPassword);
+      await assertShipmentWithinStock(input.silo, input.article, input.quantity, input.id);
       const { id, actionPassword, quantity, ...shipment } = input;
       return updateSiloShipment(id, { ...shipment, quantity: quantity.toFixed(2) });
     }),
@@ -4656,6 +5120,16 @@ var appRouter = router({
     lotLedger: publicProcedure.query(async () => {
       const { allocations, shipments } = await loadLotMovements();
       return computeLotLedger(allocations, shipments);
+    }),
+    /** Export Excel de la traçabilité des lots (une ligne par lot). */
+    exportLotLedger: publicProcedure.query(async () => {
+      const { allocations, shipments } = await loadLotMovements();
+      const ledger = computeLotLedger(allocations, shipments);
+      const workbook = await buildLotLedgerWorkbook(ledger);
+      return {
+        fileName: `Tracabilite_Lots_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64")
+      };
     })
   }),
   production: router({

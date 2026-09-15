@@ -31,7 +31,7 @@ const PRODUCTION_SILO_FIRST_COL = 7;
 const STATE_SILO_COL = 3;
 const STATE_ARTICLE_FIRST_COL = 4;
 
-function columnLetter(index: number) {
+export function columnLetter(index: number) {
   let letter = "";
   let current = index;
   while (current > 0) {
@@ -241,10 +241,10 @@ export async function parseSiloWorkbook(buffer: Buffer): Promise<ParsedSiloWorkb
 type ExportEntry = { entryDate: string | null; article: string; lotNumber: string | null; totalQuantity: string | null; allocations: { silo: string; quantity: string }[] };
 type ExportShipment = { shipmentDate: string | null; article: string; lotNumber: string | null; quantity: string; silo: string; shipmentType: string };
 
-const TITLE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF132B35" } };
-const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4826" } };
+export const TITLE_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF132B35" } };
+export const HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4826" } };
 
-function styleHeaderRow(row: ExcelJS.Row, firstCol: number, lastCol: number) {
+export function styleHeaderRow(row: ExcelJS.Row, firstCol: number, lastCol: number) {
   for (let col = firstCol; col <= lastCol; col += 1) {
     const cell = row.getCell(col);
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -254,7 +254,7 @@ function styleHeaderRow(row: ExcelJS.Row, firstCol: number, lastCol: number) {
   row.height = 24;
 }
 
-function writeTitle(worksheet: ExcelJS.Worksheet, rowNumber: number, firstCol: number, lastCol: number, title: string) {
+export function writeTitle(worksheet: ExcelJS.Worksheet, rowNumber: number, firstCol: number, lastCol: number, title: string) {
   const row = worksheet.getRow(rowNumber);
   row.getCell(firstCol).value = title;
   worksheet.mergeCells(rowNumber, firstCol, rowNumber, lastCol);
