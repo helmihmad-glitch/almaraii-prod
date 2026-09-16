@@ -5,6 +5,7 @@ import { EXCEL_IMPORT_MAX_BYTES } from "../routers";
 import { isAdminRequest } from "./adminSession";
 
 const EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const PDF_MIME = "application/pdf";
 
 /**
  * Route serveur requise par `uploadPresigned()` de `@vercel/blob/client`
@@ -36,7 +37,7 @@ export function registerBlobUploadRoute(app: Express) {
           const token = await issueSignedToken({
             pathname,
             operations: ["put"],
-            allowedContentTypes: [EXCEL_MIME],
+            allowedContentTypes: [EXCEL_MIME, PDF_MIME],
             maximumSizeInBytes: EXCEL_IMPORT_MAX_BYTES,
             validUntil: Date.now() + 5 * 60 * 1000,
           });

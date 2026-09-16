@@ -50,6 +50,7 @@ import {
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
 import { buildLotLedgerWorkbook, computeLotLedger } from "./siloLots";
 import { buildFilteredRegistryWorkbook, type FilteredRegistryRow } from "./registryExcel";
+import { extractExpeditionPdfText, importExpeditionShipments, parseExpeditionPdfText } from "./expeditionPdfImport";
 import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
 import { SHIPMENT_TYPES, SILOS } from "../shared/silo";
 
@@ -127,6 +128,8 @@ const dailyProgramLineInput = z.object({
 });
 const SILO_IMPORT_PREFIX = "silo-import/";
 const PROGRAM_IMPORT_PREFIX = "program-import/";
+const EXPEDITION_PDF_IMPORT_PREFIX = "expedition-pdf-import/";
+const importPdfFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.pdf$/i.test(fileName), "Importez un fichier PDF au format .pdf.");
 const siloInput = z.enum(SILOS);
 const optionalDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ").optional().or(z.literal("").transform(() => undefined));
 const siloArticleInput = z.string().trim().min(1, "Indiquez l’article.").max(64);
@@ -417,6 +420,42 @@ export const appRouter = router({
         })),
       );
 
+      return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+    }),
+    /** Prépare le téléversement direct d'un rapport PDF « Traçabilité Expédition » (hors corps de fonction). */
+    preparePdfUpload: publicProcedure.input(z.object({ fileName: importPdfFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const relKey = `${EXPEDITION_PDF_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      if (isVercelBlobConfigured()) return { mode: "vercel-blob" as const, key: relKey };
+      const prepared = await storageCreatePresignedUpload(relKey);
+      return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
+    }),
+    /**
+     * Lit un rapport PDF « Traçabilité Expédition » (système de pesée externe) :
+     * chaque expédition qu'il contient (date, article, quantité, silo) est
+     * ajoutée en type Vrac, avec un numéro de lot recalculé depuis le grand
+     * livre FIFO de l'application plutôt que repris du PDF — voir
+     * expeditionPdfImport.ts.
+     */
+    importExpeditionPdf: publicProcedure.input(z.object({ storageKey: z.string().startsWith(EXPEDITION_PDF_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ExpeditionPdfImport] Échec de la récupération du fichier téléversé (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Le fichier PDF téléversé est indisponible (${response.status}). Réessayez l’import.` });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier PDF dépasse la limite de 5,7 Mo." });
+
+      const text = await extractExpeditionPdfText(buffer);
+      const parsed = parseExpeditionPdfText(text);
+      if (parsed.shipments.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune expédition n’a été trouvée dans le PDF. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
+      }
+
+      const result = await importExpeditionShipments(parsed.shipments);
       return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
     }),
     /** Reconstruit le classeur Silo_PF complet, formules comprises. */

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Database, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
+import { ArrowLeft, Database, FileText, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
@@ -33,6 +33,9 @@ export default function SiloExpedition() {
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const [pendingPdfImport, setPendingPdfImport] = useState<File | null>(null);
+  const [isImportingPdf, setIsImportingPdf] = useState(false);
+  const pdfImportInputRef = useRef<HTMLInputElement>(null);
 
   const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
@@ -109,6 +112,8 @@ export default function SiloExpedition() {
   const deleteShipment = trpc.silo.deleteShipment.useMutation({ onSuccess: async () => { await refresh(); toast.success("Expédition supprimée"); }, onError: onError("Impossible de supprimer cette expédition.") });
   const prepareImport = trpc.silo.prepareExcelUpload.useMutation();
   const importFromStorage = trpc.silo.importExcelFromStorage.useMutation();
+  const preparePdfImport = trpc.silo.preparePdfUpload.useMutation();
+  const importPdfFromStorage = trpc.silo.importExpeditionPdf.useMutation();
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -144,6 +149,44 @@ export default function SiloExpedition() {
       toast.error(error instanceof Error ? error.message : "L’import du classeur a échoué.");
     } finally {
       setIsImporting(false);
+    }
+  };
+
+  const handleImportPdfFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) { toast.error("Sélectionnez un rapport au format .pdf."); return; }
+    setPendingPdfImport(file);
+  };
+
+  const submitPdfImport = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!pendingPdfImport) return;
+    setIsImportingPdf(true);
+    try {
+      const prepared = await preparePdfImport.mutateAsync({ fileName: pendingPdfImport.name });
+      const contentType = pendingPdfImport.type || "application/pdf";
+      if (prepared.mode === "vercel-blob") {
+        await uploadToVercelBlob(prepared.key, pendingPdfImport, {
+          access: "private",
+          handleUploadUrl: "/api/blob-upload",
+          contentType,
+        });
+      } else {
+        const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingPdfImport });
+        if (!upload.ok) throw new Error("Le téléversement du rapport a échoué. Vérifiez votre connexion puis réessayez.");
+      }
+      const result = await importPdfFromStorage.mutateAsync({ storageKey: prepared.key });
+      await refresh();
+      toast.success("Import du rapport PDF terminé", { description: `${result.imported} expédition(s) Vrac ajoutée(s).` });
+      if (result.warnings.length) toast.warning(`${result.warnings.length} lot(s) non trouvé(s)`, { description: result.warnings.join(" ") });
+      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") });
+      setPendingPdfImport(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’import du rapport PDF a échoué.");
+    } finally {
+      setIsImportingPdf(false);
     }
   };
 
@@ -208,6 +251,8 @@ export default function SiloExpedition() {
             <div className="silo-file-actions">
               <input ref={importInputRef} type="file" accept=".xlsx" onChange={handleImportFile} hidden />
               <button type="button" className="silo-secondary" onClick={() => importInputRef.current?.click()}><Upload size={15} />Importer le classeur</button>
+              <input ref={pdfImportInputRef} type="file" accept=".pdf" onChange={handleImportPdfFile} hidden />
+              <button type="button" className="silo-secondary" onClick={() => pdfImportInputRef.current?.click()}><FileText size={15} />Importer un rapport PDF</button>
             </div>
           </div>
         </div>
@@ -221,6 +266,20 @@ export default function SiloExpedition() {
               <div className="silo-form-actions">
                 <button type="button" className="silo-secondary" onClick={() => setPendingImport(null)} disabled={isImporting}>Annuler</button>
                 <button type="submit" className="silo-primary" disabled={isImporting}><Upload size={15} />{isImporting ? "Import en cours…" : "Confirmer l’import"}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {pendingPdfImport && (
+          <div className="silo-import-overlay" role="dialog" aria-modal="true" aria-label="Confirmer l’import du rapport PDF">
+            <form className="silo-import-dialog" onSubmit={submitPdfImport}>
+              <span className="silo-section-label"><FileText size={14} />Confirmation d’import</span>
+              <h2>Importer {pendingPdfImport.name}</h2>
+              <p>Chaque expédition du rapport (date, article, quantité, silo) est <strong>ajoutée</strong> en type Vrac aux expéditions déjà enregistrées, avec un numéro de lot recalculé automatiquement (FIFO) plutôt que repris du PDF.</p>
+              <div className="silo-form-actions">
+                <button type="button" className="silo-secondary" onClick={() => setPendingPdfImport(null)} disabled={isImportingPdf}>Annuler</button>
+                <button type="submit" className="silo-primary" disabled={isImportingPdf}><FileText size={15} />{isImportingPdf ? "Import en cours…" : "Confirmer l’import"}</button>
               </div>
             </form>
           </div>

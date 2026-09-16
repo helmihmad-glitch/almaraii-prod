@@ -4984,6 +4984,106 @@ async function buildFilteredRegistryWorkbook(rows, filters) {
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
+// server/expeditionPdfImport.ts
+import { PDFParse } from "pdf-parse";
+async function extractExpeditionPdfText(buffer) {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    return result.text;
+  } finally {
+    await parser.destroy();
+  }
+}
+var REFERENCE_PATTERN = /\bCOV-[A-Z0-9]+\b/g;
+var DATE_BC_PATTERN = /Date\s*BC\s*:\s*(\d{2})\/(\d{2})\/(\d{4})/i;
+var HEADER_PATTERN = /Code\s+D[ée]signation\s+Qt[ée]\s*th[ée]o\s+Qt[ée]\s*r[ée]elle\s+[ÉE]cart\s+Lots\s+Silo\s*source/i;
+var DATA_LINE_PATTERN = /([A-Z]{2,8}\d{1,4})\s+(.+?)\s+([\d.,]+)\s*Kg\s+([\d.,]+)\s*Kg\s+[+-]\s*[\d.,]+\s*Kg/i;
+var SILO_PATTERN = /\bSPF\d{1,2}\b/;
+function roundTons2(value) {
+  return Math.round(value * 100) / 100;
+}
+function normalizeArticle(designation) {
+  return designation.replace(/vrac/gi, "").replace(/\s+/g, "").trim();
+}
+function parseAmount(text2) {
+  return Number(text2.replace(/\s/g, "").replace(",", "."));
+}
+function parseExpeditionPdfText(text2) {
+  const shipments = [];
+  const errors = [];
+  const matches = Array.from(text2.matchAll(REFERENCE_PATTERN));
+  if (matches.length === 0) {
+    errors.push("Aucune exp\xE9dition (r\xE9f\xE9rence \xAB COV-... \xBB) trouv\xE9e dans le PDF.");
+    return { shipments, errors };
+  }
+  matches.forEach((match, index2) => {
+    const reference = match[0];
+    const start = match.index ?? 0;
+    const end = index2 + 1 < matches.length ? matches[index2 + 1].index ?? text2.length : text2.length;
+    const block = text2.slice(start, end).replace(/\s+/g, " ").trim();
+    const dateMatch = block.match(DATE_BC_PATTERN);
+    if (!dateMatch) {
+      errors.push(`${reference} : date BC introuvable, ligne ignor\xE9e.`);
+      return;
+    }
+    const shipmentDate = `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`;
+    const headerMatch = block.match(HEADER_PATTERN);
+    const searchArea = headerMatch ? block.slice((headerMatch.index ?? 0) + headerMatch[0].length) : block;
+    const dataMatch = searchArea.match(DATA_LINE_PATTERN);
+    if (!dataMatch) {
+      errors.push(`${reference} : ligne d\u2019article introuvable ou illisible, ligne ignor\xE9e.`);
+      return;
+    }
+    const article = normalizeArticle(dataMatch[2]);
+    if (!article) {
+      errors.push(`${reference} : d\xE9signation d\u2019article vide apr\xE8s normalisation, ligne ignor\xE9e.`);
+      return;
+    }
+    const quantityKg = parseAmount(dataMatch[4]);
+    if (!Number.isFinite(quantityKg) || quantityKg <= 0) {
+      errors.push(`${reference} : quantit\xE9 r\xE9elle illisible, ligne ignor\xE9e.`);
+      return;
+    }
+    const tail = searchArea.slice((dataMatch.index ?? 0) + dataMatch[0].length);
+    const siloMatch = tail.match(SILO_PATTERN) ?? block.match(SILO_PATTERN);
+    if (!siloMatch) {
+      errors.push(`${reference} : silo source introuvable, ligne ignor\xE9e.`);
+      return;
+    }
+    shipments.push({ reference, shipmentDate, article, quantity: roundTons2(quantityKg / 1e3), silo: siloMatch[0] });
+  });
+  return { shipments, errors };
+}
+async function resolveFifoLot(article, silo, date) {
+  const { allocations, shipments } = await loadLotMovements();
+  const ledger = computeLotLedger(
+    allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
+    shipments.filter((shipment) => !shipment.shipmentDate || shipment.shipmentDate <= date)
+  );
+  const candidates = ledger.lots.filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active").sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? ""));
+  return candidates[0]?.lotNumber ?? null;
+}
+async function importExpeditionShipments(shipments) {
+  const warnings = [];
+  const ordered = [...shipments].sort((a, b) => a.shipmentDate.localeCompare(b.shipmentDate));
+  for (const shipment of ordered) {
+    const lotNumber = await resolveFifoLot(shipment.article, shipment.silo, shipment.shipmentDate);
+    if (!lotNumber) {
+      warnings.push(`${shipment.reference} : aucun lot actif pour ${shipment.article} dans ${shipment.silo} au ${shipment.shipmentDate} \u2014 exp\xE9dition import\xE9e sans num\xE9ro de lot.`);
+    }
+    await createSiloShipment({
+      shipmentDate: shipment.shipmentDate,
+      article: shipment.article,
+      lotNumber,
+      quantity: shipment.quantity.toFixed(2),
+      silo: shipment.silo,
+      shipmentType: "Vrac"
+    });
+  }
+  return { imported: ordered.length, warnings };
+}
+
 // server/routers.ts
 var recordInput = z2.object({
   productionDate: z2.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit \xEAtre au format AAAA-MM-JJ"),
@@ -5045,6 +5145,8 @@ var dailyProgramLineInput = z2.object({
 });
 var SILO_IMPORT_PREFIX = "silo-import/";
 var PROGRAM_IMPORT_PREFIX = "program-import/";
+var EXPEDITION_PDF_IMPORT_PREFIX = "expedition-pdf-import/";
+var importPdfFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) => /\.pdf$/i.test(fileName), "Importez un fichier PDF au format .pdf.");
 var siloInput = z2.enum(SILOS);
 var optionalDateInput = z2.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit \xEAtre au format AAAA-MM-JJ").optional().or(z2.literal("").transform(() => void 0));
 var siloArticleInput = z2.string().trim().min(1, "Indiquez l\u2019article.").max(64);
@@ -5317,6 +5419,40 @@ var appRouter = router({
       );
       return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
     }),
+    /** Prépare le téléversement direct d'un rapport PDF « Traçabilité Expédition » (hors corps de fonction). */
+    preparePdfUpload: publicProcedure.input(z2.object({ fileName: importPdfFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const relKey = `${EXPEDITION_PDF_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
+      if (isVercelBlobConfigured()) return { mode: "vercel-blob", key: relKey };
+      const prepared = await storageCreatePresignedUpload(relKey);
+      return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
+    }),
+    /**
+     * Lit un rapport PDF « Traçabilité Expédition » (système de pesée externe) :
+     * chaque expédition qu'il contient (date, article, quantité, silo) est
+     * ajoutée en type Vrac, avec un numéro de lot recalculé depuis le grand
+     * livre FIFO de l'application plutôt que repris du PDF — voir
+     * expeditionPdfImport.ts.
+     */
+    importExpeditionPdf: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(EXPEDITION_PDF_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const sourceUrl = await storageGetSignedUrl(input.storageKey);
+      const response = await fetch(sourceUrl);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        console.error(`[ExpeditionPdfImport] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier PDF t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier PDF d\xE9passe la limite de 5,7 Mo." });
+      const text2 = await extractExpeditionPdfText(buffer);
+      const parsed = parseExpeditionPdfText(text2);
+      if (parsed.shipments.length === 0) {
+        throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucune exp\xE9dition n\u2019a \xE9t\xE9 trouv\xE9e dans le PDF. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
+      }
+      const result = await importExpeditionShipments(parsed.shipments);
+      return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+    }),
     /** Reconstruit le classeur Silo_PF complet, formules comprises. */
     exportExcel: publicProcedure.query(async () => {
       const [entries, shipments, configuredArticles, movementArticles] = await Promise.all([
@@ -5423,6 +5559,7 @@ var appRouter = router({
 
 // server/_core/blobUpload.ts
 var EXCEL_MIME2 = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+var PDF_MIME = "application/pdf";
 function registerBlobUploadRoute(app2) {
   app2.post("/api/blob-upload", async (req, res) => {
     try {
@@ -5436,7 +5573,7 @@ function registerBlobUploadRoute(app2) {
           const token = await issueSignedToken2({
             pathname,
             operations: ["put"],
-            allowedContentTypes: [EXCEL_MIME2],
+            allowedContentTypes: [EXCEL_MIME2, PDF_MIME],
             maximumSizeInBytes: EXCEL_IMPORT_MAX_BYTES,
             validUntil: Date.now() + 5 * 60 * 1e3
           });
