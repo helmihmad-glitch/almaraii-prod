@@ -125,7 +125,7 @@ describe("tracabilite FIFO des lots", () => {
     const sheet = workbook.getWorksheet("Traçabilité des lots")!;
 
     const header = sheet.getRow(5);
-    expect(["Silo", "Article", "Date d’entrée", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"])
+    expect(["Silo", "Article", "Date Fabrication", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"])
       .toEqual([2, 3, 4, 5, 6, 7].map((col) => header.getCell(col).value));
     expect(header.getCell(2).fill).toMatchObject({ fgColor: { argb: "FF132B35" } });
 
@@ -233,6 +233,34 @@ describe("tracabilite FIFO des lots", () => {
     expect(sheet.getRow(18).getCell(2).value).toBe("Total");
     // Aucun silo n'a de quantité numérique (tous « Vide ») : la somme vaut 0.
     expect(sheet.getRow(18).getCell(7).result).toBe(0);
+  });
+
+  it("ajoute un tableau récapitulatif de la quantité totale par article, tous silos confondus", async () => {
+    const ledger = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "L1", silo: "SPF1", quantity: 10 },
+        { entryId: 2, entryDate: "2026-09-07", article: "CG3", lotNumber: "L2", silo: "SPF3", quantity: 15 },
+        { entryId: 3, entryDate: "2026-09-07", article: "CG3", lotNumber: "L3", silo: "SPF5", quantity: 25 },
+      ],
+      [],
+    );
+
+    const buffer = await buildLotLedgerWorkbook(ledger);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    const sheet = workbook.getWorksheet("Traçabilité des lots")!;
+
+    // Tableau annexe (colonnes I/J), trié par article : CG3 additionne SPF3 (15) et SPF5 (25).
+    expect(sheet.getRow(5).getCell(9).value).toBe("Article");
+    expect(sheet.getRow(5).getCell(10).value).toBe("Quantité (T)");
+    expect(sheet.getRow(6).getCell(9).value).toBe("CG3");
+    expect(sheet.getRow(6).getCell(10).value).toBe(40);
+    expect(sheet.getRow(7).getCell(9).value).toBe("CM1");
+    expect(sheet.getRow(7).getCell(10).value).toBe(10);
+
+    // Son propre total (colonne J) rejoint celui du tableau principal (colonne G).
+    expect(sheet.getRow(8).getCell(9).value).toBe("Total");
+    expect(sheet.getRow(8).getCell(10).result).toBe(50);
   });
 
   it("ignore les mouvements d'un autre article ou silo", () => {

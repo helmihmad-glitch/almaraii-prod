@@ -208,8 +208,10 @@ const formatLedgerDate = (value: string | null) => (value ? LEDGER_DATE_FORMATTE
  * fois pour tout le groupe ; à l'intérieur d'un silo, les lots consécutifs
  * d'un même article partagent aussi leur cellule Article. Un silo sans lot
  * actif reste visible avec une ligne « Vide », comme à l'écran. Un total en
- * pied de colonne clôt le tableau. Reprend les couleurs déjà utilisées pour
- * le classeur Silo_PF (voir server/siloExcel.ts) afin de rester cohérent.
+ * pied de colonne clôt le tableau, et un second tableau plus loin sur la même
+ * feuille reprend la quantité totale par article, tous silos confondus.
+ * Reprend les couleurs déjà utilisées pour le classeur Silo_PF (voir
+ * server/siloExcel.ts) afin de rester cohérent.
  */
 export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
@@ -232,15 +234,14 @@ export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer>
 
   const summaryRow = worksheet.getRow(LEDGER_SUMMARY_ROW);
   const summaryCell = summaryRow.getCell(LEDGER_FIRST_COL);
-  summaryCell.value = `Exporté le ${LEDGER_DATE_FORMATTER.format(new Date())}`;
+  summaryCell.value = `Le ${LEDGER_DATE_FORMATTER.format(new Date())}`;
   worksheet.mergeCells(LEDGER_SUMMARY_ROW, LEDGER_FIRST_COL, LEDGER_SUMMARY_ROW, LEDGER_LAST_COL);
-  summaryCell.font = { italic: true, color: { argb: "FF356A40" } };
-  summaryCell.alignment = { vertical: "middle", horizontal: "center" };
-  summaryCell.fill = ACTIVE_FILL;
+  summaryCell.font = { italic: true, color: { argb: "00000000" } };
+  summaryCell.alignment = { vertical: "middle", horizontal: "left" };
   summaryRow.height = 20;
 
   const headerRow = worksheet.getRow(LEDGER_HEADER_ROW);
-  ["Silo", "Article", "Date d’entrée", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"].forEach((label, index) => {
+  ["Silo", "Article", "Date Fabrication", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"].forEach((label, index) => {
     const cell = headerRow.getCell(LEDGER_FIRST_COL + index);
     cell.value = label;
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -265,6 +266,9 @@ export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer>
       articleCell.value = "Vide";
       articleCell.font = { italic: true, color: { argb: "FF86917F" } };
       articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 2).alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 3).alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 4).alignment = { vertical: "middle", horizontal: "center" };
       if (shouldStripe) articleCell.fill = ZEBRA_FILL;
       row.getCell(LEDGER_FIRST_COL + 2).value = "—";
       row.getCell(LEDGER_FIRST_COL + 3).value = "—";
@@ -277,6 +281,9 @@ export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer>
     } else {
       group.lots.forEach((lot) => {
         const row = worksheet.getRow(currentRow);
+        row.getCell(LEDGER_FIRST_COL + 2).alignment = { vertical: "middle", horizontal: "center" };
+        row.getCell(LEDGER_FIRST_COL + 3).alignment = { vertical: "middle", horizontal: "center" };
+        row.getCell(LEDGER_FIRST_COL + 4).alignment = { vertical: "middle", horizontal: "center" };
         // Article et Quantité silo (colonnes fusionnables) sont renseignées plus bas, une fois par groupe.
         row.getCell(LEDGER_FIRST_COL + 2).value = formatLedgerDate(lot.entryDate);
         row.getCell(LEDGER_FIRST_COL + 3).value = lot.lotNumber || "—";
@@ -360,6 +367,74 @@ export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer>
   totalCell.font = { bold: true };
   totalRow.height = LEDGER_ROW_HEIGHT;
   for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) totalRow.getCell(col).border = GRID_BORDER;
+
+  // --- Tableau annexe : quantité totale par article, tous silos confondus.
+  // Reprend la même source que le tableau principal (la somme des lots encore
+  // actifs), donc son propre total rejoint toujours celui de la colonne
+  // « Quantité silo » à sa gauche — une vérification croisée gratuite.
+  const ARTICLE_TABLE_FIRST_COL = LEDGER_LAST_COL + 2; // une colonne d'écart avant ce second tableau.
+  const ARTICLE_TABLE_QTY_COL = ARTICLE_TABLE_FIRST_COL + 1;
+
+  const articleTotals = new Map<string, number>();
+  activeLots.forEach((lot) => {
+    articleTotals.set(lot.article, roundTons((articleTotals.get(lot.article) ?? 0) + lot.remainingQuantity));
+  });
+  const articleRows = Array.from(articleTotals.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+
+  worksheet.getColumn(ARTICLE_TABLE_FIRST_COL).width = LEDGER_COLUMN_WIDTH;
+  worksheet.getColumn(ARTICLE_TABLE_QTY_COL).width = LEDGER_COLUMN_WIDTH;
+
+  writeTitle(worksheet, LEDGER_TITLE_ROW, ARTICLE_TABLE_FIRST_COL, ARTICLE_TABLE_QTY_COL, "QUANTITÉ PAR ARTICLE");
+
+  const articleHeaderRow = worksheet.getRow(LEDGER_HEADER_ROW);
+  ["Article", "Quantité (T)"].forEach((label, index) => {
+    const cell = articleHeaderRow.getCell(ARTICLE_TABLE_FIRST_COL + index);
+    cell.value = label;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = TITLE_FILL;
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = GRID_BORDER;
+  });
+
+  articleRows.forEach(([article, quantity], index) => {
+    const row = worksheet.getRow(LEDGER_FIRST_DATA_ROW + index);
+    row.height = LEDGER_ROW_HEIGHT;
+    const articleCell = row.getCell(ARTICLE_TABLE_FIRST_COL);
+    const quantityCell = row.getCell(ARTICLE_TABLE_QTY_COL);
+    articleCell.value = article;
+    articleCell.font = { bold: true };
+    articleCell.alignment = { vertical: "middle", horizontal: "center" };
+    quantityCell.value = quantity;
+    quantityCell.numFmt = '0.00" T"';
+    quantityCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (index % 2 === 1) {
+      articleCell.fill = ZEBRA_FILL;
+      quantityCell.fill = ZEBRA_FILL;
+    }
+    articleCell.border = GRID_BORDER;
+    quantityCell.border = GRID_BORDER;
+  });
+
+  const articleTotalRowNumber = LEDGER_FIRST_DATA_ROW + articleRows.length;
+  const articleTotalRow = worksheet.getRow(articleTotalRowNumber);
+  articleTotalRow.height = LEDGER_ROW_HEIGHT;
+  const articleTotalLabelCell = articleTotalRow.getCell(ARTICLE_TABLE_FIRST_COL);
+  articleTotalLabelCell.value = "Total";
+  articleTotalLabelCell.font = { bold: true };
+  articleTotalLabelCell.alignment = { vertical: "middle", horizontal: "center" };
+  articleTotalLabelCell.border = GRID_BORDER;
+  const articleTotalQtyCell = articleTotalRow.getCell(ARTICLE_TABLE_QTY_COL);
+  if (articleRows.length > 0) {
+    const qtyColLetter = columnLetter(ARTICLE_TABLE_QTY_COL);
+    const formula = `SUM(${qtyColLetter}${LEDGER_FIRST_DATA_ROW}:${qtyColLetter}${articleTotalRowNumber - 1})`;
+    articleTotalQtyCell.value = { formula, result: totalRemaining } as ExcelJS.CellFormulaValue;
+  } else {
+    articleTotalQtyCell.value = 0;
+  }
+  articleTotalQtyCell.numFmt = '0.00" T"';
+  articleTotalQtyCell.font = { bold: true };
+  articleTotalQtyCell.alignment = { vertical: "middle", horizontal: "center" };
+  articleTotalQtyCell.border = GRID_BORDER;
 
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
