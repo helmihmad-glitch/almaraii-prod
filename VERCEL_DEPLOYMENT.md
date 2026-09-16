@@ -16,7 +16,7 @@ Ne renseignez pas `dist` ou `dist/index.js` comme **Output Directory**. Après l
 
 ## Variables d’environnement
 
-Ajoutez dans Vercel les variables nécessaires, sans jamais committer leurs valeurs : `DATABASE_URL` (voir ci-dessous) et `COMMENT_EDIT_PASSWORD`.
+Ajoutez dans Vercel les variables nécessaires, sans jamais committer leurs valeurs : `DATABASE_URL` (voir ci-dessous). `SESSION_SECRET` est optionnelle : elle renforce la signature du cookie de session admin (voir `server/_core/adminSession.ts`), qui fonctionne sans configuration supplémentaire grâce à une valeur par défaut.
 
 ## Base de données Postgres
 

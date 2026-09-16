@@ -9,25 +9,28 @@ const appShell = readFileSync(fileURLToPath(new URL("../client/src/components/Ap
 const settingsPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Settings.tsx", import.meta.url)), "utf8");
 
 describe("interface Paramètres", () => {
-  it("enregistre et expose la page Paramètres depuis le routeur", () => {
+  it("enregistre et expose la page Paramètres depuis le routeur, réservée à la session admin", () => {
     expect(app).toContain('path="/parametres"');
-    expect(app).toContain("component={Settings}");
+    expect(app).toContain("<AdminRoute><Settings /></AdminRoute>");
     expect(appShell).toContain('navigate("/parametres")');
   });
 
-  it("propose l’ajout et le retrait sécurisé des articles", () => {
+  it("propose l’ajout et le retrait des articles, réservés à la session admin (pas de mot de passe par action)", () => {
     expect(settingsPage).toContain("trpc.settings.listArticles.useQuery");
     expect(settingsPage).toContain("trpc.settings.addArticle.useMutation");
     expect(settingsPage).toContain("trpc.settings.archiveArticle.useMutation");
-    expect(settingsPage).toContain("Mot de passe de gestion");
+    expect(settingsPage).not.toContain("Mot de passe de gestion");
+    expect(settingsPage).not.toContain("actionPassword");
     expect(settingsPage).toContain("L’historique de production restera conservé");
   });
 
-  it("propose la mise à jour protégée du mot de passe d’action", () => {
-    expect(settingsPage).toContain("trpc.settings.changeActionPassword.useMutation");
+  it("propose la mise à jour protégée des identifiants admin (identifiant + mot de passe)", () => {
+    expect(settingsPage).toContain("trpc.auth.changeAdminCredentials.useMutation");
+    expect(settingsPage).not.toContain("trpc.settings.changeActionPassword");
     expect(settingsPage).toContain("Mot de passe actuel");
     expect(settingsPage).toContain("Confirmer le nouveau mot de passe");
-    expect(settingsPage).toContain("enregistré sous forme hachée");
+    expect(settingsPage).toContain("Identifiant");
+    expect(settingsPage).toContain("« admin »");
   });
 
   it("récupère les articles configurés à l’ouverture de la saisie", () => {

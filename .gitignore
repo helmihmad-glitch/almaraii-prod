@@ -46,6 +46,7 @@ pids
 *.pid.lock
 *.bak
 .local-production-store.json
+.local-production-store.test.json
 
 # Coverage directory used by tools like istanbul
 coverage/
@@ -112,4 +113,5 @@ temp/
 
 .project-config.json
 .local-silo-store.json
+.local-silo-store.test.json
 .local-storage/

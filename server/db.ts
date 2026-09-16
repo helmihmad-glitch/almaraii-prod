@@ -39,8 +39,9 @@ type FallbackOperator = {
 
 type FallbackProductionSettings = {
   id: number;
-  actionPasswordHash: string | null;
-  actionPasswordSalt: string | null;
+  adminUsername: string | null;
+  adminPasswordHash: string | null;
+  adminPasswordSalt: string | null;
   updatedAt: Date;
 };
 
@@ -97,7 +98,13 @@ type FallbackSynchronizedFile = {
   updatedAt: Date;
 };
 
-const fallbackDataPath = path.resolve(process.cwd(), ".local-production-store.json");
+// Vitest (process.env.VITEST, positionné automatiquement par le test runner)
+// écrit dans son propre fichier : les tests ne doivent jamais partager ce
+// stockage avec le serveur de développement lancé à côté, sous peine de
+// polluer les données réelles de l’utilisateur avec des identifiants ou des
+// enregistrements de test (vécu : un mot de passe admin de test laissé par
+// une suite précédente empêchait la connexion avec les identifiants réels).
+const fallbackDataPath = path.resolve(process.cwd(), process.env.VITEST ? ".local-production-store.test.json" : ".local-production-store.json");
 
 function loadFallbackStore() {
   if (!existsSync(fallbackDataPath)) {
@@ -673,22 +680,24 @@ export async function saveSynchronizedExcelFileFallback(file: { id: number; file
   return fallbackSynchronizedFile;
 }
 
-export async function saveActionPasswordDigest(digest: ActionPasswordDigest) {
+export async function saveAdminCredentials(username: string, digest: ActionPasswordDigest) {
   const db = await getDb();
   if (!db) {
     fallbackSettings = {
       id: 1,
-      actionPasswordHash: digest.hash,
-      actionPasswordSalt: digest.salt,
+      ...fallbackSettings,
+      adminUsername: username,
+      adminPasswordHash: digest.hash,
+      adminPasswordSalt: digest.salt,
       updatedAt: new Date(),
     };
     persistFallbackStore();
     return fallbackSettings;
   }
 
-  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onConflictDoUpdate({
+  await db.insert(productionSettings).values({ id: 1, adminUsername: username, adminPasswordHash: digest.hash, adminPasswordSalt: digest.salt }).onConflictDoUpdate({
     target: productionSettings.id,
-    set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: new Date() },
+    set: { adminUsername: username, adminPasswordHash: digest.hash, adminPasswordSalt: digest.salt, updatedAt: new Date() },
   });
   return getProductionSettings();
 }

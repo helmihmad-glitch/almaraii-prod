@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, Database, Download, Layers, Menu, PackageSearch, Truck } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowLeft, Boxes, Database, Layers, Menu, PackageSearch, Truck } from "lucide-react";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
@@ -16,27 +15,6 @@ const formatDate = (value: string | null) =>
 export default function SiloPf() {
   const { openSidebar } = useSidebar();
   const [showEmptySilos, setShowEmptySilos] = useState(true);
-  const [isExporting, setIsExporting] = useState(false);
-  const exportWorkbook = trpc.useUtils().silo.exportExcel;
-
-  const downloadWorkbook = async () => {
-    setIsExporting(true);
-    try {
-      const { fileName, fileBase64 } = await exportWorkbook.fetch();
-      const bytes = Uint8Array.from(atob(fileBase64), (character) => character.charCodeAt(0));
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success("Classeur Silo PF exporté", { description: fileName });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "L’export du classeur a échoué.");
-    } finally {
-      setIsExporting(false);
-    }
-  };
   // Les silos sont souvent modifiés depuis un autre onglet (page de saisie) ou
   // par une autre personne : on rafraîchit systématiquement au retour sur la
   // page et à intervalle régulier, plutôt que de dépendre uniquement de
@@ -84,7 +62,6 @@ export default function SiloPf() {
             <h1>État des <em>silos</em></h1>
           </div>
           <div className="silo-hero-actions">
-            <button type="button" className="silo-secondary" onClick={downloadWorkbook} disabled={isExporting}><Download size={15} />{isExporting ? "Export…" : "Exporter le classeur"}</button>
             <div className="silo-total-card">
               <span>Stock total PF</span>
               <strong>{stateQuery.isLoading ? "…" : `${fmt(state?.totalStock ?? 0, 2)} T`}</strong>

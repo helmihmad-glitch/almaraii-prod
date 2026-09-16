@@ -15,6 +15,20 @@
       "when": 1789215437331,
       "tag": "0001_yummy_cerise",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789571304928,
+      "tag": "0002_cooing_thunderbolt_ross",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789574905667,
+      "tag": "0003_lyrical_unus",
+      "breakpoints": true
     }
   ]
 }

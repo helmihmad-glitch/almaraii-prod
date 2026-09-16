@@ -11,6 +11,7 @@ const dailyProgram = readFileSync(new URL("../client/src/pages/DailyProgram.tsx"
 const dailyProgramData = readFileSync(new URL("../client/src/pages/DailyProgramData.tsx", import.meta.url), "utf8");
 const settings = readFileSync(new URL("../client/src/pages/Settings.tsx", import.meta.url), "utf8");
 const dailyProgramPdf = readFileSync(new URL("../client/src/lib/dailyProgramPdf.ts", import.meta.url), "utf8");
+const reportsPage = readFileSync(new URL("../client/src/pages/Reports.tsx", import.meta.url), "utf8");
 
 describe("Programme journalier", () => {
   it("déclare un stockage persistant pour les en-têtes et lignes planifiées", () => {
@@ -22,12 +23,12 @@ describe("Programme journalier", () => {
     expect(db).toContain("createDailyProgramLine");
   });
 
-  it("expose les opérations CRUD protégées par le mot de passe d’action", () => {
+  it("expose les opérations CRUD, protégées par la session admin", () => {
     expect(routers).toContain("dailyProgram: router({");
     expect(routers).toContain("createLine:");
     expect(routers).toContain("updateLine:");
     expect(routers).toContain("deleteLine:");
-    expect(routers).toContain("assertProductionActionAuthorized(input.actionPassword)");
+    expect(routers).toContain("assertAdminSession(ctx)");
   });
 
   it("propose les deux pages et les accès de navigation demandés", () => {
@@ -56,9 +57,12 @@ describe("Programme journalier", () => {
     expect(dailyProgramData).toContain("<select");
   });
 
-  it("propose l’export PDF structuré du programme planifié", () => {
-    expect(dailyProgram).toContain("generateDailyProgramPdf");
-    expect(dailyProgram).toContain("Exporter PDF");
+  it("propose l’export PDF structuré du programme planifié, centralisé dans Rapports", () => {
+    expect(dailyProgram).not.toContain("generateDailyProgramPdf");
+    expect(dailyProgram).not.toContain("Exporter PDF");
+    expect(reportsPage).toContain("generateDailyProgramPdf");
+    expect(reportsPage).toContain("Programme journalier");
+    expect(reportsPage).toContain("Réf: For-Prod-09");
     expect(dailyProgramPdf).toContain("Programme de Production");
     expect(dailyProgramPdf).toContain("Réf: For-Prod-09");
     expect(dailyProgramPdf).toContain("Pupitreur");

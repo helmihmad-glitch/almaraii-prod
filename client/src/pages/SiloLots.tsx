@@ -1,7 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, ChevronDown, Database, Download, Menu, PackageSearch, TriangleAlert } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowLeft, Boxes, ChevronDown, Database, Menu, PackageSearch, TriangleAlert } from "lucide-react";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
@@ -21,8 +20,6 @@ export default function SiloLots() {
   const [lotQuery, setLotQuery] = useState("");
   const [showDepleted, setShowDepleted] = useState(true);
   const [expandedEntryId, setExpandedEntryId] = useState<number | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
-  const exportLedger = trpc.useUtils().silo.exportLotLedger;
 
   // Voir client/src/lib/trpc.ts (LIVE_QUERY_OPTIONS) : cette vue de lecture
   // doit refléter les modifications faites depuis un autre onglet ou par
@@ -30,25 +27,6 @@ export default function SiloLots() {
   const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const lots = ledgerQuery.data?.lots ?? [];
   const unattributed = ledgerQuery.data?.unattributed ?? [];
-
-  const downloadLedger = async () => {
-    setIsExporting(true);
-    try {
-      const { fileName, fileBase64 } = await exportLedger.fetch();
-      const bytes = Uint8Array.from(atob(fileBase64), (character) => character.charCodeAt(0));
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success("Traçabilité des lots exportée", { description: fileName });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "L’export de la traçabilité a échoué.");
-    } finally {
-      setIsExporting(false);
-    }
-  };
 
   const silos = useMemo(() => Array.from(new Set(lots.map((lot) => lot.silo))).sort(), [lots]);
   const articles = useMemo(() => Array.from(new Set(lots.map((lot) => lot.article))).sort(), [lots]);
@@ -88,7 +66,6 @@ export default function SiloLots() {
             <h1>Traçabilité des <em>lots</em></h1>
           </div>
           <div className="silo-hero-actions">
-            <button type="button" className="silo-secondary" onClick={downloadLedger} disabled={isExporting || ledgerQuery.isLoading}><Download size={15} />{isExporting ? "Export…" : "Exporter en Excel"}</button>
             <div className="silo-total-card">
               <span>Quantité tracée restante</span>
               <strong>{ledgerQuery.isLoading ? "…" : `${fmt(totalRemaining)} T`}</strong>

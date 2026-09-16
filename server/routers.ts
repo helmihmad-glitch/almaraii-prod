@@ -2,6 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
+import type { TrpcContext } from "./_core/context";
 import {
   addProductionArticle,
   addProductionOperator,
@@ -21,7 +22,7 @@ import {
   listActiveProductionOperators,
   listDailyPrograms,
   listProductionRecords,
-  saveActionPasswordDigest,
+  saveAdminCredentials,
   updateDailyProgram,
   updateDailyProgramLine,
   updateProductionRecord,
@@ -30,6 +31,7 @@ import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRec
 import { importProductionRows, parseImportedWorkbook } from "./excelImport";
 import { parseDailyProgramWorkbook } from "./dailyProgramExcel";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
+import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_DURATION_MS, getAdminSessionCookieOptions, signAdminSession } from "./_core/adminSession";
 import { isVercelBlobConfigured, storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
 import {
   createSiloProductionEntry,
@@ -47,6 +49,7 @@ import {
 } from "./siloDb";
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
 import { buildLotLedgerWorkbook, computeLotLedger } from "./siloLots";
+import { buildFilteredRegistryWorkbook, type FilteredRegistryRow } from "./registryExcel";
 import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
 import { SHIPMENT_TYPES, SILOS } from "../shared/silo";
 
@@ -64,26 +67,15 @@ export const recordInput = z.object({
   if (value.plannedStopsHours + value.unplannedStopsHours > value.totalProductionHours) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["unplannedStopsHours"], message: "Les arrêts cumulés ne peuvent pas dépasser le temps total." });
 });
 
-export async function isActionPasswordValid(password: string) {
-  const settings = await getProductionSettings();
-  console.log("Checking action password validity:", { password, settings });
-  if (settings?.actionPasswordHash && settings.actionPasswordSalt) {
-    return verifyActionPasswordDigest(password, { hash: settings.actionPasswordHash, salt: settings.actionPasswordSalt });
-  }
-  return Boolean(process.env.COMMENT_EDIT_PASSWORD) && password === process.env.COMMENT_EDIT_PASSWORD;
-}
-
-export async function assertProductionActionAuthorized(password: string | undefined) {
-  const settings = await getProductionSettings();
-  const hasStoredActionPassword = Boolean(settings?.actionPasswordHash && settings.actionPasswordSalt);
-  const hasLegacyEnvPassword = Boolean(process.env.COMMENT_EDIT_PASSWORD);
-
-  if (!hasStoredActionPassword && !hasLegacyEnvPassword) {
-    return;
-  }
-
-  if (!password || !(await isActionPasswordValid(password))) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou gérer les paramètres." });
+/**
+ * Autorisation unique de toutes les mutations (saisie, modification,
+ * suppression, import) : la session admin (cookie posé par auth.login)
+ * remplace l'ancien mot de passe d'action séparé, devenu redondant — se
+ * connecter une fois suffit désormais pour toute la durée de la session.
+ */
+function assertAdminSession(ctx: Pick<TrpcContext, "isAdmin">) {
+  if (!ctx.isAdmin) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Connectez-vous en tant qu’administrateur pour effectuer cette action." });
   }
 }
 
@@ -98,6 +90,18 @@ async function assertShipmentWithinStock(silo: string, article: string, quantity
       message: `La quantité expédiée (${quantity.toFixed(2)} T) dépasse le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`,
     });
   }
+}
+
+const DEFAULT_ADMIN_USERNAME = "admin";
+const DEFAULT_ADMIN_PASSWORD = "123456";
+
+/** Vérifie les identifiants admin, avec repli sur admin/123456 tant qu'aucun identifiant n'a été enregistré. */
+async function verifyAdminCredentials(username: string, password: string) {
+  const settings = await getProductionSettings();
+  if (settings?.adminUsername && settings.adminPasswordHash && settings.adminPasswordSalt) {
+    return username === settings.adminUsername && verifyActionPasswordDigest(password, { hash: settings.adminPasswordHash, salt: settings.adminPasswordSalt });
+  }
+  return username === DEFAULT_ADMIN_USERNAME && password === DEFAULT_ADMIN_PASSWORD;
 }
 
 const recordWithCommentInput = recordInput.safeExtend({
@@ -146,6 +150,12 @@ const siloShipmentInput = z.object({
   shipmentType: z.enum(SHIPMENT_TYPES),
 });
 
+const registryFilterInput = z.object({
+  query: z.string().trim().max(200).optional(),
+  dateFrom: optionalDateInput,
+  dateTo: optionalDateInput,
+});
+
 export const EXCEL_IMPORT_MAX_BYTES = 5_700_000;
 const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
 
@@ -183,76 +193,101 @@ export function calculateRecord(input: z.infer<typeof recordInput>) {
 
 export const appRouter = router({
   system: systemRouter,
+  auth: router({
+    me: publicProcedure.query(async ({ ctx }) => {
+      if (!ctx.isAdmin) return { role: "visiteur" as const, username: null };
+      const settings = await getProductionSettings();
+      return { role: "admin" as const, username: settings?.adminUsername || DEFAULT_ADMIN_USERNAME };
+    }),
+    login: publicProcedure.input(z.object({ username: z.string().trim().min(1, "Indiquez l’identifiant."), password: z.string().min(1, "Indiquez le mot de passe.") })).mutation(async ({ ctx, input }) => {
+      const valid = await verifyAdminCredentials(input.username, input.password);
+      if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Identifiant ou mot de passe incorrect." });
+      const token = await signAdminSession();
+      ctx.res.cookie(ADMIN_SESSION_COOKIE, token, { ...getAdminSessionCookieOptions(ctx.req), maxAge: ADMIN_SESSION_DURATION_MS });
+      return { success: true } as const;
+    }),
+    logout: publicProcedure.mutation(({ ctx }) => {
+      ctx.res.clearCookie(ADMIN_SESSION_COOKIE, getAdminSessionCookieOptions(ctx.req));
+      return { success: true } as const;
+    }),
+    changeAdminCredentials: publicProcedure.input(z.object({
+      currentPassword: z.string().min(1, "Indiquez le mot de passe actuel."),
+      newUsername: z.string().trim().min(1, "Indiquez un identifiant.").max(64),
+      newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128),
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const settings = await getProductionSettings();
+      const currentValid = settings?.adminUsername && settings.adminPasswordHash && settings.adminPasswordSalt
+        ? verifyActionPasswordDigest(input.currentPassword, { hash: settings.adminPasswordHash, salt: settings.adminPasswordSalt })
+        : input.currentPassword === DEFAULT_ADMIN_PASSWORD;
+      if (!currentValid) throw new TRPCError({ code: "FORBIDDEN", message: "Mot de passe actuel incorrect." });
+      await saveAdminCredentials(input.newUsername, createActionPasswordDigest(input.newPassword));
+      return { success: true } as const;
+    }),
+  }),
   settings: router({
     listArticles: publicProcedure.query(async () => {
       await initializeProductionArticles();
       return listActiveProductionArticles();
     }),
-    addArticle: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un article.").max(64), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    addArticle: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un article.").max(64) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return addProductionArticle(input.code);
     }),
-    archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    archiveArticle: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return archiveProductionArticle(input.id);
     }),
     listOperators: publicProcedure.query(() => listActiveProductionOperators()),
-    addOperator: publicProcedure.input(z.object({ name: z.string().trim().min(1, "Saisissez un pupitreur.").max(128), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    addOperator: publicProcedure.input(z.object({ name: z.string().trim().min(1, "Saisissez un pupitreur.").max(128) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return addProductionOperator(input.name);
     }),
-    archiveOperator: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    archiveOperator: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return archiveProductionOperator(input.id);
-    }),
-    changeActionPassword: publicProcedure.input(z.object({ currentPassword: z.string().optional(), newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères.").max(128) })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.currentPassword);
-      await saveActionPasswordDigest(createActionPasswordDigest(input.newPassword));
-      return { success: true } as const;
     }),
   }),
   dailyProgram: router({
     list: publicProcedure.query(() => listDailyPrograms()),
     byDate: publicProcedure.input(z.object({ programDate: dateInput })).query(({ input }) => getDailyProgramByDate(input.programDate)),
-    create: publicProcedure.input(dailyProgramInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, ...program } = input;
-      return createDailyProgram(program);
+    create: publicProcedure.input(dailyProgramInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return createDailyProgram(input);
     }),
-    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, ...program } = input;
+    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, ...program } = input;
       return updateDailyProgram(id, program);
     }),
-    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteDailyProgram(input.id);
     }),
-    createLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, ...line } = input;
-      return createDailyProgramLine(line);
+    createLine: publicProcedure.input(dailyProgramLineInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return createDailyProgramLine(input);
     }),
-    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, ...line } = input;
+    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, ...line } = input;
       return updateDailyProgramLine(id, line);
     }),
-    deleteLine: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteLine: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteDailyProgramLine(input.id);
     }),
     /** Prépare le téléversement direct du classeur Programme de Production (hors corps de fonction). */
-    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `${PROGRAM_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       if (isVercelBlobConfigured()) return { mode: "vercel-blob" as const, key: relKey };
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
     /** Lit le classeur téléversé : chaque journée trouvée remplace intégralement le programme existant à cette date. */
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith(PROGRAM_IMPORT_PREFIX), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith(PROGRAM_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -306,47 +341,47 @@ export const appRouter = router({
       };
     }),
     listEntries: publicProcedure.query(() => listSiloProductionEntries()),
-    createEntry: publicProcedure.input(siloEntryInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, allocations, totalQuantity, ...entry } = input;
+    createEntry: publicProcedure.input(siloEntryInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { allocations, totalQuantity, ...entry } = input;
       return createSiloProductionEntry({ ...entry, totalQuantity: totalQuantity === undefined ? null : totalQuantity.toFixed(2) }, allocations);
     }),
-    updateEntry: publicProcedure.input(siloEntryInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, allocations, totalQuantity, ...entry } = input;
+    updateEntry: publicProcedure.input(siloEntryInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, allocations, totalQuantity, ...entry } = input;
       return updateSiloProductionEntry(id, { ...entry, totalQuantity: totalQuantity === undefined ? null : totalQuantity.toFixed(2) }, allocations);
     }),
-    deleteEntry: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteEntry: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteSiloProductionEntry(input.id);
     }),
     listShipments: publicProcedure.query(() => listSiloShipments()),
-    createShipment: publicProcedure.input(siloShipmentInput.safeExtend({ actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    createShipment: publicProcedure.input(siloShipmentInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity);
-      const { actionPassword, quantity, ...shipment } = input;
+      const { quantity, ...shipment } = input;
       return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
     }),
-    updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity, input.id);
-      const { id, actionPassword, quantity, ...shipment } = input;
+      const { id, quantity, ...shipment } = input;
       return updateSiloShipment(id, { ...shipment, quantity: quantity.toFixed(2) });
     }),
-    deleteShipment: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteShipment: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteSiloShipment(input.id);
     }),
     /** Prépare le téléversement direct du classeur Silo_PF (hors corps de fonction). */
-    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `${SILO_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       if (isVercelBlobConfigured()) return { mode: "vercel-blob" as const, key: relKey };
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith(SILO_IMPORT_PREFIX), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: z.string().startsWith(SILO_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -419,13 +454,13 @@ export const appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
-    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
+    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000) })).mutation(async ({ ctx, input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
-      await assertProductionActionAuthorized(input.actionPassword);
+      assertAdminSession(ctx);
       return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
     }),
-    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       // Sur Vercel, le navigateur téléverse directement vers Vercel Blob via
       // un jeton de courte durée (route /api/blob-upload) : le fichier ne
@@ -438,8 +473,8 @@ export const appRouter = router({
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput, actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -452,24 +487,47 @@ export const appRouter = router({
       return importWorkbookBuffer(buffer);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
-    verifyActionPassword: publicProcedure.input(z.object({ password: z.string() })).mutation(async ({ input }) => ({
-      authorized: await isActionPasswordValid(input.password),
-    })),
-    create: publicProcedure.input(recordWithCommentInput).mutation(async ({ input }) => {
+    /** Export Excel du registre filtré (page Rapports) : même recherche/période que le Registre. */
+    exportFilteredExcel: publicProcedure.input(registryFilterInput).query(async ({ input }) => {
+      const queryLower = input.query?.toLowerCase();
+      const rows: FilteredRegistryRow[] = (await listProductionRecords())
+        .map((record) => ({ ...record, productionDate: record.productionDate.slice(0, 10) }))
+        .filter((record) =>
+          (!queryLower || record.article.toLowerCase().includes(queryLower) || record.productionDate.includes(queryLower) || record.comment?.toLowerCase().includes(queryLower))
+          && (!input.dateFrom || record.productionDate >= input.dateFrom)
+          && (!input.dateTo || record.productionDate <= input.dateTo))
+        .sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id)
+        .map((record) => ({
+          productionDate: record.productionDate,
+          article: record.article,
+          productionTons: Number(record.productionTons),
+          wasteTons: Number(record.wasteTons),
+          availability: Number(record.availability),
+          trs: Number(record.trs),
+          comment: record.comment,
+        }));
+      const workbook = await buildFilteredRegistryWorkbook(rows, input);
+      return {
+        fileName: `Registre_Filtre_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64"),
+      };
+    }),
+    create: publicProcedure.input(recordWithCommentInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const { comment, ...record } = input;
       const created = await createProductionRecord({ ...calculateRecord(record), comment: comment || null, source: "manual" });
       await syncExcelFromRecords();
       return created;
     }),
-    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      const { id, comment, actionPassword, ...record } = input;
-      await assertProductionActionAuthorized(actionPassword);
+    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, comment, ...record } = input;
       const updated = await updateProductionRecord(id, { ...calculateRecord(record), ...(comment !== undefined ? { comment } : {}) });
       await syncExcelFromRecords();
       return updated;
     }),
-    delete: publicProcedure.input(z.object({ id: z.number().int().positive(), actionPassword: z.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    delete: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;

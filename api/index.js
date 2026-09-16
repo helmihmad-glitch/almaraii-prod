@@ -129,8 +129,10 @@ var productionOperators = pgTable("production_operators", {
 }, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
 var productionSettings = pgTable("production_settings", {
   id: integer("id").primaryKey(),
-  actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
-  actionPasswordSalt: varchar("actionPasswordSalt", { length: 64 }),
+  /** Identifiants admin (rôle admin/visiteur) — sans ligne stockée, "admin" / "123456" fait office de valeur par défaut. La session admin qu'ils ouvrent est désormais la seule autorisation exigée pour saisir, modifier, supprimer ou importer (l'ancien mot de passe d'action séparé a été retiré). */
+  adminUsername: varchar("adminUsername", { length: 64 }),
+  adminPasswordHash: varchar("adminPasswordHash", { length: 128 }),
+  adminPasswordSalt: varchar("adminPasswordSalt", { length: 64 }),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 });
 var dailyPrograms = pgTable("daily_programs", {
@@ -192,7 +194,7 @@ var ENV = {
 
 // server/db.ts
 var _db = null;
-var fallbackDataPath = path.resolve(process.cwd(), ".local-production-store.json");
+var fallbackDataPath = path.resolve(process.cwd(), process.env.VITEST ? ".local-production-store.test.json" : ".local-production-store.json");
 function loadFallbackStore() {
   if (!existsSync(fallbackDataPath)) {
     return {
@@ -648,21 +650,23 @@ async function saveSynchronizedExcelFileFallback(file) {
   persistFallbackStore();
   return fallbackSynchronizedFile;
 }
-async function saveActionPasswordDigest(digest) {
+async function saveAdminCredentials(username, digest) {
   const db = await getDb();
   if (!db) {
     fallbackSettings = {
       id: 1,
-      actionPasswordHash: digest.hash,
-      actionPasswordSalt: digest.salt,
+      ...fallbackSettings,
+      adminUsername: username,
+      adminPasswordHash: digest.hash,
+      adminPasswordSalt: digest.salt,
       updatedAt: /* @__PURE__ */ new Date()
     };
     persistFallbackStore();
     return fallbackSettings;
   }
-  await db.insert(productionSettings).values({ id: 1, actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt }).onConflictDoUpdate({
+  await db.insert(productionSettings).values({ id: 1, adminUsername: username, adminPasswordHash: digest.hash, adminPasswordSalt: digest.salt }).onConflictDoUpdate({
     target: productionSettings.id,
-    set: { actionPasswordHash: digest.hash, actionPasswordSalt: digest.salt, updatedAt: /* @__PURE__ */ new Date() }
+    set: { adminUsername: username, adminPasswordHash: digest.hash, adminPasswordSalt: digest.salt, updatedAt: /* @__PURE__ */ new Date() }
   });
   return getProductionSettings();
 }
@@ -3816,11 +3820,48 @@ function verifyActionPasswordDigest(password, digest) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+// server/_core/adminSession.ts
+import { SignJWT, jwtVerify } from "jose";
+import { parse as parseCookieHeader } from "cookie";
+var ADMIN_SESSION_COOKIE = "app_admin_session";
+var ADMIN_SESSION_DURATION_MS = 1e3 * 60 * 60 * 24 * 30;
+function getSessionSecret() {
+  const secret = process.env.SESSION_SECRET || process.env.JWT_SECRET || "almaraii-production-pulse-default-session-secret";
+  return new TextEncoder().encode(secret);
+}
+async function signAdminSession() {
+  const expirationSeconds = Math.floor((Date.now() + ADMIN_SESSION_DURATION_MS) / 1e3);
+  return new SignJWT({ role: "admin" }).setProtectedHeader({ alg: "HS256", typ: "JWT" }).setExpirationTime(expirationSeconds).sign(getSessionSecret());
+}
+async function verifyAdminSession(token) {
+  if (!token) return false;
+  try {
+    const { payload } = await jwtVerify(token, getSessionSecret(), { algorithms: ["HS256"] });
+    return payload.role === "admin";
+  } catch {
+    return false;
+  }
+}
+async function isAdminRequest(req) {
+  const cookies = parseCookieHeader(req.headers.cookie ?? "");
+  return verifyAdminSession(cookies[ADMIN_SESSION_COOKIE]);
+}
+function isSecureRequest(req) {
+  if (req.protocol === "https") return true;
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  if (!forwardedProto) return false;
+  const protoList = Array.isArray(forwardedProto) ? forwardedProto : forwardedProto.split(",");
+  return protoList.some((proto) => proto.trim().toLowerCase() === "https");
+}
+function getAdminSessionCookieOptions(req) {
+  return { httpOnly: true, path: "/", sameSite: "lax", secure: isSecureRequest(req) };
+}
+
 // server/siloDb.ts
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import path2 from "node:path";
 import { asc as asc3, desc as desc3, eq as eq4, inArray } from "drizzle-orm";
-var fallbackPath = path2.resolve(process.cwd(), ".local-silo-store.json");
+var fallbackPath = path2.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
 var emptyStore = () => ({ entries: [], allocations: [], shipments: [], nextId: 1 });
 function loadFallbackStore2() {
   if (!existsSync2(fallbackPath)) return emptyStore();
@@ -4657,7 +4698,6 @@ var LEDGER_HEADER_ROW = 5;
 var LEDGER_FIRST_DATA_ROW = 6;
 var LEDGER_COLUMN_WIDTH = 25;
 var LEDGER_ROW_HEIGHT = 30;
-var ACTIVE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F2E4" } };
 var ZEBRA_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7FBF4" } };
 var GRID_BORDER_SIDE = { style: "thin", color: { argb: "FFC4CEC0" } };
 var GRID_BORDER = { top: GRID_BORDER_SIDE, left: GRID_BORDER_SIDE, bottom: GRID_BORDER_SIDE, right: GRID_BORDER_SIDE };
@@ -4678,14 +4718,13 @@ async function buildLotLedgerWorkbook(ledger) {
   writeTitle(worksheet, LEDGER_TITLE_ROW, LEDGER_FIRST_COL, LEDGER_LAST_COL, "\u{1F33E}  TRA\xC7ABILIT\xC9 DES LOTS \u2014 Almara\xEFi Production");
   const summaryRow = worksheet.getRow(LEDGER_SUMMARY_ROW);
   const summaryCell = summaryRow.getCell(LEDGER_FIRST_COL);
-  summaryCell.value = `Export\xE9 le ${LEDGER_DATE_FORMATTER.format(/* @__PURE__ */ new Date())}`;
+  summaryCell.value = `Le ${LEDGER_DATE_FORMATTER.format(/* @__PURE__ */ new Date())}`;
   worksheet.mergeCells(LEDGER_SUMMARY_ROW, LEDGER_FIRST_COL, LEDGER_SUMMARY_ROW, LEDGER_LAST_COL);
-  summaryCell.font = { italic: true, color: { argb: "FF356A40" } };
-  summaryCell.alignment = { vertical: "middle", horizontal: "center" };
-  summaryCell.fill = ACTIVE_FILL;
+  summaryCell.font = { italic: true, color: { argb: "00000000" } };
+  summaryCell.alignment = { vertical: "middle", horizontal: "left" };
   summaryRow.height = 20;
   const headerRow = worksheet.getRow(LEDGER_HEADER_ROW);
-  ["Silo", "Article", "Date d\u2019entr\xE9e", "N\xB0 Lot", "Quantit\xE9 par lot (T)", "Quantit\xE9 silo (T)"].forEach((label, index2) => {
+  ["Silo", "Article", "Date Fabrication", "N\xB0 Lot", "Quantit\xE9 par lot (T)", "Quantit\xE9 silo (T)"].forEach((label, index2) => {
     const cell = headerRow.getCell(LEDGER_FIRST_COL + index2);
     cell.value = label;
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -4706,6 +4745,9 @@ async function buildLotLedgerWorkbook(ledger) {
       articleCell.value = "Vide";
       articleCell.font = { italic: true, color: { argb: "FF86917F" } };
       articleCell.alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 2).alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 3).alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(LEDGER_FIRST_COL + 4).alignment = { vertical: "middle", horizontal: "center" };
       if (shouldStripe) articleCell.fill = ZEBRA_FILL;
       row.getCell(LEDGER_FIRST_COL + 2).value = "\u2014";
       row.getCell(LEDGER_FIRST_COL + 3).value = "\u2014";
@@ -4718,6 +4760,9 @@ async function buildLotLedgerWorkbook(ledger) {
     } else {
       group.lots.forEach((lot) => {
         const row = worksheet.getRow(currentRow);
+        row.getCell(LEDGER_FIRST_COL + 2).alignment = { vertical: "middle", horizontal: "center" };
+        row.getCell(LEDGER_FIRST_COL + 3).alignment = { vertical: "middle", horizontal: "center" };
+        row.getCell(LEDGER_FIRST_COL + 4).alignment = { vertical: "middle", horizontal: "center" };
         row.getCell(LEDGER_FIRST_COL + 2).value = formatLedgerDate(lot.entryDate);
         row.getCell(LEDGER_FIRST_COL + 3).value = lot.lotNumber || "\u2014";
         row.getCell(LEDGER_FIRST_COL + 4).value = lot.remainingQuantity;
@@ -4787,6 +4832,155 @@ async function buildLotLedgerWorkbook(ledger) {
   totalCell.font = { bold: true };
   totalRow.height = LEDGER_ROW_HEIGHT;
   for (let col = LEDGER_FIRST_COL; col <= LEDGER_LAST_COL; col += 1) totalRow.getCell(col).border = GRID_BORDER;
+  const ARTICLE_TABLE_FIRST_COL = LEDGER_LAST_COL + 2;
+  const ARTICLE_TABLE_QTY_COL = ARTICLE_TABLE_FIRST_COL + 1;
+  const articleTotals = /* @__PURE__ */ new Map();
+  activeLots.forEach((lot) => {
+    articleTotals.set(lot.article, roundTons((articleTotals.get(lot.article) ?? 0) + lot.remainingQuantity));
+  });
+  const articleRows = Array.from(articleTotals.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  worksheet.getColumn(ARTICLE_TABLE_FIRST_COL).width = LEDGER_COLUMN_WIDTH;
+  worksheet.getColumn(ARTICLE_TABLE_QTY_COL).width = LEDGER_COLUMN_WIDTH;
+  writeTitle(worksheet, LEDGER_TITLE_ROW, ARTICLE_TABLE_FIRST_COL, ARTICLE_TABLE_QTY_COL, "QUANTIT\xC9 PAR ARTICLE");
+  const articleHeaderRow = worksheet.getRow(LEDGER_HEADER_ROW);
+  ["Article", "Quantit\xE9 (T)"].forEach((label, index2) => {
+    const cell = articleHeaderRow.getCell(ARTICLE_TABLE_FIRST_COL + index2);
+    cell.value = label;
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = TITLE_FILL;
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = GRID_BORDER;
+  });
+  articleRows.forEach(([article, quantity], index2) => {
+    const row = worksheet.getRow(LEDGER_FIRST_DATA_ROW + index2);
+    row.height = LEDGER_ROW_HEIGHT;
+    const articleCell = row.getCell(ARTICLE_TABLE_FIRST_COL);
+    const quantityCell = row.getCell(ARTICLE_TABLE_QTY_COL);
+    articleCell.value = article;
+    articleCell.font = { bold: true };
+    articleCell.alignment = { vertical: "middle", horizontal: "center" };
+    quantityCell.value = quantity;
+    quantityCell.numFmt = '0.00" T"';
+    quantityCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (index2 % 2 === 1) {
+      articleCell.fill = ZEBRA_FILL;
+      quantityCell.fill = ZEBRA_FILL;
+    }
+    articleCell.border = GRID_BORDER;
+    quantityCell.border = GRID_BORDER;
+  });
+  const articleTotalRowNumber = LEDGER_FIRST_DATA_ROW + articleRows.length;
+  const articleTotalRow = worksheet.getRow(articleTotalRowNumber);
+  articleTotalRow.height = LEDGER_ROW_HEIGHT;
+  const articleTotalLabelCell = articleTotalRow.getCell(ARTICLE_TABLE_FIRST_COL);
+  articleTotalLabelCell.value = "Total";
+  articleTotalLabelCell.font = { bold: true };
+  articleTotalLabelCell.alignment = { vertical: "middle", horizontal: "center" };
+  articleTotalLabelCell.border = GRID_BORDER;
+  const articleTotalQtyCell = articleTotalRow.getCell(ARTICLE_TABLE_QTY_COL);
+  if (articleRows.length > 0) {
+    const qtyColLetter = columnLetter(ARTICLE_TABLE_QTY_COL);
+    const formula = `SUM(${qtyColLetter}${LEDGER_FIRST_DATA_ROW}:${qtyColLetter}${articleTotalRowNumber - 1})`;
+    articleTotalQtyCell.value = { formula, result: totalRemaining };
+  } else {
+    articleTotalQtyCell.value = 0;
+  }
+  articleTotalQtyCell.numFmt = '0.00" T"';
+  articleTotalQtyCell.font = { bold: true };
+  articleTotalQtyCell.alignment = { vertical: "middle", horizontal: "center" };
+  articleTotalQtyCell.border = GRID_BORDER;
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+// server/registryExcel.ts
+import ExcelJS6 from "exceljs";
+var FIRST_COL = 2;
+var LAST_COL = FIRST_COL + 6;
+var TITLE_ROW = 2;
+var FILTER_ROW = 3;
+var HEADER_ROW = 5;
+var FIRST_DATA_ROW = 6;
+var COLUMN_WIDTHS = [13, 16, 15, 13, 16, 11, 42];
+var THIN_BORDER = {
+  top: { style: "thin", color: { argb: "FFDADFD5" } },
+  left: { style: "thin", color: { argb: "FFDADFD5" } },
+  bottom: { style: "thin", color: { argb: "FFDADFD5" } },
+  right: { style: "thin", color: { argb: "FFDADFD5" } }
+};
+function describeFilters(filters) {
+  const parts = [];
+  if (filters.query) parts.push(`recherche \xAB ${filters.query} \xBB`);
+  if (filters.dateFrom || filters.dateTo) {
+    const from = filters.dateFrom ? (/* @__PURE__ */ new Date(`${filters.dateFrom}T00:00:00`)).toLocaleDateString("fr-FR") : "\u2026";
+    const to = filters.dateTo ? (/* @__PURE__ */ new Date(`${filters.dateTo}T00:00:00`)).toLocaleDateString("fr-FR") : "\u2026";
+    parts.push(`du ${from} au ${to}`);
+  }
+  return parts.length ? `Filtres : ${parts.join(" \xB7 ")}` : "Aucun filtre appliqu\xE9 (registre complet)";
+}
+async function buildFilteredRegistryWorkbook(rows, filters) {
+  const workbook = new ExcelJS6.Workbook();
+  workbook.creator = "Almara\xEFi Production Pulse";
+  workbook.created = /* @__PURE__ */ new Date();
+  const worksheet = workbook.addWorksheet("Registre journalier", { views: [{ state: "frozen", ySplit: HEADER_ROW }] });
+  COLUMN_WIDTHS.forEach((width, index2) => {
+    worksheet.getColumn(FIRST_COL + index2).width = width;
+  });
+  writeTitle(worksheet, TITLE_ROW, FIRST_COL, LAST_COL, "REGISTRE JOURNALIER \u2014 EXTRAIT FILTR\xC9");
+  const filterRow = worksheet.getRow(FILTER_ROW);
+  const filterCell = filterRow.getCell(FIRST_COL);
+  filterCell.value = `${describeFilters(filters)} \u2014 export\xE9 le ${(/* @__PURE__ */ new Date()).toLocaleDateString("fr-FR")} (${rows.length} ligne${rows.length > 1 ? "s" : ""})`;
+  worksheet.mergeCells(FILTER_ROW, FIRST_COL, FILTER_ROW, LAST_COL);
+  filterCell.font = { italic: true, color: { argb: "FF4D7B40" } };
+  filterCell.alignment = { horizontal: "left" };
+  const headerRow = worksheet.getRow(HEADER_ROW);
+  ["Date", "Article", "Production (T)", "Rebuts (T)", "Disponibilit\xE9 (%)", "TRS (%)", "Commentaire"].forEach((label, index2) => {
+    headerRow.getCell(FIRST_COL + index2).value = label;
+  });
+  styleHeaderRow(headerRow, FIRST_COL, LAST_COL);
+  rows.forEach((row, index2) => {
+    const excelRow = worksheet.getRow(FIRST_DATA_ROW + index2);
+    const dateCell = excelRow.getCell(FIRST_COL);
+    dateCell.value = /* @__PURE__ */ new Date(`${row.productionDate}T00:00:00`);
+    dateCell.numFmt = "dd/mm/yyyy";
+    excelRow.getCell(FIRST_COL + 1).value = row.article;
+    const productionCell = excelRow.getCell(FIRST_COL + 2);
+    productionCell.value = row.productionTons;
+    productionCell.numFmt = "0.00";
+    const wasteCell = excelRow.getCell(FIRST_COL + 3);
+    wasteCell.value = row.wasteTons;
+    wasteCell.numFmt = "0.00";
+    const availabilityCell = excelRow.getCell(FIRST_COL + 4);
+    availabilityCell.value = row.availability;
+    availabilityCell.numFmt = "0%";
+    const trsCell = excelRow.getCell(FIRST_COL + 5);
+    trsCell.value = row.trs;
+    trsCell.numFmt = "0%";
+    const commentCell = excelRow.getCell(FIRST_COL + 6);
+    commentCell.value = row.comment || "";
+    commentCell.alignment = { wrapText: true, vertical: "middle" };
+    for (let col = FIRST_COL; col <= LAST_COL; col += 1) excelRow.getCell(col).border = THIN_BORDER;
+  });
+  const totalRowNumber = FIRST_DATA_ROW + rows.length;
+  const totalRow = worksheet.getRow(totalRowNumber);
+  const totalLabelCell = totalRow.getCell(FIRST_COL);
+  totalLabelCell.value = "Total";
+  const totalBorder = { top: { style: "thin", color: { argb: "FF4D7B40" } } };
+  if (rows.length > 0) {
+    const lastDataRow = totalRowNumber - 1;
+    const productionRange = `${columnLetter(FIRST_COL + 2)}${FIRST_DATA_ROW}:${columnLetter(FIRST_COL + 2)}${lastDataRow}`;
+    const wasteRange = `${columnLetter(FIRST_COL + 3)}${FIRST_DATA_ROW}:${columnLetter(FIRST_COL + 3)}${lastDataRow}`;
+    const productionCell = totalRow.getCell(FIRST_COL + 2);
+    productionCell.value = { formula: `SUM(${productionRange})`, result: rows.reduce((sum, row) => sum + row.productionTons, 0) };
+    productionCell.numFmt = "0.00";
+    const wasteCell = totalRow.getCell(FIRST_COL + 3);
+    wasteCell.value = { formula: `SUM(${wasteRange})`, result: rows.reduce((sum, row) => sum + row.wasteTons, 0) };
+    wasteCell.numFmt = "0.00";
+  }
+  for (let col = FIRST_COL; col <= LAST_COL; col += 1) {
+    const cell = totalRow.getCell(col);
+    cell.font = { bold: true };
+    cell.border = totalBorder;
+  }
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
@@ -4804,23 +4998,9 @@ var recordInput = z2.object({
   if (value.wasteTons > value.productionTons) ctx.addIssue({ code: z2.ZodIssueCode.custom, path: ["wasteTons"], message: "Les rebuts ne peuvent pas d\xE9passer la production." });
   if (value.plannedStopsHours + value.unplannedStopsHours > value.totalProductionHours) ctx.addIssue({ code: z2.ZodIssueCode.custom, path: ["unplannedStopsHours"], message: "Les arr\xEAts cumul\xE9s ne peuvent pas d\xE9passer le temps total." });
 });
-async function isActionPasswordValid(password) {
-  const settings = await getProductionSettings();
-  console.log("Checking action password validity:", { password, settings });
-  if (settings?.actionPasswordHash && settings.actionPasswordSalt) {
-    return verifyActionPasswordDigest(password, { hash: settings.actionPasswordHash, salt: settings.actionPasswordSalt });
-  }
-  return Boolean(process.env.COMMENT_EDIT_PASSWORD) && password === process.env.COMMENT_EDIT_PASSWORD;
-}
-async function assertProductionActionAuthorized(password) {
-  const settings = await getProductionSettings();
-  const hasStoredActionPassword = Boolean(settings?.actionPasswordHash && settings.actionPasswordSalt);
-  const hasLegacyEnvPassword = Boolean(process.env.COMMENT_EDIT_PASSWORD);
-  if (!hasStoredActionPassword && !hasLegacyEnvPassword) {
-    return;
-  }
-  if (!password || !await isActionPasswordValid(password)) {
-    throw new TRPCError2({ code: "FORBIDDEN", message: "Le mot de passe est requis pour modifier, supprimer ou g\xE9rer les param\xE8tres." });
+function assertAdminSession(ctx) {
+  if (!ctx.isAdmin) {
+    throw new TRPCError2({ code: "FORBIDDEN", message: "Connectez-vous en tant qu\u2019administrateur pour effectuer cette action." });
   }
 }
 async function assertShipmentWithinStock(silo, article, quantity, excludeShipmentId) {
@@ -4833,6 +5013,15 @@ async function assertShipmentWithinStock(silo, article, quantity, excludeShipmen
       message: `La quantit\xE9 exp\xE9di\xE9e (${quantity.toFixed(2)} T) d\xE9passe le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`
     });
   }
+}
+var DEFAULT_ADMIN_USERNAME = "admin";
+var DEFAULT_ADMIN_PASSWORD = "123456";
+async function verifyAdminCredentials(username, password) {
+  const settings = await getProductionSettings();
+  if (settings?.adminUsername && settings.adminPasswordHash && settings.adminPasswordSalt) {
+    return username === settings.adminUsername && verifyActionPasswordDigest(password, { hash: settings.adminPasswordHash, salt: settings.adminPasswordSalt });
+  }
+  return username === DEFAULT_ADMIN_USERNAME && password === DEFAULT_ADMIN_PASSWORD;
 }
 var recordWithCommentInput = recordInput.safeExtend({
   comment: z2.string().trim().max(1e3, "Le commentaire ne peut pas d\xE9passer 1 000 caract\xE8res.").optional()
@@ -4876,6 +5065,11 @@ var siloShipmentInput = z2.object({
   silo: siloInput,
   shipmentType: z2.enum(SHIPMENT_TYPES)
 });
+var registryFilterInput = z2.object({
+  query: z2.string().trim().max(200).optional(),
+  dateFrom: optionalDateInput,
+  dateTo: optionalDateInput
+});
 var EXCEL_IMPORT_MAX_BYTES = 57e5;
 var importFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
 var importSourceInput = z2.string().startsWith("production-import/");
@@ -4909,76 +5103,99 @@ function calculateRecord(input) {
 }
 var appRouter = router({
   system: systemRouter,
+  auth: router({
+    me: publicProcedure.query(async ({ ctx }) => {
+      if (!ctx.isAdmin) return { role: "visiteur", username: null };
+      const settings = await getProductionSettings();
+      return { role: "admin", username: settings?.adminUsername || DEFAULT_ADMIN_USERNAME };
+    }),
+    login: publicProcedure.input(z2.object({ username: z2.string().trim().min(1, "Indiquez l\u2019identifiant."), password: z2.string().min(1, "Indiquez le mot de passe.") })).mutation(async ({ ctx, input }) => {
+      const valid = await verifyAdminCredentials(input.username, input.password);
+      if (!valid) throw new TRPCError2({ code: "UNAUTHORIZED", message: "Identifiant ou mot de passe incorrect." });
+      const token = await signAdminSession();
+      ctx.res.cookie(ADMIN_SESSION_COOKIE, token, { ...getAdminSessionCookieOptions(ctx.req), maxAge: ADMIN_SESSION_DURATION_MS });
+      return { success: true };
+    }),
+    logout: publicProcedure.mutation(({ ctx }) => {
+      ctx.res.clearCookie(ADMIN_SESSION_COOKIE, getAdminSessionCookieOptions(ctx.req));
+      return { success: true };
+    }),
+    changeAdminCredentials: publicProcedure.input(z2.object({
+      currentPassword: z2.string().min(1, "Indiquez le mot de passe actuel."),
+      newUsername: z2.string().trim().min(1, "Indiquez un identifiant.").max(64),
+      newPassword: z2.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caract\xE8res.").max(128)
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const settings = await getProductionSettings();
+      const currentValid = settings?.adminUsername && settings.adminPasswordHash && settings.adminPasswordSalt ? verifyActionPasswordDigest(input.currentPassword, { hash: settings.adminPasswordHash, salt: settings.adminPasswordSalt }) : input.currentPassword === DEFAULT_ADMIN_PASSWORD;
+      if (!currentValid) throw new TRPCError2({ code: "FORBIDDEN", message: "Mot de passe actuel incorrect." });
+      await saveAdminCredentials(input.newUsername, createActionPasswordDigest(input.newPassword));
+      return { success: true };
+    })
+  }),
   settings: router({
     listArticles: publicProcedure.query(async () => {
       await initializeProductionArticles();
       return listActiveProductionArticles();
     }),
-    addArticle: publicProcedure.input(z2.object({ code: z2.string().trim().min(1, "Saisissez un article.").max(64), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    addArticle: publicProcedure.input(z2.object({ code: z2.string().trim().min(1, "Saisissez un article.").max(64) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return addProductionArticle(input.code);
     }),
-    archiveArticle: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    archiveArticle: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return archiveProductionArticle(input.id);
     }),
     listOperators: publicProcedure.query(() => listActiveProductionOperators()),
-    addOperator: publicProcedure.input(z2.object({ name: z2.string().trim().min(1, "Saisissez un pupitreur.").max(128), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    addOperator: publicProcedure.input(z2.object({ name: z2.string().trim().min(1, "Saisissez un pupitreur.").max(128) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return addProductionOperator(input.name);
     }),
-    archiveOperator: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    archiveOperator: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return archiveProductionOperator(input.id);
-    }),
-    changeActionPassword: publicProcedure.input(z2.object({ currentPassword: z2.string().optional(), newPassword: z2.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caract\xE8res.").max(128) })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.currentPassword);
-      await saveActionPasswordDigest(createActionPasswordDigest(input.newPassword));
-      return { success: true };
     })
   }),
   dailyProgram: router({
     list: publicProcedure.query(() => listDailyPrograms()),
     byDate: publicProcedure.input(z2.object({ programDate: dateInput })).query(({ input }) => getDailyProgramByDate(input.programDate)),
-    create: publicProcedure.input(dailyProgramInput.safeExtend({ actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, ...program } = input;
-      return createDailyProgram(program);
+    create: publicProcedure.input(dailyProgramInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return createDailyProgram(input);
     }),
-    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, ...program } = input;
+    update: publicProcedure.input(dailyProgramInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, ...program } = input;
       return updateDailyProgram(id, program);
     }),
-    delete: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    delete: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteDailyProgram(input.id);
     }),
-    createLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, ...line } = input;
-      return createDailyProgramLine(line);
+    createLine: publicProcedure.input(dailyProgramLineInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return createDailyProgramLine(input);
     }),
-    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, ...line } = input;
+    updateLine: publicProcedure.input(dailyProgramLineInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, ...line } = input;
       return updateDailyProgramLine(id, line);
     }),
-    deleteLine: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteLine: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteDailyProgramLine(input.id);
     }),
     /** Prépare le téléversement direct du classeur Programme de Production (hors corps de fonction). */
-    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `${PROGRAM_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       if (isVercelBlobConfigured()) return { mode: "vercel-blob", key: relKey };
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
     /** Lit le classeur téléversé : chaque journée trouvée remplace intégralement le programme existant à cette date. */
-    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(PROGRAM_IMPORT_PREFIX), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(PROGRAM_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -5025,47 +5242,47 @@ var appRouter = router({
       };
     }),
     listEntries: publicProcedure.query(() => listSiloProductionEntries()),
-    createEntry: publicProcedure.input(siloEntryInput.safeExtend({ actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { actionPassword, allocations, totalQuantity, ...entry } = input;
+    createEntry: publicProcedure.input(siloEntryInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { allocations, totalQuantity, ...entry } = input;
       return createSiloProductionEntry({ ...entry, totalQuantity: totalQuantity === void 0 ? null : totalQuantity.toFixed(2) }, allocations);
     }),
-    updateEntry: publicProcedure.input(siloEntryInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
-      const { id, actionPassword, allocations, totalQuantity, ...entry } = input;
+    updateEntry: publicProcedure.input(siloEntryInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, allocations, totalQuantity, ...entry } = input;
       return updateSiloProductionEntry(id, { ...entry, totalQuantity: totalQuantity === void 0 ? null : totalQuantity.toFixed(2) }, allocations);
     }),
-    deleteEntry: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteEntry: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteSiloProductionEntry(input.id);
     }),
     listShipments: publicProcedure.query(() => listSiloShipments()),
-    createShipment: publicProcedure.input(siloShipmentInput.safeExtend({ actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    createShipment: publicProcedure.input(siloShipmentInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity);
-      const { actionPassword, quantity, ...shipment } = input;
+      const { quantity, ...shipment } = input;
       return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
     }),
-    updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity, input.id);
-      const { id, actionPassword, quantity, ...shipment } = input;
+      const { id, quantity, ...shipment } = input;
       return updateSiloShipment(id, { ...shipment, quantity: quantity.toFixed(2) });
     }),
-    deleteShipment: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    deleteShipment: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       return deleteSiloShipment(input.id);
     }),
     /** Prépare le téléversement direct du classeur Silo_PF (hors corps de fonction). */
-    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `${SILO_IMPORT_PREFIX}${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       if (isVercelBlobConfigured()) return { mode: "vercel-blob", key: relKey };
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(SILO_IMPORT_PREFIX), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: z2.string().startsWith(SILO_IMPORT_PREFIX) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -5135,13 +5352,13 @@ var appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
-    importExcel: publicProcedure.input(z2.object({ fileName: z2.string().trim().min(1).max(255), fileBase64: z2.string().min(1).max(8e6), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
+    importExcel: publicProcedure.input(z2.object({ fileName: z2.string().trim().min(1).max(255), fileBase64: z2.string().min(1).max(8e6) })).mutation(async ({ ctx, input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError2({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
-      await assertProductionActionAuthorized(input.actionPassword);
+      assertAdminSession(ctx);
       return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
     }),
-    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const relKey = `production-import/${Date.now()}-${input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-")}`;
       if (isVercelBlobConfigured()) {
         return { mode: "vercel-blob", key: relKey };
@@ -5149,8 +5366,8 @@ var appRouter = router({
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput, actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const sourceUrl = await storageGetSignedUrl(input.storageKey);
       const response = await fetch(sourceUrl);
       if (!response.ok) {
@@ -5163,24 +5380,40 @@ var appRouter = router({
       return importWorkbookBuffer(buffer);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
-    verifyActionPassword: publicProcedure.input(z2.object({ password: z2.string() })).mutation(async ({ input }) => ({
-      authorized: await isActionPasswordValid(input.password)
-    })),
-    create: publicProcedure.input(recordWithCommentInput).mutation(async ({ input }) => {
+    /** Export Excel du registre filtré (page Rapports) : même recherche/période que le Registre. */
+    exportFilteredExcel: publicProcedure.input(registryFilterInput).query(async ({ input }) => {
+      const queryLower = input.query?.toLowerCase();
+      const rows = (await listProductionRecords()).map((record) => ({ ...record, productionDate: record.productionDate.slice(0, 10) })).filter((record) => (!queryLower || record.article.toLowerCase().includes(queryLower) || record.productionDate.includes(queryLower) || record.comment?.toLowerCase().includes(queryLower)) && (!input.dateFrom || record.productionDate >= input.dateFrom) && (!input.dateTo || record.productionDate <= input.dateTo)).sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id).map((record) => ({
+        productionDate: record.productionDate,
+        article: record.article,
+        productionTons: Number(record.productionTons),
+        wasteTons: Number(record.wasteTons),
+        availability: Number(record.availability),
+        trs: Number(record.trs),
+        comment: record.comment
+      }));
+      const workbook = await buildFilteredRegistryWorkbook(rows, input);
+      return {
+        fileName: `Registre_Filtre_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64")
+      };
+    }),
+    create: publicProcedure.input(recordWithCommentInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const { comment, ...record } = input;
       const created = await createProductionRecord({ ...calculateRecord(record), comment: comment || null, source: "manual" });
       await syncExcelFromRecords();
       return created;
     }),
-    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      const { id, comment, actionPassword, ...record } = input;
-      await assertProductionActionAuthorized(actionPassword);
+    update: publicProcedure.input(recordWithCommentInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { id, comment, ...record } = input;
       const updated = await updateProductionRecord(id, { ...calculateRecord(record), ...comment !== void 0 ? { comment } : {} });
       await syncExcelFromRecords();
       return updated;
     }),
-    delete: publicProcedure.input(z2.object({ id: z2.number().int().positive(), actionPassword: z2.string().optional() })).mutation(async ({ input }) => {
-      await assertProductionActionAuthorized(input.actionPassword);
+    delete: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;
@@ -5196,15 +5429,10 @@ function registerBlobUploadRoute(app2) {
       const jsonResponse = await handleUploadPresigned({
         body: req.body,
         request: req,
-        getSignedToken: async (pathname, clientPayload) => {
-          let actionPassword;
-          if (clientPayload) {
-            try {
-              actionPassword = JSON.parse(clientPayload).actionPassword;
-            } catch {
-            }
+        getSignedToken: async (pathname) => {
+          if (!await isAdminRequest(req)) {
+            throw new Error("Connectez-vous en tant qu\u2019administrateur pour importer ce fichier.");
           }
-          await assertProductionActionAuthorized(actionPassword);
           const token = await issueSignedToken2({
             pathname,
             operations: ["put"],
@@ -5276,7 +5504,8 @@ async function createContext(opts) {
   return {
     req: opts.req,
     res: opts.res,
-    user: null
+    user: null,
+    isAdmin: await isAdminRequest(opts.req)
   };
 }
 

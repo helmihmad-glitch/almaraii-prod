@@ -3,11 +3,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const registryPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Registry.tsx", import.meta.url)), "utf8");
+const reportsPage = readFileSync(fileURLToPath(new URL("../client/src/pages/Reports.tsx", import.meta.url)), "utf8");
 const dayPdfReport = readFileSync(fileURLToPath(new URL("../client/src/lib/dayPdfReport.ts", import.meta.url)), "utf8");
 const routers = readFileSync(fileURLToPath(new URL("./routers.ts", import.meta.url)), "utf8");
 
-describe("import Excel et rapport PDF du registre", () => {
-  it("propose un import Excel xlsx protégé par une confirmation de mot de passe accessible", () => {
+describe("import Excel du registre et rapport PDF journalier (centralisé dans Rapports)", () => {
+  it("propose un import Excel xlsx via une confirmation accessible, protégée par la session admin", () => {
     expect(registryPage).toContain("trpc.production.prepareExcelUpload.useMutation");
     expect(registryPage).toContain("trpc.production.importExcelFromStorage.useMutation");
     expect(registryPage).toContain("prepared.uploadUrl");
@@ -18,13 +19,23 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(registryPage).toContain("Importer Excel");
     expect(registryPage).toContain("accept=\".xlsx");
     expect(registryPage).toContain("Confirmation d’import");
-    expect(registryPage).toContain("Mot de passe d’action");
-    expect(registryPage).not.toContain("window.prompt(\"Saisissez le mot de passe pour importer");
+    expect(registryPage).not.toContain("Mot de passe d’action");
+    expect(registryPage).not.toContain("actionPassword");
+    expect(registryPage).toContain("window.confirm(\"Supprimer cette ligne du registre ?\")");
   });
 
-  it("construit un PDF journalier accessible depuis chaque ligne du registre", () => {
-    expect(registryPage).toContain("generateDayPdf");
-    expect(registryPage).toContain("requestDayPdf");
+  it("ne propose plus le PDF journalier ni l’export CSV/Excel directement depuis le Registre : un lien renvoie vers Rapports", () => {
+    expect(registryPage).not.toContain("generateDayPdf");
+    expect(registryPage).not.toContain("requestDayPdf");
+    expect(registryPage).not.toContain("exportRows");
+    expect(registryPage).not.toContain("downloadSynchronizedExcel");
+    expect(registryPage).not.toContain("synchronizedFileQuery");
+    expect(registryPage).toContain('href="/rapports"');
+    expect(registryPage).toContain("Voir les rapports");
+  });
+
+  it("construit un PDF journalier depuis le centre de rapports", () => {
+    expect(reportsPage).toContain("generateDayPdf");
     expect(dayPdfReport).toContain('import("jspdf")');
     expect(dayPdfReport).toContain("RAPPORT JOURNALIER");
     expect(dayPdfReport).toContain("PRODUCTION DE LA JOURNÉE");
@@ -35,8 +46,8 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).toContain("PERFORMANCE");
     expect(dayPdfReport).toContain("REBUTS / DÉCHETS");
     expect(dayPdfReport).toContain("TEMPS TOTAL PROD.");
-    expect(registryPage).toContain("Exporter le PDF de cette journée");
-    expect(registryPage).not.toContain("Télécharger PDF");
+    expect(reportsPage).toContain("Rapport PDF (par jour)");
+    expect(reportsPage).toContain("Exporter le PDF");
   });
 
   it("ajoute l’objectif mensuel, le logo et un commentaire facultatif au rapport", () => {
@@ -57,7 +68,7 @@ describe("import Excel et rapport PDF du registre", () => {
     expect(dayPdfReport).toContain("ACTIVES");
     expect(dayPdfReport).toContain("PERDUES");
     expect(dayPdfReport).toContain("COMMENTAIRE AJOUTÉ À L’EXPORT");
-    expect(registryPage).toContain("Ajouter un <em>commentaire</em> au PDF ?");
-    expect(registryPage).toContain("Exporter sans commentaire");
+    expect(reportsPage).toContain("Commentaire d’export (facultatif)");
+    expect(reportsPage).toContain("exportComment: pdfComment");
   });
 });

@@ -1,17 +1,19 @@
 import type { Express } from "express";
 import { issueSignedToken } from "@vercel/blob";
 import { handleUploadPresigned, type HandleUploadPresignedBody } from "@vercel/blob/client";
-import { assertProductionActionAuthorized, EXCEL_IMPORT_MAX_BYTES } from "../routers";
+import { EXCEL_IMPORT_MAX_BYTES } from "../routers";
+import { isAdminRequest } from "./adminSession";
 
 const EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /**
  * Route serveur requise par `uploadPresigned()` de `@vercel/blob/client`
  * (utilisée côté navigateur pour l’import Excel) : elle délivre, après
- * vérification du mot de passe d’action, un jeton signé de courte durée
- * permettant au fichier d’aller directement du navigateur vers Vercel Blob
- * sans transiter par le corps de la fonction (limité à quelques Mo sur
- * Vercel).
+ * vérification de la session admin (même cookie que le reste de l’API — cette
+ * requête est envoyée au même domaine, donc le navigateur l’attache
+ * automatiquement), un jeton signé de courte durée permettant au fichier
+ * d’aller directement du navigateur vers Vercel Blob sans transiter par le
+ * corps de la fonction (limité à quelques Mo sur Vercel).
  *
  * `handleUploadPresigned` / `issueSignedToken` sont utilisés plutôt que
  * `handleUpload` / `generateClientTokenFromReadWriteToken` : ces derniers
@@ -27,16 +29,10 @@ export function registerBlobUploadRoute(app: Express) {
       const jsonResponse = await handleUploadPresigned({
         body: req.body as HandleUploadPresignedBody,
         request: req,
-        getSignedToken: async (pathname, clientPayload) => {
-          let actionPassword: string | undefined;
-          if (clientPayload) {
-            try {
-              actionPassword = (JSON.parse(clientPayload) as { actionPassword?: string }).actionPassword;
-            } catch {
-              // Payload non-JSON : traité comme un mot de passe manquant.
-            }
+        getSignedToken: async (pathname) => {
+          if (!(await isAdminRequest(req))) {
+            throw new Error("Connectez-vous en tant qu’administrateur pour importer ce fichier.");
           }
-          await assertProductionActionAuthorized(actionPassword);
           const token = await issueSignedToken({
             pathname,
             operations: ["put"],

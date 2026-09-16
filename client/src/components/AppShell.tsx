@@ -1,10 +1,11 @@
 // Coque commune : rail latéral de navigation partagé par toutes les pages.
 // Les pages conservent leur propre en-tête (actions spécifiques) et reçoivent
 // le bouton d’ouverture du rail sur mobile via `useSidebar()`.
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Boxes, CalendarDays, ChevronDown, ClipboardList, LayoutDashboard, PackageSearch, Settings2, X, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, ChevronDown, ClipboardList, FileSpreadsheet, LayoutDashboard, LogIn, LogOut, PackageSearch, Settings2, X, type LucideIcon } from "lucide-react";
 import { BRAND_LOGO_URL } from "@/lib/brand";
+import { trpc } from "@/lib/trpc";
 
 type SidebarContextValue = { openSidebar: () => void };
 const SidebarContext = createContext<SidebarContextValue>({ openSidebar: () => {} });
@@ -26,14 +27,15 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    kind: "group", label: "État des silos", icon: Boxes, children: [
+    kind: "group", label: "Flux de Production", icon: ArrowLeftRight, children: [
+      { path: "/silo-pf-production", label: "Production" },
+      { path: "/silo-pf-expedition", label: "Expédition" },
       { path: "/silo-pf", label: "Silo PF" },
-      { path: "/silo-pf-production", label: "Ajouter production" },
-      { path: "/silo-pf-expedition", label: "Ajouter expédition" },
     ],
   },
   { kind: "link", path: "/silo-pf-lots", label: "Traçabilité des lots", icon: PackageSearch },
   { kind: "link", path: "/registre", label: "Registre journalier", icon: ClipboardList },
+  { kind: "link", path: "/rapports", label: "Rapports", icon: FileSpreadsheet },
 ];
 
 /** Groupe (par étiquette) dont un enfant correspond au chemin actuel. */
@@ -44,9 +46,38 @@ function groupLabelForPath(path: string): string | null {
   return null;
 }
 
+// Pages visibles sans connexion : l’essentiel du suivi, en lecture. Le reste
+// (saisies, imports, paramètres) exige la session admin — voir AdminRoute
+// dans App.tsx, qui applique le même contrôle côté route, pas seulement ici.
+const VISITOR_ALLOWED_PATHS = new Set<string>(["/", "/programme-journalier", "/silo-pf", "/silo-pf-lots"]);
+
+/** Filtre le rail pour un visiteur : retire les liens non autorisés, et un groupe réduit à un seul enfant devient un lien direct plutôt qu’un groupe à déplier. */
+function filterNavItemsForRole(role: "admin" | "visiteur"): NavItem[] {
+  if (role === "admin") return NAV_ITEMS;
+  const filtered: NavItem[] = [];
+  for (const item of NAV_ITEMS) {
+    if (item.kind === "link") {
+      if (VISITOR_ALLOWED_PATHS.has(item.path)) filtered.push(item);
+      continue;
+    }
+    const children = item.children.filter((child) => VISITOR_ALLOWED_PATHS.has(child.path));
+    if (children.length === 0) continue;
+    if (children.length === 1) filtered.push({ kind: "link", path: children[0].path, label: children[0].label, icon: item.icon });
+    else filtered.push({ ...item, children });
+  }
+  return filtered;
+}
+
 export default function AppShell({ children, shortcuts }: { children: ReactNode; shortcuts?: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [location, setLocation] = useLocation();
+  const utils = trpc.useUtils();
+  const meQuery = trpc.auth.me.useQuery();
+  const role = meQuery.data?.role ?? "visiteur";
+  const navItems = useMemo(() => filterNavItemsForRole(role), [role]);
+  const logout = trpc.auth.logout.useMutation({
+    onSuccess: async () => { await utils.auth.me.invalidate(); setLocation("/"); },
+  });
   // Groupes dépliés : on ouvre automatiquement celui qui contient la page
   // actuelle (y compris lors d’un accès direct par lien, pas seulement via un
   // clic dans le rail), et l’utilisateur peut en déplier d’autres ensuite.
@@ -80,7 +111,7 @@ export default function AppShell({ children, shortcuts }: { children: ReactNode;
           <div className="rail-section">
             <span className="rail-label">Espace opérationnel</span>
             <nav>
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 if (item.kind === "link") {
                   const Icon = item.icon;
                   return (
@@ -121,7 +152,14 @@ export default function AppShell({ children, shortcuts }: { children: ReactNode;
             <span className="rail-label">Raccourcis</span>
             <nav>
               {shortcuts}
-              <button className={`rail-link ${location === "/parametres" ? "active" : ""}`} onClick={() => navigate("/parametres")}><Settings2 size={17} />Paramètres</button>
+              {role === "admin" ? (
+                <>
+                  <button className={`rail-link ${location === "/parametres" ? "active" : ""}`} onClick={() => navigate("/parametres")}><Settings2 size={17} />Paramètres</button>
+                  <button className="rail-link" onClick={() => logout.mutate()} disabled={logout.isPending}><LogOut size={17} />Déconnexion</button>
+                </>
+              ) : (
+                <button className={`rail-link ${location === "/connexion" ? "active" : ""}`} onClick={() => navigate("/connexion")}><LogIn size={17} />Se connecter</button>
+              )}
             </nav>
           </div>
           <div className="rail-footer">

@@ -66,8 +66,10 @@ export const productionOperators = pgTable("production_operators", {
 
 export const productionSettings = pgTable("production_settings", {
   id: integer("id").primaryKey(),
-  actionPasswordHash: varchar("actionPasswordHash", { length: 128 }),
-  actionPasswordSalt: varchar("actionPasswordSalt", { length: 64 }),
+  /** Identifiants admin (rôle admin/visiteur) — sans ligne stockée, "admin" / "123456" fait office de valeur par défaut. La session admin qu'ils ouvrent est désormais la seule autorisation exigée pour saisir, modifier, supprimer ou importer (l'ancien mot de passe d'action séparé a été retiré). */
+  adminUsername: varchar("adminUsername", { length: 64 }),
+  adminPasswordHash: varchar("adminPasswordHash", { length: 128 }),
+  adminPasswordSalt: varchar("adminPasswordSalt", { length: 64 }),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 

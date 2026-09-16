@@ -18,7 +18,9 @@ type FallbackShipment = { id: number; shipmentDate: string | null; article: stri
 // Stockage de secours pour le développement local sans base de données, sur le
 // même principe que server/db.ts : les écritures échouant sur un système de
 // fichiers en lecture seule (fonction serverless) sont simplement ignorées.
-const fallbackPath = path.resolve(process.cwd(), ".local-silo-store.json");
+// Vitest (process.env.VITEST) utilise son propre fichier, jamais celui du
+// serveur de développement — voir le commentaire équivalent dans server/db.ts.
+const fallbackPath = path.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
 const emptyStore = () => ({ entries: [] as FallbackEntry[], allocations: [] as FallbackAllocation[], shipments: [] as FallbackShipment[], nextId: 1 });
 
 function loadFallbackStore() {

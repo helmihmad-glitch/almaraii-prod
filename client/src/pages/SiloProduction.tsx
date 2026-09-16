@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, Database, Download, Menu, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, Boxes, Database, Menu, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
@@ -28,11 +28,9 @@ const parseQuantity = (value: string) => {
 export default function SiloProduction() {
   const { openSidebar } = useSidebar();
   const utils = trpc.useUtils();
-  const [actionPassword, setActionPassword] = useState("");
   const [entryDraft, setEntryDraft] = useState<EntryDraft>(emptyEntry);
   const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
   const [pendingImport, setPendingImport] = useState<File | null>(null);
-  const [importPassword, setImportPassword] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -51,7 +49,6 @@ export default function SiloProduction() {
   const deleteEntry = trpc.silo.deleteEntry.useMutation({ onSuccess: async () => { await refresh(); toast.success("Entrée de production supprimée"); }, onError: onError("Impossible de supprimer cette entrée.") });
   const prepareImport = trpc.silo.prepareExcelUpload.useMutation();
   const importFromStorage = trpc.silo.importExcelFromStorage.useMutation();
-  const exportWorkbook = trpc.useUtils().silo.exportExcel;
 
   const handleImportFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -64,28 +61,25 @@ export default function SiloProduction() {
   const submitImport = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!pendingImport) return;
-    if (!importPassword) { toast.error("Saisissez le mot de passe de gestion pour importer ce classeur."); return; }
     setIsImporting(true);
     try {
-      const prepared = await prepareImport.mutateAsync({ fileName: pendingImport.name, actionPassword: importPassword });
+      const prepared = await prepareImport.mutateAsync({ fileName: pendingImport.name });
       const contentType = pendingImport.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       if (prepared.mode === "vercel-blob") {
         await uploadToVercelBlob(prepared.key, pendingImport, {
           access: "private",
           handleUploadUrl: "/api/blob-upload",
           contentType,
-          clientPayload: JSON.stringify({ actionPassword: importPassword }),
         });
       } else {
         const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingImport });
         if (!upload.ok) throw new Error("Le téléversement du classeur a échoué. Vérifiez votre connexion puis réessayez.");
       }
-      const result = await importFromStorage.mutateAsync({ storageKey: prepared.key, actionPassword: importPassword });
+      const result = await importFromStorage.mutateAsync({ storageKey: prepared.key });
       await refresh();
       toast.success("Import du classeur terminé", { description: `${result.entries} entrée(s) de production et ${result.shipments} expédition(s) reprises depuis le fichier.` });
       if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") });
       setPendingImport(null);
-      setImportPassword("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "L’import du classeur a échoué.");
     } finally {
@@ -93,38 +87,12 @@ export default function SiloProduction() {
     }
   };
 
-  const [isExporting, setIsExporting] = useState(false);
-  const downloadWorkbook = async () => {
-    setIsExporting(true);
-    try {
-      const { fileName, fileBase64 } = await exportWorkbook.fetch();
-      const bytes = Uint8Array.from(atob(fileBase64), (character) => character.charCodeAt(0));
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(url);
-      toast.success("Classeur Silo PF exporté", { description: fileName });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "L’export du classeur a échoué.");
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
   const allocatedTotal = SILOS.reduce((total, silo) => total + (parseQuantity(entryDraft.allocations[silo] ?? "") || 0), 0);
   const declaredTotal = parseQuantity(entryDraft.totalQuantity);
   const totalMismatch = declaredTotal !== undefined && declaredTotal !== null && Math.abs(declaredTotal - allocatedTotal) > 0.005;
 
-  const requirePassword = () => {
-    if (!actionPassword) { toast.error("Saisissez le mot de passe de gestion pour enregistrer."); return false; }
-    return true;
-  };
-
   const submitEntry = (event: React.FormEvent) => {
     event.preventDefault();
-    if (!requirePassword()) return;
     if (!entryDraft.article.trim()) { toast.error("Indiquez l’article produit."); return; }
 
     const allocations: { silo: typeof SILOS[number]; quantity: number }[] = [];
@@ -142,7 +110,6 @@ export default function SiloProduction() {
       lotNumber: entryDraft.lotNumber.trim() || undefined,
       totalQuantity: declaredTotal,
       allocations,
-      actionPassword,
     };
     if (editingEntryId) updateEntry.mutate({ id: editingEntryId, ...payload }); else createEntry.mutate(payload);
   };
@@ -160,7 +127,7 @@ export default function SiloProduction() {
     });
   };
 
-  const removeEntry = (id: number) => { if (requirePassword() && window.confirm("Supprimer cette entrée de production et sa répartition ?")) deleteEntry.mutate({ id, actionPassword }); };
+  const removeEntry = (id: number) => { if (window.confirm("Supprimer cette entrée de production et sa répartition ?")) deleteEntry.mutate({ id }); };
   const articleOptions = articles.map((article) => article.code);
 
   return (
@@ -182,12 +149,7 @@ export default function SiloProduction() {
             <div className="silo-file-actions">
               <input ref={importInputRef} type="file" accept=".xlsx" onChange={handleImportFile} hidden />
               <button type="button" className="silo-secondary" onClick={() => importInputRef.current?.click()}><Upload size={15} />Importer le classeur</button>
-              <button type="button" className="silo-secondary" onClick={downloadWorkbook} disabled={isExporting}><Download size={15} />{isExporting ? "Export…" : "Exporter le classeur"}</button>
             </div>
-            <label className="silo-password-card">
-              <span>Mot de passe de gestion</span>
-              <input type="password" value={actionPassword} onChange={(event) => setActionPassword(event.target.value)} placeholder="Mot de passe actuel" autoComplete="current-password" />
-            </label>
           </div>
         </div>
 
@@ -197,9 +159,8 @@ export default function SiloProduction() {
               <span className="silo-section-label"><Upload size={14} />Confirmation d’import</span>
               <h2>Importer {pendingImport.name}</h2>
               <p>Les entrées de production et les expéditions du classeur <strong>remplacent</strong> les mouvements enregistrés : l’état des silos correspondra exactement au fichier.</p>
-              <label>Mot de passe de gestion<input type="password" value={importPassword} onChange={(event) => setImportPassword(event.target.value)} autoFocus autoComplete="current-password" /></label>
               <div className="silo-form-actions">
-                <button type="button" className="silo-secondary" onClick={() => { setPendingImport(null); setImportPassword(""); }} disabled={isImporting}>Annuler</button>
+                <button type="button" className="silo-secondary" onClick={() => setPendingImport(null)} disabled={isImporting}>Annuler</button>
                 <button type="submit" className="silo-primary" disabled={isImporting}><Upload size={15} />{isImporting ? "Import en cours…" : "Confirmer l’import"}</button>
               </div>
             </form>
