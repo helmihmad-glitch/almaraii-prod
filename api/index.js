@@ -632,8 +632,13 @@ async function archiveProductionOperator(id) {
 async function getProductionSettings() {
   const db = await getDb();
   if (!db) return fallbackSettings;
-  const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
-  return rows[0];
+  try {
+    const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
+    return rows[0];
+  } catch (error) {
+    console.error("[Database] Lecture de production_settings impossible (sch\xE9ma d\xE9synchronis\xE9 avec une migration en attente ?) :", error);
+    return void 0;
+  }
 }
 async function getSynchronizedExcelFileFallback() {
   return fallbackSynchronizedFile;

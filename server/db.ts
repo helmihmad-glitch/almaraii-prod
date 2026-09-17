@@ -659,8 +659,18 @@ export async function archiveProductionOperator(id: number) {
 export async function getProductionSettings() {
   const db = await getDb();
   if (!db) return fallbackSettings;
-  const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
-  return rows[0];
+  try {
+    const rows = await db.select().from(productionSettings).where(eq(productionSettings.id, 1)).limit(1);
+    return rows[0];
+  } catch (error) {
+    // Ne doit jamais faire planter la fonction (ex. auth.login) : une colonne
+    // manquante (migration pas encore appliquée à cette base) ou un incident
+    // Postgres transitoire dégrade vers "aucun réglage enregistré" plutôt que
+    // de faire échouer toute la requête (login, connexion, etc. retombent
+    // alors sur leurs valeurs par défaut).
+    console.error("[Database] Lecture de production_settings impossible (schéma désynchronisé avec une migration en attente ?) :", error);
+    return undefined;
+  }
 }
 
 export async function getSynchronizedExcelFileFallback() {
