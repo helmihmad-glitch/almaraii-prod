@@ -169,15 +169,20 @@ export default function Home() {
   const updateRegistryPeriod = (nextPeriod: string) => { setSelectedPeriod(nextPeriod); clearRegistryFilters(); };
   const articles = useMemo(() => Array.from(new Set(monthlyRows.map((d) => d.article))).map((article) => { const production = monthlyRows.filter((d) => d.article === article).reduce((sum, d) => sum + d.production, 0); return { article, production, share: monthlyStats.production > 0 ? production / monthlyStats.production : 0 }; }), [monthlyRows, monthlyStats.production]);
   const chartData = useMemo(() => {
-    const grouped = new Map<string, { date: string; production: number; trs: number; waste: number }>();
-    filteredDays.forEach((day) => { const current = grouped.get(day.date) ?? { date: day.date, production: 0, trs: 0, waste: 0 }; current.production += day.production; current.trs = Math.max(current.trs, day.trs); current.waste += day.waste; grouped.set(day.date, current); });
-    return Array.from(grouped.values()).map((item) => ({ ...item, label: shortDate(item.date), trs: Math.round(item.trs * 100) }));
+    // Le TRS d'une journée n'est pas le max (ni une moyenne) des TRS de ses articles :
+    // on recalcule Disponibilité × Performance × Qualité sur les valeurs cumulées de
+    // tous les articles de la journée, comme pour le TRS mensuel (calculateMonthlyProductionStats).
+    const byDate = new Map<string, typeof filteredDays>();
+    filteredDays.forEach((day) => { const rows = byDate.get(day.date); if (rows) rows.push(day); else byDate.set(day.date, [day]); });
+    return Array.from(byDate.entries()).map(([date, rows]) => { const stats = calculateMonthlyProductionStats(rows); return { date, label: shortDate(date), production: stats.production, waste: stats.waste, trs: Math.round(stats.trs * 100) }; });
   }, [filteredDays]);
   const dailyHoursData = useMemo(() => calculateDailyHoursSummaries(monthlyRows).map((day) => ({ ...day, label: shortDate(day.date) })), [monthlyRows]);
   const yesterdayDate = useMemo(() => getPreviousCalendarDate(), []);
   const yesterdayProduction = useMemo(() => getDailyHoursSummary(allRegistryDays, yesterdayDate), [allRegistryDays, yesterdayDate]);
   const monthlyHours = useMemo(() => calculateHoursSummary(monthlyRows), [monthlyRows]);
-  const avgTrs = filteredDays.length ? filteredDays.reduce((sum, d) => sum + d.trs, 0) / filteredDays.length : monthlyStats.trs;
+  // Même correction que chartData : le TRS affiché doit rester Dt × Tp × Tq sur les
+  // lignes filtrées, pas une moyenne de TRS déjà calculés par article.
+  const avgTrs = filteredDays.length ? calculateMonthlyProductionStats(filteredDays).trs : monthlyStats.trs;
   const activeLines = new Set(monthlyRows.map((d) => d.article)).size;
   const hasMonthData = monthlyRows.length > 0;
   const isPeriodResolving = productionQuery.isLoading || initializeExcel.isPending || productionQuery.data === undefined;
