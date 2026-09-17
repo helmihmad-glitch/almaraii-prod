@@ -1,9 +1,11 @@
 import { Fragment, useMemo, useState } from "react";
-import { Link } from "wouter";
-import { ArrowLeft, Boxes, ChevronDown, Database, Menu, PackageSearch, TriangleAlert } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { ArrowLeft, Ban, Boxes, ChevronDown, Database, Menu, PackageSearch, Pencil, RotateCcw, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import { SILOS } from "@shared/silo";
 import type { LotConsumptionSource } from "../../../server/siloLots";
 import "./silo.css";
 
@@ -15,11 +17,16 @@ const describeSource = (source: LotConsumptionSource) =>
 
 export default function SiloLots() {
   const { openSidebar } = useSidebar();
+  const [, setLocation] = useLocation();
+  const utils = trpc.useUtils();
   const [siloFilter, setSiloFilter] = useState("all");
   const [articleFilter, setArticleFilter] = useState("all");
   const [lotQuery, setLotQuery] = useState("");
   const [showDepleted, setShowDepleted] = useState(true);
   const [expandedEntryId, setExpandedEntryId] = useState<number | null>(null);
+
+  const meQuery = trpc.auth.me.useQuery();
+  const isAdmin = meQuery.data?.role === "admin";
 
   // Voir client/src/lib/trpc.ts (LIVE_QUERY_OPTIONS) : cette vue de lecture
   // doit refléter les modifications faites depuis un autre onglet ou par
@@ -27,6 +34,21 @@ export default function SiloLots() {
   const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const lots = ledgerQuery.data?.lots ?? [];
   const unattributed = ledgerQuery.data?.unattributed ?? [];
+
+  const setDepletion = trpc.silo.setLotDepletion.useMutation({
+    onSuccess: async () => { await utils.silo.lotLedger.invalidate(); },
+    onError: (error) => toast.error(error.message || "Impossible de modifier le statut de ce lot."),
+  });
+  const toggleDepletion = (lot: { entryId: number; silo: string; lotNumber: string | null; manuallyDepleted: boolean }) => {
+    const confirmMessage = lot.manuallyDepleted
+      ? `Réactiver le lot ${lot.lotNumber || "sans numéro"} ? Son statut redeviendra celui calculé automatiquement.`
+      : `Marquer le lot ${lot.lotNumber || "sans numéro"} comme épuisé ? Il ne sera plus proposé comme disponible, quelle que soit la quantité restante calculée.`;
+    if (!window.confirm(confirmMessage)) return;
+    // `lot.silo` vient de la traçabilité déjà calculée côté serveur : c'est
+    // toujours l'un des silos connus, d'où ce recadrage de type.
+    setDepletion.mutate({ entryId: lot.entryId, silo: lot.silo as (typeof SILOS)[number], manuallyDepleted: !lot.manuallyDepleted });
+  };
+  const editLot = (lot: { entryId: number }) => setLocation(`/silo-pf-production?edit=${lot.entryId}`);
 
   const silos = useMemo(() => Array.from(new Set(lots.map((lot) => lot.silo))).sort(), [lots]);
   const articles = useMemo(() => Array.from(new Set(lots.map((lot) => lot.article))).sort(), [lots]);
@@ -87,7 +109,7 @@ export default function SiloLots() {
           {ledgerQuery.isLoading ? <p className="silo-empty">Chargement de la traçabilité…</p> : filteredLots.length === 0 ? <div className="silo-empty-cell">Aucun lot ne correspond à ces filtres.</div> : (
             <div className="silo-table-wrap">
               <table className="silo-list-table silo-lot-table">
-                <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th><th>Statut</th></tr></thead>
+                <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th><th>Statut</th>{isAdmin && <th>Actions</th>}</tr></thead>
                 <tbody>
                   {filteredLots.map((lot) => {
                     const key = `${lot.entryId}-${lot.silo}`;
@@ -103,11 +125,21 @@ export default function SiloLots() {
                           <td>{fmt(lot.producedQuantity)}</td>
                           <td>{fmt(lot.consumedQuantity)}</td>
                           <td className="silo-strong-cell">{fmt(lot.remainingQuantity)}</td>
-                          <td><span className={`silo-lot-status silo-lot-status-${lot.status}`}>{lot.status === "active" ? "Actif" : "Épuisé"}</span></td>
+                          <td><span className={`silo-lot-status silo-lot-status-${lot.status}`} title={lot.manuallyDepleted ? "Fermé manuellement, quelle que soit la quantité réellement sortie." : undefined}>{lot.status === "active" ? "Actif" : lot.manuallyDepleted ? "Épuisé (manuel)" : "Épuisé"}</span></td>
+                          {isAdmin && (
+                            <td onClick={(event) => event.stopPropagation()}>
+                              <span className="silo-row-actions">
+                                <button type="button" onClick={() => editLot(lot)} aria-label="Modifier ce lot" title="Modifier ce lot"><Pencil size={14} /></button>
+                                <button type="button" onClick={() => toggleDepletion(lot)} disabled={setDepletion.isPending} aria-label={lot.manuallyDepleted ? "Réactiver ce lot" : "Marquer ce lot comme épuisé"} title={lot.manuallyDepleted ? "Réactiver ce lot" : "Marquer ce lot comme épuisé"}>
+                                  {lot.manuallyDepleted ? <RotateCcw size={14} /> : <Ban size={14} />}
+                                </button>
+                              </span>
+                            </td>
+                          )}
                         </tr>
                         {expanded && (
                           <tr className="silo-lot-detail-row">
-                            <td colSpan={9}>
+                            <td colSpan={isAdmin ? 10 : 9}>
                               {lot.consumptions.length === 0 ? <p className="silo-lot-detail-empty">Aucune sortie n’a encore consommé ce lot.</p> : (
                                 <ul className="silo-lot-detail-list">
                                   {lot.consumptions.map((consumption, index) => (

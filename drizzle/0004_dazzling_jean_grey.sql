@@ -1,0 +1,1 @@
+ALTER TABLE "silo_production_allocations" ADD COLUMN "manuallyDepleted" boolean DEFAULT false NOT NULL;

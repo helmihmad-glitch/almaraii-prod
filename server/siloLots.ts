@@ -28,6 +28,8 @@ export type LotAllocationInput = {
   silo: string;
   /** Positive : depot de production. Negative : correction manuelle (retrait sans lot d'origine). */
   quantity: number;
+  /** Lot ferme manuellement (voir la note sur LotBalance.manuallyDepleted). Ignore sur une ligne de correction (quantity negative). */
+  manuallyDepleted?: boolean;
 };
 
 export type LotShipmentInput = {
@@ -55,6 +57,15 @@ export type LotBalance = {
   consumedQuantity: number;
   remainingQuantity: number;
   status: "active" | "depleted";
+  /**
+   * Ferme manuellement, indépendamment du calcul FIFO : remainingQuantity a
+   * été forcé à 0 et status à "depleted" même si les sorties enregistrées
+   * (consumedQuantity) ne couvrent pas toute la quantité produite — l'écart
+   * représente la part non expliquée par une sortie, écartée volontairement
+   * (voir setLotManualDepletion dans siloDb.ts). Réversible : lever ce
+   * drapeau restitue aussitôt le calcul FIFO normal.
+   */
+  manuallyDepleted: boolean;
   consumptions: LotConsumption[];
 };
 
@@ -64,7 +75,7 @@ export type UnattributedConsumption = { article: string; silo: string; quantity:
 export type LotLedger = { lots: LotBalance[]; unattributed: UnattributedConsumption[] };
 
 type QueueEvent =
-  | { kind: "produce"; date: string; sequence: number; entryId: number; lotNumber: string | null; entryDate: string | null; quantity: number }
+  | { kind: "produce"; date: string; sequence: number; entryId: number; lotNumber: string | null; entryDate: string | null; quantity: number; manuallyDepleted: boolean }
   | { kind: "consume"; date: string; sequence: number; quantity: number; source: LotConsumptionSource };
 
 /** Les mouvements sans date sont rares (saisie manuelle incomplete) ; on les place apres les mouvements dates plutot que de les laisser perturber l'ordre chronologique connu. */
@@ -101,6 +112,7 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
         lotNumber: allocation.lotNumber,
         entryDate: allocation.entryDate,
         quantity: allocation.quantity,
+        manuallyDepleted: allocation.manuallyDepleted ?? false,
       });
     } else {
       pushEvent(allocation.article, allocation.silo, {
@@ -147,6 +159,7 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
           consumedQuantity: 0,
           remainingQuantity: event.quantity,
           status: "active",
+          manuallyDepleted: event.manuallyDepleted,
           consumptions: [],
         };
         lots.push(lot);
@@ -174,7 +187,33 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
     }
   }
 
+  // Fermeture manuelle : appliquee apres coup, une fois le calcul FIFO
+  // normal termine (les sorties reelles ont deja ete imputees normalement a
+  // ce lot, en respectant l'ordre FIFO comme n'importe quel autre) — seuls
+  // l'affichage "restant" et le statut sont forces.
+  for (const lot of lots) {
+    if (lot.manuallyDepleted) {
+      lot.remainingQuantity = 0;
+      lot.status = "depleted";
+    }
+  }
+
   return { lots, unattributed };
+}
+
+/**
+ * Quantité à retirer du stock agrégé silo × article (voir computeSiloMatrix
+ * dans siloStock.ts) pour chaque lot fermé manuellement : ce qu'il restait
+ * sur le papier juste avant la fermeture (produit moins réellement sorti),
+ * jamais négatif — un lot déjà épuisé naturellement avant d'être marqué ne
+ * retire donc rien de plus. Sans ce retrait, l'État des silos afficherait
+ * encore la quantité d'un lot pourtant fermé dans la traçabilité des lots.
+ */
+export function manualDepletionWriteOffs(lots: LotBalance[]): { article: string; silo: string; quantity: number }[] {
+  return lots
+    .filter((lot) => lot.manuallyDepleted)
+    .map((lot) => ({ article: lot.article, silo: lot.silo, quantity: roundTons(lot.producedQuantity - lot.consumedQuantity) }))
+    .filter((row) => row.quantity > 1e-9);
 }
 
 const LEDGER_SHEET_NAME = "Traçabilité des lots";

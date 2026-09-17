@@ -44,11 +44,12 @@ import {
   loadLotMovements,
   loadSiloMovements,
   replaceSiloMovements,
+  setLotManualDepletion,
   updateSiloProductionEntry,
   updateSiloShipment,
 } from "./siloDb";
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
-import { buildLotLedgerWorkbook, computeLotLedger } from "./siloLots";
+import { buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
 import { buildFilteredRegistryWorkbook, type FilteredRegistryRow } from "./registryExcel";
 import { extractExpeditionPdfText, importExpeditionShipments, parseExpeditionPdfText } from "./expeditionPdfImport";
 import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
@@ -82,9 +83,14 @@ function assertAdminSession(ctx: Pick<TrpcContext, "isAdmin">) {
 
 /** Bloque une expédition (création ou modification) qui dépasserait le stock réellement disponible dans le silo. */
 async function assertShipmentWithinStock(silo: string, article: string, quantity: number, excludeShipmentId?: number) {
-  const [{ allocations }, shipmentRows] = await Promise.all([loadSiloMovements(), listSiloShipments()]);
+  const [{ allocations }, shipmentRows, lotMovements] = await Promise.all([loadSiloMovements(), listSiloShipments(), loadLotMovements()]);
   const shipments = shipmentRows.map((shipment) => ({ id: shipment.id, article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }));
-  const available = computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId);
+  // Un lot fermé manuellement (voir manualDepletionWriteOffs) ne doit plus
+  // être proposé comme stock disponible pour une nouvelle expédition — un id
+  // hors de portée des vraies expéditions, donc jamais retiré par excludeShipmentId.
+  const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots)
+    .map((row, index) => ({ id: -1 - index, ...row }));
+  const available = computeShipmentAvailability(allocations, [...shipments, ...writeOffs], silo, article, excludeShipmentId);
   if (quantity > available + 0.005) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -323,8 +329,9 @@ export const appRouter = router({
   silo: router({
     /** État courant des silos : matrice, occupation et stock par article. */
     state: publicProcedure.query(async () => {
-      const [{ allocations, shipments }, configuredArticles, movementArticles] = await Promise.all([
+      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles] = await Promise.all([
         loadSiloMovements(),
+        loadLotMovements(),
         listActiveProductionArticles(),
         listSiloMovementArticles(),
       ]);
@@ -332,7 +339,10 @@ export const appRouter = router({
       // uniquement dans d’anciens mouvements restent visibles à la suite.
       const configuredCodes = configuredArticles.map((article) => article.code);
       const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
-      const matrix = computeSiloMatrix(allocations, shipments, SILOS, articles);
+      // Un lot fermé manuellement dans la traçabilité des lots ne doit plus
+      // apparaître comme stock disponible ici (voir manualDepletionWriteOffs).
+      const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots);
+      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], SILOS, articles);
       const occupancy = computeSiloOccupancy(matrix, SILOS, articles);
       return {
         silos: [...SILOS],
@@ -478,6 +488,17 @@ export const appRouter = router({
     lotLedger: publicProcedure.query(async () => {
       const { allocations, shipments } = await loadLotMovements();
       return computeLotLedger(allocations, shipments);
+    }),
+    /**
+     * Ferme (ou rouvre) manuellement un lot, indépendamment de ce que les
+     * sorties enregistrées couvrent réellement — voir la note sur
+     * LotBalance.manuallyDepleted dans siloLots.ts.
+     */
+    setLotDepletion: publicProcedure.input(z.object({ entryId: z.number().int().positive(), silo: siloInput, manuallyDepleted: z.boolean() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await setLotManualDepletion(input.entryId, input.silo, input.manuallyDepleted);
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce lot est introuvable pour ce silo." });
+      return updated;
     }),
     /** Export Excel de la traçabilité des lots (une ligne par lot). */
     exportLotLedger: publicProcedure.query(async () => {

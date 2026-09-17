@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { buildLotLedgerWorkbook, computeLotLedger } from "./siloLots";
+import { buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
 
 describe("tracabilite FIFO des lots", () => {
   it("consomme le lot le plus ancien en premier (exemple demande)", () => {
@@ -261,6 +261,72 @@ describe("tracabilite FIFO des lots", () => {
     // Son propre total (colonne J) rejoint celui du tableau principal (colonne G).
     expect(sheet.getRow(8).getCell(9).value).toBe("Total");
     expect(sheet.getRow(8).getCell(10).result).toBe(50);
+  });
+
+  it("ferme manuellement un lot actif : restant force a 0, statut epuise, sorties reelles inchangees", () => {
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "A", silo: "SPF1", quantity: 20, manuallyDepleted: true },
+      ],
+      [
+        { shipmentId: 1, shipmentDate: "2026-09-06", article: "CM1", silo: "SPF1", quantity: 12, shipmentType: "Vrac" },
+      ],
+    );
+
+    const lot = lots[0];
+    expect(lot.producedQuantity).toBe(20);
+    expect(lot.consumedQuantity).toBe(12); // sortie reelle : inchangee, gardee pour l'historique.
+    expect(lot.remainingQuantity).toBe(0); // force a 0 malgre les 8 T non couvertes par une sortie connue.
+    expect(lot.status).toBe("depleted");
+    expect(lot.manuallyDepleted).toBe(true);
+  });
+
+  it("une fermeture manuelle ne consomme pas un autre lot par erreur (contrairement a une correction FIFO)", () => {
+    // Meme situation que le tout premier test (deux lots CM1 dans SPF1), mais
+    // cette fois on ferme manuellement le SECOND lot (le plus recent, encore
+    // intact) : le premier lot ne doit surtout pas etre touche.
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "2600655-0905", silo: "SPF1", quantity: 10 },
+        { entryId: 2, entryDate: "2026-09-06", article: "CM1", lotNumber: "2600659-0906", silo: "SPF1", quantity: 10, manuallyDepleted: true },
+      ],
+      [],
+    );
+
+    const first = lots.find((lot) => lot.lotNumber === "2600655-0905")!;
+    const second = lots.find((lot) => lot.lotNumber === "2600659-0906")!;
+    expect(first.remainingQuantity).toBe(10);
+    expect(first.status).toBe("active");
+    expect(second.remainingQuantity).toBe(0);
+    expect(second.status).toBe("depleted");
+  });
+
+  it("reversible : sans le drapeau, le meme lot retombe sur son calcul FIFO normal", () => {
+    const withoutFlag = computeLotLedger(
+      [{ entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "A", silo: "SPF1", quantity: 20, manuallyDepleted: false }],
+      [{ shipmentId: 1, shipmentDate: "2026-09-06", article: "CM1", silo: "SPF1", quantity: 12, shipmentType: "Vrac" }],
+    ).lots[0];
+    expect(withoutFlag.remainingQuantity).toBe(8);
+    expect(withoutFlag.status).toBe("active");
+  });
+
+  it("manualDepletionWriteOffs : ne retire que la part non expliquée par une sortie connue, jamais un lot déjà épuisé tout seul", () => {
+    const { lots } = computeLotLedger(
+      [
+        // Fermé manuellement avec 8 T non expliquées (20 produites, 12 sorties) : à retirer du stock silo.
+        { entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "A", silo: "SPF1", quantity: 20, manuallyDepleted: true },
+        // Fermé manuellement mais déjà entièrement sorti : rien à retirer de plus.
+        { entryId: 2, entryDate: "2026-09-05", article: "CM1", lotNumber: "B", silo: "SPF2", quantity: 10, manuallyDepleted: true },
+        // Actif, jamais fermé manuellement : ignoré.
+        { entryId: 3, entryDate: "2026-09-05", article: "CG3", lotNumber: "C", silo: "SPF3", quantity: 15 },
+      ],
+      [
+        { shipmentId: 1, shipmentDate: "2026-09-06", article: "CM1", silo: "SPF1", quantity: 12, shipmentType: "Vrac" },
+        { shipmentId: 2, shipmentDate: "2026-09-06", article: "CM1", silo: "SPF2", quantity: 10, shipmentType: "Vrac" },
+      ],
+    );
+
+    expect(manualDepletionWriteOffs(lots)).toEqual([{ article: "CM1", silo: "SPF1", quantity: 8 }]);
   });
 
   it("ignore les mouvements d'un autre article ou silo", () => {

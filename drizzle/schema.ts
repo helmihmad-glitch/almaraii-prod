@@ -117,6 +117,12 @@ export const siloProductionAllocations = pgTable("silo_production_allocations", 
   entryId: integer("entryId").notNull(),
   silo: varchar("silo", { length: 16 }).notNull(),
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  // Ferme manuellement ce lot (silo par silo) indépendamment de ce que le
+  // grand livre FIFO calcule à partir des sorties enregistrées — voir
+  // computeLotLedger dans server/siloLots.ts. La quantité produite d'origine
+  // et les sorties réelles restent inchangées ; seuls le statut affiché et la
+  // quantité restante sont forcés, pour garder un historique honnête.
+  manuallyDepleted: boolean("manuallyDepleted").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [index("silo_production_allocations_entry_index").on(table.entryId, table.silo)]);

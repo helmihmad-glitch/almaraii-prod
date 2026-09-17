@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   InsertSiloProductionEntry,
   InsertSiloShipment,
@@ -12,7 +12,7 @@ import { getDb } from "./db";
 
 export type SiloAllocationDraft = { silo: string; quantity: number };
 type FallbackEntry = { id: number; entryDate: string | null; article: string; lotNumber: string | null; totalQuantity: string | null; createdAt: Date; updatedAt: Date };
-type FallbackAllocation = { id: number; entryId: number; silo: string; quantity: string; createdAt: Date; updatedAt: Date };
+type FallbackAllocation = { id: number; entryId: number; silo: string; quantity: string; manuallyDepleted: boolean; createdAt: Date; updatedAt: Date };
 type FallbackShipment = { id: number; shipmentDate: string | null; article: string; lotNumber: string | null; quantity: string; silo: string; shipmentType: string; createdAt: Date; updatedAt: Date };
 
 // Stockage de secours pour le développement local sans base de données, sur le
@@ -29,7 +29,9 @@ function loadFallbackStore() {
     const parsed = JSON.parse(readFileSync(fallbackPath, "utf8")) as ReturnType<typeof emptyStore>;
     return {
       entries: parsed.entries ?? [],
-      allocations: parsed.allocations ?? [],
+      // manuallyDepleted : absent des fichiers de secours écrits avant cette
+      // fonctionnalité, donc à défaut "actif" (false) plutôt qu'une erreur.
+      allocations: (parsed.allocations ?? []).map((allocation) => ({ ...allocation, manuallyDepleted: allocation.manuallyDepleted ?? false })),
       shipments: parsed.shipments ?? [],
       nextId: parsed.nextId ?? 1,
     };
@@ -140,15 +142,24 @@ export async function deleteSiloProductionEntry(id: number) {
 }
 
 function writeFallbackAllocations(entryId: number, allocations: SiloAllocationDraft[]) {
+  // Modifier une entrée (date, article, quantités…) ne doit pas rouvrir un
+  // lot fermé manuellement sur un silo qui reste inchangé : on reprend son
+  // statut avant de remplacer les lignes.
+  const previouslyDepleted = new Map(store.allocations.filter((allocation) => allocation.entryId === entryId).map((allocation) => [allocation.silo, allocation.manuallyDepleted]));
   store.allocations = store.allocations.filter((allocation) => allocation.entryId !== entryId);
   allocations.filter((allocation) => allocation.quantity !== 0).forEach((allocation) => {
-    store.allocations.push({ id: nextId(), entryId, silo: allocation.silo, quantity: allocation.quantity.toFixed(2), createdAt: now(), updatedAt: now() });
+    store.allocations.push({ id: nextId(), entryId, silo: allocation.silo, quantity: allocation.quantity.toFixed(2), manuallyDepleted: previouslyDepleted.get(allocation.silo) ?? false, createdAt: now(), updatedAt: now() });
   });
 }
 
 async function replaceAllocations(entryId: number, allocations: SiloAllocationDraft[]) {
   const db = await getDb();
   if (!db) return;
+  // Voir le commentaire équivalent dans writeFallbackAllocations : on reprend
+  // le statut "épuisé manuellement" des silos qui restent après le remplacement.
+  const existing = await db.select({ silo: siloProductionAllocations.silo, manuallyDepleted: siloProductionAllocations.manuallyDepleted })
+    .from(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, entryId));
+  const previouslyDepleted = new Map(existing.map((row) => [row.silo, row.manuallyDepleted]));
   await db.delete(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, entryId));
   const rows = allocations.filter((allocation) => allocation.quantity !== 0);
   if (rows.length === 0) return;
@@ -156,6 +167,7 @@ async function replaceAllocations(entryId: number, allocations: SiloAllocationDr
     entryId,
     silo: allocation.silo,
     quantity: allocation.quantity.toFixed(2),
+    manuallyDepleted: previouslyDepleted.get(allocation.silo) ?? false,
   })));
 }
 
@@ -349,6 +361,7 @@ export async function loadLotMovements() {
             lotNumber: entry.lotNumber,
             silo: allocation.silo,
             quantity: Number(allocation.quantity),
+            manuallyDepleted: allocation.manuallyDepleted,
           };
         })
         .filter((row): row is NonNullable<typeof row> => row !== null),
@@ -376,6 +389,7 @@ export async function loadLotMovements() {
       entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity,
+      manuallyDepleted: siloProductionAllocations.manuallyDepleted,
     }).from(siloProductionAllocations),
     db.select({
       shipmentId: siloShipments.id,
@@ -392,14 +406,40 @@ export async function loadLotMovements() {
     .map((row) => {
       const entry = entryById.get(row.entryId);
       if (!entry) return null;
-      return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity) };
+      return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity), manuallyDepleted: row.manuallyDepleted };
     })
-    .filter((row): row is { entryId: number; entryDate: string | null; article: string; lotNumber: string | null; silo: string; quantity: number } => row !== null);
+    .filter((row): row is { entryId: number; entryDate: string | null; article: string; lotNumber: string | null; silo: string; quantity: number; manuallyDepleted: boolean } => row !== null);
 
   return {
     allocations,
     shipments: shipments.map((row) => ({ ...row, quantity: Number(row.quantity) })),
   };
+}
+
+/**
+ * Ferme (ou rouvre) manuellement un lot précis — un couple (entrée, silo),
+ * la granularité d'une ligne de la traçabilité des lots — indépendamment de
+ * ce que le grand livre FIFO calcule à partir des sorties enregistrées (voir
+ * computeLotLedger dans siloLots.ts). Ne modifie ni la quantité produite
+ * d'origine ni l'historique des sorties : seul le drapeau est changé.
+ * Renvoie undefined si ce couple (entrée, silo) n'existe pas.
+ */
+export async function setLotManualDepletion(entryId: number, silo: string, manuallyDepleted: boolean) {
+  const db = await getDb();
+  if (!db) {
+    const existing = store.allocations.find((allocation) => allocation.entryId === entryId && allocation.silo === silo);
+    if (!existing) return undefined;
+    existing.manuallyDepleted = manuallyDepleted;
+    existing.updatedAt = now();
+    persist();
+    return existing;
+  }
+
+  const [updated] = await db.update(siloProductionAllocations)
+    .set({ manuallyDepleted, updatedAt: new Date() })
+    .where(and(eq(siloProductionAllocations.entryId, entryId), eq(siloProductionAllocations.silo, silo)))
+    .returning();
+  return updated;
 }
 
 /** Articles rencontrés dans les mouvements, pour compléter la liste configurée. */

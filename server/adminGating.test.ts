@@ -30,6 +30,13 @@ describe("mutations réservées à la session admin (sans mot de passe par actio
     await expect(appRouter.createCaller(createContext(true)).silo.createEntry(payload)).resolves.toMatchObject({ article: "GATE-TEST-B" });
   });
 
+  it("silo.setLotDepletion refuse un visiteur et accepte un admin", async () => {
+    const created = await appRouter.createCaller(createContext(true)).silo.createEntry({ article: "GATE-TEST-D", allocations: [{ silo: "SPF2" as const, quantity: 5 }] });
+    const payload = { entryId: created.id, silo: "SPF2" as const, manuallyDepleted: true };
+    await expect(appRouter.createCaller(createContext(false)).silo.setLotDepletion(payload)).rejects.toThrow(/administrateur/i);
+    await expect(appRouter.createCaller(createContext(true)).silo.setLotDepletion(payload)).resolves.toMatchObject({ manuallyDepleted: true });
+  });
+
   it("production.create refuse désormais un visiteur (avant : accessible sans protection) et accepte un admin", async () => {
     const payload = { productionDate: "2026-01-15", article: "GATE-TEST-C", totalProductionHours: 8, plannedStopsHours: 0, unplannedStopsHours: 0, productionTons: 10, wasteTons: 0, standardRate: 1 };
     await expect(appRouter.createCaller(createContext(false)).production.create(payload)).rejects.toThrow(/administrateur/i);

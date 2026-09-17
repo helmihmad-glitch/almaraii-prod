@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Link } from "wouter";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearch } from "wouter";
 import { ArrowLeft, Boxes, Database, Menu, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
@@ -33,6 +33,8 @@ export default function SiloProduction() {
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const appliedDeepLinkEdit = useRef(false);
+  const search = useSearch();
 
   const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
@@ -127,6 +129,20 @@ export default function SiloProduction() {
     });
   };
 
+  // Arrivée depuis le bouton Modifier de la traçabilité des lots
+  // (/silo-pf-production?edit=<entryId>) : ouvre directement cette entrée en
+  // édition et amène le formulaire à l'écran, une seule fois par navigation.
+  useEffect(() => {
+    if (appliedDeepLinkEdit.current || entries.length === 0) return;
+    const targetId = Number(new URLSearchParams(search).get("edit"));
+    if (!targetId) return;
+    appliedDeepLinkEdit.current = true;
+    const target = entries.find((entry) => entry.id === targetId);
+    if (!target) { toast.error("Cette entrée de production est introuvable (peut-être déjà supprimée)."); return; }
+    editEntry(target);
+    document.getElementById("silo-production-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [search, entries]);
+
   const removeEntry = (id: number) => { if (window.confirm("Supprimer cette entrée de production et sa répartition ?")) deleteEntry.mutate({ id }); };
   const articleOptions = articles.map((article) => article.code);
 
@@ -169,7 +185,7 @@ export default function SiloProduction() {
 
         {entriesQuery.error && <div className="silo-error-card"><Database size={22} /><div><strong>Les entrées ne peuvent pas être chargées</strong><span>{entriesQuery.error.message}</span></div></div>}
 
-        <section className="silo-section">
+        <section className="silo-section" id="silo-production-form">
           <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>{editingEntryId ? "Modifier une entrée de production" : "Ajouter une entrée de production"}</h2></div></div>
           <form className="silo-form" onSubmit={submitEntry}>
             <div className="silo-fields">

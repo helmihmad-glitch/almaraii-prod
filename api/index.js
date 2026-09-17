@@ -170,6 +170,12 @@ var siloProductionAllocations = pgTable("silo_production_allocations", {
   entryId: integer("entryId").notNull(),
   silo: varchar("silo", { length: 16 }).notNull(),
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  // Ferme manuellement ce lot (silo par silo) indépendamment de ce que le
+  // grand livre FIFO calcule à partir des sorties enregistrées — voir
+  // computeLotLedger dans server/siloLots.ts. La quantité produite d'origine
+  // et les sorties réelles restent inchangées ; seuls le statut affiché et la
+  // quantité restante sont forcés, pour garder un historique honnête.
+  manuallyDepleted: boolean("manuallyDepleted").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [index("silo_production_allocations_entry_index").on(table.entryId, table.silo)]);
@@ -3865,7 +3871,7 @@ function getAdminSessionCookieOptions(req) {
 // server/siloDb.ts
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import path2 from "node:path";
-import { asc as asc3, desc as desc3, eq as eq4, inArray } from "drizzle-orm";
+import { and, asc as asc3, desc as desc3, eq as eq4, inArray } from "drizzle-orm";
 var fallbackPath = path2.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
 var emptyStore = () => ({ entries: [], allocations: [], shipments: [], nextId: 1 });
 function loadFallbackStore2() {
@@ -3874,7 +3880,9 @@ function loadFallbackStore2() {
     const parsed = JSON.parse(readFileSync2(fallbackPath, "utf8"));
     return {
       entries: parsed.entries ?? [],
-      allocations: parsed.allocations ?? [],
+      // manuallyDepleted : absent des fichiers de secours écrits avant cette
+      // fonctionnalité, donc à défaut "actif" (false) plutôt qu'une erreur.
+      allocations: (parsed.allocations ?? []).map((allocation) => ({ ...allocation, manuallyDepleted: allocation.manuallyDepleted ?? false })),
       shipments: parsed.shipments ?? [],
       nextId: parsed.nextId ?? 1
     };
@@ -3962,21 +3970,25 @@ async function deleteSiloProductionEntry(id) {
   return { success: true };
 }
 function writeFallbackAllocations(entryId, allocations) {
+  const previouslyDepleted = new Map(store.allocations.filter((allocation) => allocation.entryId === entryId).map((allocation) => [allocation.silo, allocation.manuallyDepleted]));
   store.allocations = store.allocations.filter((allocation) => allocation.entryId !== entryId);
   allocations.filter((allocation) => allocation.quantity !== 0).forEach((allocation) => {
-    store.allocations.push({ id: nextId(), entryId, silo: allocation.silo, quantity: allocation.quantity.toFixed(2), createdAt: now(), updatedAt: now() });
+    store.allocations.push({ id: nextId(), entryId, silo: allocation.silo, quantity: allocation.quantity.toFixed(2), manuallyDepleted: previouslyDepleted.get(allocation.silo) ?? false, createdAt: now(), updatedAt: now() });
   });
 }
 async function replaceAllocations(entryId, allocations) {
   const db = await getDb();
   if (!db) return;
+  const existing = await db.select({ silo: siloProductionAllocations.silo, manuallyDepleted: siloProductionAllocations.manuallyDepleted }).from(siloProductionAllocations).where(eq4(siloProductionAllocations.entryId, entryId));
+  const previouslyDepleted = new Map(existing.map((row) => [row.silo, row.manuallyDepleted]));
   await db.delete(siloProductionAllocations).where(eq4(siloProductionAllocations.entryId, entryId));
   const rows = allocations.filter((allocation) => allocation.quantity !== 0);
   if (rows.length === 0) return;
   await db.insert(siloProductionAllocations).values(rows.map((allocation) => ({
     entryId,
     silo: allocation.silo,
-    quantity: allocation.quantity.toFixed(2)
+    quantity: allocation.quantity.toFixed(2),
+    manuallyDepleted: previouslyDepleted.get(allocation.silo) ?? false
   })));
 }
 async function listSiloShipments() {
@@ -4129,7 +4141,8 @@ async function loadLotMovements() {
           article: entry.article,
           lotNumber: entry.lotNumber,
           silo: allocation.silo,
-          quantity: Number(allocation.quantity)
+          quantity: Number(allocation.quantity),
+          manuallyDepleted: allocation.manuallyDepleted
         };
       }).filter((row) => row !== null),
       shipments: store.shipments.map((shipment) => ({
@@ -4152,7 +4165,8 @@ async function loadLotMovements() {
     db.select({
       entryId: siloProductionAllocations.entryId,
       silo: siloProductionAllocations.silo,
-      quantity: siloProductionAllocations.quantity
+      quantity: siloProductionAllocations.quantity,
+      manuallyDepleted: siloProductionAllocations.manuallyDepleted
     }).from(siloProductionAllocations),
     db.select({
       shipmentId: siloShipments.id,
@@ -4167,12 +4181,25 @@ async function loadLotMovements() {
   const allocations = allocationRows.map((row) => {
     const entry = entryById.get(row.entryId);
     if (!entry) return null;
-    return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity) };
+    return { entryId: row.entryId, entryDate: entry.entryDate, article: entry.article, lotNumber: entry.lotNumber, silo: row.silo, quantity: Number(row.quantity), manuallyDepleted: row.manuallyDepleted };
   }).filter((row) => row !== null);
   return {
     allocations,
     shipments: shipments.map((row) => ({ ...row, quantity: Number(row.quantity) }))
   };
+}
+async function setLotManualDepletion(entryId, silo, manuallyDepleted) {
+  const db = await getDb();
+  if (!db) {
+    const existing = store.allocations.find((allocation) => allocation.entryId === entryId && allocation.silo === silo);
+    if (!existing) return void 0;
+    existing.manuallyDepleted = manuallyDepleted;
+    existing.updatedAt = now();
+    persist();
+    return existing;
+  }
+  const [updated] = await db.update(siloProductionAllocations).set({ manuallyDepleted, updatedAt: /* @__PURE__ */ new Date() }).where(and(eq4(siloProductionAllocations.entryId, entryId), eq4(siloProductionAllocations.silo, silo))).returning();
+  return updated;
 }
 async function listSiloMovementArticles() {
   const db = await getDb();
@@ -4626,7 +4653,8 @@ function computeLotLedger(allocations, shipments) {
         entryId: allocation.entryId,
         lotNumber: allocation.lotNumber,
         entryDate: allocation.entryDate,
-        quantity: allocation.quantity
+        quantity: allocation.quantity,
+        manuallyDepleted: allocation.manuallyDepleted ?? false
       });
     } else {
       pushEvent(allocation.article, allocation.silo, {
@@ -4667,6 +4695,7 @@ function computeLotLedger(allocations, shipments) {
           consumedQuantity: 0,
           remainingQuantity: event.quantity,
           status: "active",
+          manuallyDepleted: event.manuallyDepleted,
           consumptions: []
         };
         lots.push(lot);
@@ -4692,7 +4721,16 @@ function computeLotLedger(allocations, shipments) {
       }
     }
   }
+  for (const lot of lots) {
+    if (lot.manuallyDepleted) {
+      lot.remainingQuantity = 0;
+      lot.status = "depleted";
+    }
+  }
   return { lots, unattributed };
+}
+function manualDepletionWriteOffs(lots) {
+  return lots.filter((lot) => lot.manuallyDepleted).map((lot) => ({ article: lot.article, silo: lot.silo, quantity: roundTons(lot.producedQuantity - lot.consumedQuantity) })).filter((row) => row.quantity > 1e-9);
 }
 var LEDGER_SHEET_NAME = "Tra\xE7abilit\xE9 des lots";
 var LEDGER_FIRST_COL = 2;
@@ -5109,9 +5147,10 @@ function assertAdminSession(ctx) {
   }
 }
 async function assertShipmentWithinStock(silo, article, quantity, excludeShipmentId) {
-  const [{ allocations }, shipmentRows] = await Promise.all([loadSiloMovements(), listSiloShipments()]);
+  const [{ allocations }, shipmentRows, lotMovements] = await Promise.all([loadSiloMovements(), listSiloShipments(), loadLotMovements()]);
   const shipments = shipmentRows.map((shipment) => ({ id: shipment.id, article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }));
-  const available = computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId);
+  const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots).map((row, index2) => ({ id: -1 - index2, ...row }));
+  const available = computeShipmentAvailability(allocations, [...shipments, ...writeOffs], silo, article, excludeShipmentId);
   if (quantity > available + 5e-3) {
     throw new TRPCError2({
       code: "BAD_REQUEST",
@@ -5330,14 +5369,16 @@ var appRouter = router({
   silo: router({
     /** État courant des silos : matrice, occupation et stock par article. */
     state: publicProcedure.query(async () => {
-      const [{ allocations, shipments }, configuredArticles, movementArticles] = await Promise.all([
+      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles] = await Promise.all([
         loadSiloMovements(),
+        loadLotMovements(),
         listActiveProductionArticles(),
         listSiloMovementArticles()
       ]);
       const configuredCodes = configuredArticles.map((article) => article.code);
       const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
-      const matrix = computeSiloMatrix(allocations, shipments, SILOS, articles);
+      const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots);
+      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], SILOS, articles);
       const occupancy = computeSiloOccupancy(matrix, SILOS, articles);
       return {
         silos: [...SILOS],
@@ -5478,6 +5519,17 @@ var appRouter = router({
     lotLedger: publicProcedure.query(async () => {
       const { allocations, shipments } = await loadLotMovements();
       return computeLotLedger(allocations, shipments);
+    }),
+    /**
+     * Ferme (ou rouvre) manuellement un lot, indépendamment de ce que les
+     * sorties enregistrées couvrent réellement — voir la note sur
+     * LotBalance.manuallyDepleted dans siloLots.ts.
+     */
+    setLotDepletion: publicProcedure.input(z2.object({ entryId: z2.number().int().positive(), silo: siloInput, manuallyDepleted: z2.boolean() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await setLotManualDepletion(input.entryId, input.silo, input.manuallyDepleted);
+      if (!updated) throw new TRPCError2({ code: "NOT_FOUND", message: "Ce lot est introuvable pour ce silo." });
+      return updated;
     }),
     /** Export Excel de la traçabilité des lots (une ligne par lot). */
     exportLotLedger: publicProcedure.query(async () => {
