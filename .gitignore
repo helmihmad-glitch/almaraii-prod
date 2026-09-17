@@ -115,3 +115,8 @@ temp/
 .local-silo-store.json
 .local-silo-store.test.json
 .local-storage/
+
+# Scripts et fichiers d'essai jetables (vérifications ponctuelles en local,
+# jamais destinés à être commités) — convention de nommage utilisée tout au
+# long de ce projet pour les distinguer du reste.
+/tmp-*
