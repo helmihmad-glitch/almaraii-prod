@@ -36,6 +36,9 @@ export default function SiloExpedition() {
   const [pendingPdfImport, setPendingPdfImport] = useState<File | null>(null);
   const [isImportingPdf, setIsImportingPdf] = useState(false);
   const pdfImportInputRef = useRef<HTMLInputElement>(null);
+  const [shipmentSiloFilter, setShipmentSiloFilter] = useState("all");
+  const [shipmentArticleFilter, setShipmentArticleFilter] = useState("all");
+  const [shipmentLotQuery, setShipmentLotQuery] = useState("");
 
   const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
@@ -48,6 +51,15 @@ export default function SiloExpedition() {
   const stateQuery = trpc.silo.state.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const shipments = shipmentsQuery.data ?? [];
   const articles = articlesQuery.data ?? [];
+
+  // Ordre SPF1 → SPF12 (jamais alphabétique, qui placerait SPF10 avant SPF2), silos réellement utilisés uniquement.
+  const shipmentSiloOptions = useMemo(() => SILOS.filter((silo) => shipments.some((shipment) => shipment.silo === silo)), [shipments]);
+  const shipmentArticleOptions = useMemo(() => Array.from(new Set(shipments.map((shipment) => shipment.article))).sort(), [shipments]);
+  const filteredShipments = useMemo(() => shipments
+    .filter((shipment) => shipmentSiloFilter === "all" || shipment.silo === shipmentSiloFilter)
+    .filter((shipment) => shipmentArticleFilter === "all" || shipment.article === shipmentArticleFilter)
+    .filter((shipment) => !shipmentLotQuery.trim() || (shipment.lotNumber ?? "").toLowerCase().includes(shipmentLotQuery.trim().toLowerCase())),
+  [shipments, shipmentSiloFilter, shipmentArticleFilter, shipmentLotQuery]);
 
   // Lots encore actifs pour l'article en cours de saisie : la base des suggestions
   // de N° Lot et de silo ci-dessous (elles s'affinent l'une l'autre).
@@ -288,7 +300,14 @@ export default function SiloExpedition() {
         {shipmentsQuery.error && <div className="silo-error-card"><Database size={22} /><div><strong>Les expéditions ne peuvent pas être chargées</strong><span>{shipmentsQuery.error.message}</span></div></div>}
 
         <section className="silo-section">
-          <div className="silo-section-head"><div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>{editingShipmentId ? "Modifier une expédition" : "Ajouter une expédition"}</h2></div></div>
+          <div className="silo-section-head">
+            <div><span className="silo-section-label"><Truck size={14} />Sorties</span><h2>{editingShipmentId ? "Modifier une expédition" : "Ajouter une expédition"}</h2></div>
+            <div className="silo-filters">
+              <label>Silo<select value={shipmentSiloFilter} onChange={(event) => setShipmentSiloFilter(event.target.value)}><option value="all">Tous</option>{shipmentSiloOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
+              <label>Article<select value={shipmentArticleFilter} onChange={(event) => setShipmentArticleFilter(event.target.value)}><option value="all">Tous</option>{shipmentArticleOptions.map((article) => <option key={article} value={article}>{article}</option>)}</select></label>
+              <label>N° Lot<input value={shipmentLotQuery} onChange={(event) => setShipmentLotQuery(event.target.value)} placeholder="Rechercher…" /></label>
+            </div>
+          </div>
           <form className="silo-form" onSubmit={submitShipment}>
             <div className="silo-fields">
               <label>Date<input type="date" value={shipmentDraft.shipmentDate} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentDate: event.target.value })} /></label>
@@ -304,11 +323,11 @@ export default function SiloExpedition() {
             </div>
           </form>
 
-          {shipments.length ? <div className="silo-table-wrap">
+          {filteredShipments.length ? <div className="silo-table-wrap">
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th><th>Actions</th></tr></thead>
               <tbody>
-                {shipments.map((shipment) => (
+                {filteredShipments.map((shipment) => (
                   <tr key={shipment.id}>
                     <td>{formatDate(shipment.shipmentDate)}</td>
                     <td className="silo-strong-cell">{shipment.article}</td>
@@ -321,7 +340,7 @@ export default function SiloExpedition() {
                 ))}
               </tbody>
             </table>
-          </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">Aucune expédition enregistrée.</div>}
+          </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">{shipments.length === 0 ? "Aucune expédition enregistrée." : "Aucune expédition ne correspond à ces filtres."}</div>}
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>

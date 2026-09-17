@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { ArrowLeft, Boxes, Database, Menu, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -35,11 +35,25 @@ export default function SiloProduction() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const appliedDeepLinkEdit = useRef(false);
   const search = useSearch();
+  const [siloFilter, setSiloFilter] = useState("all");
+  const [articleFilter, setArticleFilter] = useState("all");
+  const [lotQuery, setLotQuery] = useState("");
 
   const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
   const entries = entriesQuery.data ?? [];
   const articles = articlesQuery.data ?? [];
+
+  // Une entrée peut être répartie sur plusieurs silos (voir la répartition du
+  // formulaire) : l'ordre SPF1 → SPF12 (jamais alphabétique, qui placerait
+  // SPF10 avant SPF2) ne garde que les silos réellement utilisés.
+  const entrySiloOptions = useMemo(() => SILOS.filter((silo) => entries.some((entry) => entry.allocations.some((allocation) => allocation.silo === silo))), [entries]);
+  const entryArticleOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.article))).sort(), [entries]);
+  const filteredEntries = useMemo(() => entries
+    .filter((entry) => siloFilter === "all" || entry.allocations.some((allocation) => allocation.silo === siloFilter))
+    .filter((entry) => articleFilter === "all" || entry.article === articleFilter)
+    .filter((entry) => !lotQuery.trim() || (entry.lotNumber ?? "").toLowerCase().includes(lotQuery.trim().toLowerCase())),
+  [entries, siloFilter, articleFilter, lotQuery]);
 
   const refresh = async () => {
     await Promise.all([utils.silo.listEntries.invalidate(), utils.silo.listShipments.invalidate(), utils.silo.state.invalidate()]);
@@ -186,7 +200,14 @@ export default function SiloProduction() {
         {entriesQuery.error && <div className="silo-error-card"><Database size={22} /><div><strong>Les entrées ne peuvent pas être chargées</strong><span>{entriesQuery.error.message}</span></div></div>}
 
         <section className="silo-section" id="silo-production-form">
-          <div className="silo-section-head"><div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>{editingEntryId ? "Modifier une entrée de production" : "Ajouter une entrée de production"}</h2></div></div>
+          <div className="silo-section-head">
+            <div><span className="silo-section-label"><Boxes size={14} />Entrées</span><h2>{editingEntryId ? "Modifier une entrée de production" : "Ajouter une entrée de production"}</h2></div>
+            <div className="silo-filters">
+              <label>Silo<select value={siloFilter} onChange={(event) => setSiloFilter(event.target.value)}><option value="all">Tous</option>{entrySiloOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
+              <label>Article<select value={articleFilter} onChange={(event) => setArticleFilter(event.target.value)}><option value="all">Tous</option>{entryArticleOptions.map((article) => <option key={article} value={article}>{article}</option>)}</select></label>
+              <label>N° Lot<input value={lotQuery} onChange={(event) => setLotQuery(event.target.value)} placeholder="Rechercher…" /></label>
+            </div>
+          </div>
           <form className="silo-form" onSubmit={submitEntry}>
             <div className="silo-fields">
               <label>Date<input type="date" value={entryDraft.entryDate} onChange={(event) => setEntryDraft({ ...entryDraft, entryDate: event.target.value })} /></label>
@@ -212,11 +233,11 @@ export default function SiloProduction() {
             </div>
           </form>
 
-          {entries.length ? <div className="silo-table-wrap">
+          {filteredEntries.length ? <div className="silo-table-wrap">
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th><th>Actions</th></tr></thead>
               <tbody>
-                {entries.map((entry) => (
+                {filteredEntries.map((entry) => (
                   <tr key={entry.id}>
                     <td>{formatDate(entry.entryDate)}</td>
                     <td className="silo-strong-cell">{entry.article}</td>
@@ -228,7 +249,7 @@ export default function SiloProduction() {
                 ))}
               </tbody>
             </table>
-          </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">Aucune entrée de production enregistrée.</div>}
+          </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">{entries.length === 0 ? "Aucune entrée de production enregistrée." : "Aucune entrée ne correspond à ces filtres."}</div>}
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>

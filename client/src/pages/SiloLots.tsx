@@ -98,7 +98,7 @@ export default function SiloLots() {
         <section className="silo-section">
           <div className="silo-section-head">
             <div><span className="silo-section-label"><Boxes size={14} />Détail</span><h2>Historique de Lots</h2></div>
-            <div className="silo-lot-filters">
+            <div className="silo-filters">
               <label>Silo<select value={siloFilter} onChange={(event) => setSiloFilter(event.target.value)}><option value="all">Tous</option>{silos.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
               <label>Article<select value={articleFilter} onChange={(event) => setArticleFilter(event.target.value)}><option value="all">Tous</option>{articles.map((article) => <option key={article} value={article}>{article}</option>)}</select></label>
               <label>N° Lot<input value={lotQuery} onChange={(event) => setLotQuery(event.target.value)} placeholder="Rechercher…" /></label>
