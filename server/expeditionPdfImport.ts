@@ -7,12 +7,23 @@
 // computeLotLedger dans siloLots.ts) — le lot actif le plus ancien pour cet
 // article et ce silo, tel qu'il se présentait à cette date-là. Même règle
 // que la suggestion de lot affichée à la saisie manuelle d'une expédition.
-import { PDFParse } from "pdf-parse";
 import { computeLotLedger } from "./siloLots";
 import { createSiloShipment, loadLotMovements } from "./siloDb";
 
-/** Texte brut du PDF (toutes pages concaténées), pour parseExpeditionPdfText ci-dessous. */
+/**
+ * Texte brut du PDF (toutes pages concaténées), pour parseExpeditionPdfText
+ * ci-dessous. `pdf-parse` (et sa dépendance pdfjs-dist, nettement plus lourde
+ * que le reste des dépendances serveur) n'est chargé qu'ici, à l'usage :
+ * un import statique en tête de fichier serait aplati par esbuild dans le
+ * même module que le reste de l'API (un seul fichier de sortie, sans
+ * découpage de code), et s'exécuterait donc au démarrage de la fonction pour
+ * CHAQUE requête — un souci d'initialisation propre à cette bibliothèque
+ * pourrait alors faire échouer des routes qui n'ont rien à voir avec l'import
+ * PDF. Un import dynamique d'un paquet externe, lui, reste un import différé
+ * exécuté seulement à l'appel.
+ */
 export async function extractExpeditionPdfText(buffer: Buffer): Promise<string> {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();

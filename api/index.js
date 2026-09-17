@@ -4990,8 +4990,8 @@ async function buildFilteredRegistryWorkbook(rows, filters) {
 }
 
 // server/expeditionPdfImport.ts
-import { PDFParse } from "pdf-parse";
 async function extractExpeditionPdfText(buffer) {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();
