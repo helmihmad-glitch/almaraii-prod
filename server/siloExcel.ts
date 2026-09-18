@@ -322,7 +322,7 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
   const shipmentLastCol = PRODUCTION_DATE_COL + 5;
   writeTitle(shipment, 2, PRODUCTION_DATE_COL, shipmentLastCol, "  EXPÉDITIONS VRAC / SAC");
   const shipmentLabels = ["Date", "Article", "N° Lot", "Qté (T)", "Silo", "Expédition"];
-  [5, 6].forEach((rowNumber) => {
+  [6].forEach((rowNumber) => {
     const row = shipment.getRow(rowNumber);
     shipmentLabels.forEach((label, index) => { row.getCell(PRODUCTION_DATE_COL + index).value = label; });
     styleHeaderRow(row, PRODUCTION_DATE_COL, shipmentLastCol);
@@ -346,95 +346,6 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
     row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
     row.getCell(PRODUCTION_DATE_COL + 4).value = line.silo;
     row.getCell(PRODUCTION_DATE_COL + 5).value = line.shipmentType;
-  });
-
-  // --- Résultats calculés, utilisés comme valeurs mises en cache des formules ---
-  const allocationInputs: SiloAllocationInput[] = entries.flatMap((entry) =>
-    entry.allocations.map((allocation) => ({ article: entry.article, silo: allocation.silo, quantity: Number(allocation.quantity) })));
-  const shipmentInputs: SiloShipmentInput[] = shipments.map((line) => ({ article: line.article, silo: line.silo, quantity: Number(line.quantity) }));
-  const matrix = computeSiloMatrix(allocationInputs, shipmentInputs, SILOS, exportedArticles);
-  const occupancy = computeSiloOccupancy(matrix, SILOS, exportedArticles);
-  const articleStock = computeArticleStock(occupancy, exportedArticles);
-
-  // --- 3. État final des silos (matrice silo × article) ---
-  const state = workbook.addWorksheet(STATE_SHEET);
-  writeTitle(state, 6, STATE_SILO_COL, stateLastArticleCol, "ÉTAT FINAL DES SILOS SPF");
-  const stateHeader = state.getRow(STATE_HEADER_ROW);
-  stateHeader.getCell(STATE_SILO_COL).value = "Silo";
-  exportedArticles.forEach((article, index) => { stateHeader.getCell(STATE_ARTICLE_FIRST_COL + index).value = article; });
-  styleHeaderRow(stateHeader, STATE_SILO_COL, stateLastArticleCol);
-  state.getColumn(STATE_SILO_COL).width = 11;
-  exportedArticles.forEach((_, index) => { state.getColumn(STATE_ARTICLE_FIRST_COL + index).width = 12; });
-
-  const productionArticleRange = `'${PRODUCTION_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 1)}$${PRODUCTION_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 1)}$${PRODUCTION_LAST_ROW}`;
-  const shipmentQuantityRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 3)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 3)}$${SHIPMENT_LAST_ROW}`;
-  const shipmentArticleRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 1)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 1)}$${SHIPMENT_LAST_ROW}`;
-  const shipmentSiloRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 4)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 4)}$${SHIPMENT_LAST_ROW}`;
-
-  SILOS.forEach((silo, siloIndex) => {
-    const rowNumber = STATE_FIRST_ROW + siloIndex;
-    const row = state.getRow(rowNumber);
-    row.getCell(STATE_SILO_COL).value = silo;
-    row.getCell(STATE_SILO_COL).font = { bold: true };
-
-    exportedArticles.forEach((article, articleIndex) => {
-      const articleColLetter = columnLetter(STATE_ARTICLE_FIRST_COL + articleIndex);
-      const siloColLetter = columnLetter(PRODUCTION_SILO_FIRST_COL + siloIndex);
-      const productionSiloRange = `'${PRODUCTION_SHEET}'!$${siloColLetter}$${PRODUCTION_FIRST_ROW}:$${siloColLetter}$${PRODUCTION_LAST_ROW}`;
-      const balance = `SUMIF(${productionArticleRange},${articleColLetter}$${STATE_HEADER_ROW},${productionSiloRange})-SUMIFS(${shipmentQuantityRange},${shipmentArticleRange},${articleColLetter}$${STATE_HEADER_ROW},${shipmentSiloRange},$${columnLetter(STATE_SILO_COL)}${rowNumber})`;
-      const value = matrix[silo]?.[article] ?? null;
-      const cell = row.getCell(STATE_ARTICLE_FIRST_COL + articleIndex);
-      cell.value = { formula: `IF((${balance})<=0,"",${balance})`, result: value === null ? "" : value } as ExcelJS.CellFormulaValue;
-      cell.numFmt = "0.00";
-    });
-  });
-
-  // --- 4. Occupation des silos et stock par article ---
-  const occupancySheet = workbook.addWorksheet(OCCUPANCY_SHEET);
-  writeTitle(occupancySheet, 3, 2, 4, "ÉTAT FINAL DES SILOS PF");
-  writeTitle(occupancySheet, 3, 6, 7, "Stock _Article");
-  const occupancyHeader = occupancySheet.getRow(5);
-  ["Silo", "Article", "Qté"].forEach((label, index) => { occupancyHeader.getCell(2 + index).value = label; });
-  styleHeaderRow(occupancyHeader, 2, 4);
-  occupancySheet.getColumn(2).width = 11;
-  occupancySheet.getColumn(3).width = 12;
-  occupancySheet.getColumn(4).width = 12;
-  occupancySheet.getColumn(6).width = 12;
-  occupancySheet.getColumn(7).width = 13;
-
-  const stateArticleHeaderRange = `'${STATE_SHEET}'!$${columnLetter(STATE_ARTICLE_FIRST_COL)}$${STATE_HEADER_ROW}:$${columnLetter(stateLastArticleCol)}$${STATE_HEADER_ROW}`;
-  const stateBodyRange = `'${STATE_SHEET}'!$${columnLetter(STATE_ARTICLE_FIRST_COL)}$${STATE_FIRST_ROW}:$${columnLetter(stateLastArticleCol)}$${stateLastRow}`;
-  const stateSiloRange = `'${STATE_SHEET}'!$${columnLetter(STATE_SILO_COL)}$${STATE_FIRST_ROW}:$${columnLetter(STATE_SILO_COL)}$${stateLastRow}`;
-
-  SILOS.forEach((silo, index) => {
-    const rowNumber = OCCUPANCY_FIRST_ROW + index;
-    const row = occupancySheet.getRow(rowNumber);
-    const stateRowNumber = STATE_FIRST_ROW + index;
-    const stateRowRange = `'${STATE_SHEET}'!${columnLetter(STATE_ARTICLE_FIRST_COL)}${stateRowNumber}:${columnLetter(stateLastArticleCol)}${stateRowNumber}`;
-    const occupancyRow = occupancy[index];
-
-    row.getCell(2).value = silo;
-    row.getCell(2).font = { bold: true };
-    row.getCell(3).value = {
-      formula: `IFERROR(INDEX(${stateArticleHeaderRange},1,MATCH(1,INDEX((${stateRowRange}<>"")*1,0),0)),"")`,
-      result: occupancyRow?.article ?? "",
-    } as ExcelJS.CellFormulaValue;
-    row.getCell(4).value = {
-      formula: `IF(C${rowNumber}="","",INDEX(${stateBodyRange},MATCH(B${rowNumber},${stateSiloRange},0),MATCH(C${rowNumber},${stateArticleHeaderRange},0)))`,
-      result: occupancyRow?.quantity ?? "",
-    } as ExcelJS.CellFormulaValue;
-    row.getCell(4).numFmt = "0.00";
-  });
-
-  exportedArticles.forEach((article, index) => {
-    const rowNumber = OCCUPANCY_FIRST_ROW + index;
-    const row = occupancySheet.getRow(rowNumber);
-    row.getCell(6).value = article;
-    row.getCell(7).value = {
-      formula: `SUMIF($C$${OCCUPANCY_FIRST_ROW}:$C$${occupancyLastRow},F${rowNumber},$D$${OCCUPANCY_FIRST_ROW}:$D$${occupancyLastRow})`,
-      result: articleStock.find((stock) => stock.article === article)?.quantity ?? 0,
-    } as ExcelJS.CellFormulaValue;
-    row.getCell(7).numFmt = "0.00";
   });
 
   return Buffer.from(await workbook.xlsx.writeBuffer());

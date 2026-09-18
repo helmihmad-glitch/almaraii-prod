@@ -142,16 +142,16 @@ export default function Reports() {
         </div>
 
         <div className="reports-group">
-          <h2 className="reports-group-title"><Boxes size={14} />État des silos</h2>
+          <h2 className="reports-group-title"><Boxes size={14} />Flux production (Entrées/Sorties)</h2>
           <div className="settings-grid">
             <article className="settings-card">
-              <div className="settings-card-heading"><div className="settings-icon"><Boxes size={19} /></div><div><span>Classeur complet</span><h2>Silo PF</h2></div></div>
+              <div className="settings-card-heading"><div className="settings-icon"><Boxes size={19} /></div><div><span>Classeur complet</span><h2>Flux production (Entrées/Sorties)</h2></div></div>
               <p className="settings-copy">Classeur Excel complet des entrées, expéditions et du stock par silo.</p>
               <button type="button" className="settings-primary" onClick={downloadSiloWorkbook} disabled={isExportingSilo}><Download size={16} />{isExportingSilo ? "Export…" : "Exporter le classeur"}</button>
             </article>
 
             <article className="settings-card">
-              <div className="settings-card-heading"><div className="settings-icon"><PackageSearch size={19} /></div><div><span>Suivi FIFO</span><h2>Traçabilité des lots</h2></div></div>
+              <div className="settings-card-heading"><div className="settings-icon"><PackageSearch size={19} /></div><div><span>Suivi FIFO</span><h2>Traçabilité des lots / Silo</h2></div></div>
               <p className="settings-copy">Classeur Excel du suivi FIFO des lots, silo par silo, avec la quantité restante par article.</p>
               <button type="button" className="settings-primary" onClick={downloadLedger} disabled={isExportingLots}><Download size={16} />{isExportingLots ? "Export…" : "Exporter en Excel"}</button>
             </article>
@@ -167,6 +167,16 @@ export default function Reports() {
               <button type="button" className="settings-primary" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={16} />Télécharger le classeur</button>
             </article>
 
+            <div className="settings-grid reports-grid-single">
+              <article className="settings-card">
+                <div className="settings-card-heading"><div className="settings-icon"><CalendarDays size={19} /></div><div><span>Réf: For-Prod-09</span><h2>Programme journalier</h2></div></div>
+                <p className="settings-copy">Le PDF « Programme de Production » d’une date choisie.</p>
+                <div className="password-form">
+                  <label>Date<input type="date" value={programDate} onChange={(event) => setProgramDate(event.target.value)} /></label>
+                  <button type="button" className="settings-primary" onClick={exportProgramPdf} disabled={!programQuery.data || isExportingProgram}><Download size={16} />{programButtonLabel}</button>
+                </div>
+              </article>
+            </div>
             <article className="settings-card">
               <div className="settings-card-heading"><div className="settings-icon security"><SlidersHorizontal size={19} /></div><div><span>Recherche & période</span><h2>Registre filtré</h2></div></div>
               <p className="settings-copy">Classeur Excel filtré par recherche et par période, comme depuis le Registre.</p>
@@ -179,26 +189,12 @@ export default function Reports() {
             </article>
 
             <article className="settings-card">
-              <div className="settings-card-heading"><div className="settings-icon security"><FileText size={19} /></div><div><span>Rapport détaillé</span><h2>Rapport PDF (par jour)</h2></div></div>
+              <div className="settings-card-heading"><div className="settings-icon security"><FileText size={19} /></div><div><span>Rapport détaillé</span><h2>Rapport Production / Jour</h2></div></div>
               <p className="settings-copy">Rapport PDF détaillé d’une journée de production, avec un commentaire facultatif.</p>
               <div className="password-form">
                 <label>Date<input type="date" value={pdfDate} onChange={(event) => setPdfDate(event.target.value)} /></label>
                 <label>Commentaire d’export (facultatif)<textarea value={pdfComment} onChange={(event) => setPdfComment(event.target.value)} maxLength={1200} placeholder="Ex. Situation particulière, consigne de suivi…" /></label>
                 <button type="button" className="settings-primary" onClick={exportDayPdf} disabled={isExportingDayPdf || registryQuery.isLoading}><Download size={16} />{isExportingDayPdf ? "Génération…" : "Exporter le PDF"}</button>
-              </div>
-            </article>
-          </div>
-        </div>
-
-        <div className="reports-group">
-          <h2 className="reports-group-title"><CalendarDays size={14} />Programme journalier</h2>
-          <div className="settings-grid reports-grid-single">
-            <article className="settings-card">
-              <div className="settings-card-heading"><div className="settings-icon"><CalendarDays size={19} /></div><div><span>Réf: For-Prod-09</span><h2>Programme journalier</h2></div></div>
-              <p className="settings-copy">Le PDF « Programme de Production » d’une date choisie.</p>
-              <div className="password-form">
-                <label>Date<input type="date" value={programDate} onChange={(event) => setProgramDate(event.target.value)} /></label>
-                <button type="button" className="settings-primary" onClick={exportProgramPdf} disabled={!programQuery.data || isExportingProgram}><Download size={16} />{programButtonLabel}</button>
               </div>
             </article>
           </div>
