@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, KeyRound, Menu, Plus, Settings2, ShieldCheck, Trash2, UserCog, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, KeyRound, Menu, Pencil, Plus, Settings2, ShieldCheck, Trash2, UserCog, Users, Warehouse, X } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -11,8 +11,12 @@ export default function Settings() {
   const utils = trpc.useUtils();
   const articlesQuery = trpc.settings.listArticles.useQuery();
   const operatorsQuery = trpc.settings.listOperators.useQuery();
+  const silosQuery = trpc.settings.listSilos.useQuery();
   const [articleCode, setArticleCode] = useState("");
   const [operatorName, setOperatorName] = useState("");
+  const [siloCode, setSiloCode] = useState("");
+  const [editingSiloId, setEditingSiloId] = useState<number | null>(null);
+  const [editingSiloCode, setEditingSiloCode] = useState("");
   const meQuery = trpc.auth.me.useQuery();
   const [adminCurrentPassword, setAdminCurrentPassword] = useState("");
   const [adminUsername, setAdminUsername] = useState("");
@@ -40,6 +44,22 @@ export default function Settings() {
     onSuccess: async () => { await utils.settings.listOperators.invalidate(); toast.success("Pupitreur retiré de la liste active"); },
     onError: (error) => toast.error(error.message || "Impossible de retirer ce pupitreur."),
   });
+  const addSilo = trpc.settings.addSilo.useMutation({
+    onSuccess: async () => { await utils.settings.listSilos.invalidate(); setSiloCode(""); toast.success("Silo ajouté à la liste"); },
+    onError: (error) => toast.error(error.message || "Impossible d’ajouter ce silo."),
+  });
+  const renameSilo = trpc.settings.renameSilo.useMutation({
+    onSuccess: async () => {
+      await Promise.all([utils.settings.listSilos.invalidate(), utils.silo.state.invalidate(), utils.silo.listEntries.invalidate(), utils.silo.listShipments.invalidate(), utils.silo.lotLedger.invalidate()]);
+      setEditingSiloId(null);
+      toast.success("Silo renommé");
+    },
+    onError: (error) => toast.error(error.message || "Impossible de renommer ce silo."),
+  });
+  const archiveSilo = trpc.settings.archiveSilo.useMutation({
+    onSuccess: async () => { await utils.settings.listSilos.invalidate(); toast.success("Silo retiré de la liste active"); },
+    onError: (error) => toast.error(error.message || "Impossible de retirer ce silo."),
+  });
   const changeAdminCredentials = trpc.auth.changeAdminCredentials.useMutation({
     onSuccess: () => { setAdminCurrentPassword(""); setAdminNewPassword(""); setAdminPasswordConfirmation(""); toast.success("Identifiants administrateur mis à jour"); },
     onError: (error) => toast.error(error.message || "Impossible de modifier les identifiants administrateur."),
@@ -52,6 +72,17 @@ export default function Settings() {
   };
   const removeOperator = (id: number, name: string) => {
     if (window.confirm(`Retirer ${name} de la liste active ? Les programmes déjà enregistrés resteront conservés.`)) archiveOperator.mutate({ id });
+  };
+  const submitSilo = (event: React.FormEvent) => { event.preventDefault(); addSilo.mutate({ code: siloCode.trim().toUpperCase() }); };
+  const removeSilo = (id: number, code: string) => {
+    if (window.confirm(`Retirer ${code} de la liste active ? L’historique de production et d’expédition restera conservé.`)) archiveSilo.mutate({ id });
+  };
+  const startRenameSilo = (id: number, code: string) => { setEditingSiloId(id); setEditingSiloCode(code); };
+  const submitRenameSilo = (event: React.FormEvent, id: number) => {
+    event.preventDefault();
+    const trimmed = editingSiloCode.trim().toUpperCase();
+    if (!trimmed) return;
+    renameSilo.mutate({ id, code: trimmed });
   };
   const submitAdminCredentials = (event: React.FormEvent) => {
     event.preventDefault();
@@ -84,6 +115,33 @@ export default function Settings() {
             <p className="settings-copy">Les pupitreurs ajoutés ici peuvent être sélectionnés seuls ou à plusieurs pour le même programme journalier. Les programmes déjà enregistrés restent conservés.</p>
             <form className="article-add-form" onSubmit={submitOperator}><label>Nouveau pupitreur<input value={operatorName} onChange={(event) => setOperatorName(event.target.value)} placeholder="Ex. Yosri" maxLength={128} required /></label><button type="submit" className="settings-primary" disabled={addOperator.isPending}><Plus size={16} />Ajouter</button></form>
             <div className="article-list" aria-live="polite">{operatorsQuery.isLoading ? <span className="settings-empty">Chargement des pupitreurs…</span> : operatorsQuery.data?.length ? operatorsQuery.data.map((operator) => <div className="article-list-row" key={operator.id}><strong>{operator.name}</strong><button type="button" onClick={() => removeOperator(operator.id, operator.name)} disabled={archiveOperator.isPending} aria-label={`Retirer ${operator.name} de la liste`}><Trash2 size={15} />Retirer</button></div>) : <span className="settings-empty">Aucun pupitreur actif. Ajoutez le premier nom à proposer dans les programmes.</span>}</div>
+          </article>
+
+          <article className="settings-card silos-card">
+            <div className="settings-card-heading"><div className="settings-icon security"><Warehouse size={19} /></div><div><span>Produits finis</span><h2>Liste des silos</h2></div></div>
+            <p className="settings-copy">Les silos ajoutés ici sont proposés dans la saisie de production, les expéditions et l’état des silos. Retirer un silo ne modifie jamais les mouvements déjà enregistrés ; le renommer met à jour son historique.</p>
+            <form className="article-add-form" onSubmit={submitSilo}><label>Nouveau silo<input value={siloCode} onChange={(event) => setSiloCode(event.target.value.toUpperCase())} placeholder="Ex. SPF13" maxLength={16} required /></label><button type="submit" className="settings-primary" disabled={addSilo.isPending}><Plus size={16} />Ajouter</button></form>
+            <div className="article-list" aria-live="polite">
+              {silosQuery.isLoading ? <span className="settings-empty">Chargement des silos…</span> : silosQuery.data?.length ? silosQuery.data.map((silo) => (
+                <div className="article-list-row" key={silo.id}>
+                  {editingSiloId === silo.id ? (
+                    <form className="silo-rename-form" onSubmit={(event) => submitRenameSilo(event, silo.id)}>
+                      <input value={editingSiloCode} onChange={(event) => setEditingSiloCode(event.target.value.toUpperCase())} maxLength={16} autoFocus required />
+                      <button type="submit" className="silo-rename-confirm" disabled={renameSilo.isPending} aria-label="Valider le renommage"><Check size={15} /></button>
+                      <button type="button" className="silo-rename-cancel" onClick={() => setEditingSiloId(null)} aria-label="Annuler le renommage"><X size={15} /></button>
+                    </form>
+                  ) : (
+                    <>
+                      <strong>{silo.code}</strong>
+                      <span className="article-list-actions">
+                        <button type="button" onClick={() => startRenameSilo(silo.id, silo.code)} aria-label={`Renommer ${silo.code}`}><Pencil size={15} />Renommer</button>
+                        <button type="button" onClick={() => removeSilo(silo.id, silo.code)} disabled={archiveSilo.isPending} aria-label={`Retirer ${silo.code} de la liste`}><Trash2 size={15} />Retirer</button>
+                      </span>
+                    </>
+                  )}
+                </div>
+              )) : <span className="settings-empty">Aucun silo actif. Ajoutez le premier silo à proposer.</span>}
+            </div>
           </article>
 
           <article className="settings-card admin-card">

@@ -28,32 +28,40 @@ import {
   updateProductionRecord,
 } from "./db";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
-import { importProductionRows, parseImportedWorkbook } from "./excelImport";
+import { importProductionRows, parseImportedWorkbook, previewProductionImport } from "./excelImport";
 import { parseDailyProgramWorkbook } from "./dailyProgramExcel";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
 import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_DURATION_MS, getAdminSessionCookieOptions, signAdminSession } from "./_core/adminSession";
 import { isVercelBlobConfigured, storageCreatePresignedUpload, storageGetSignedUrl } from "./storage";
 import {
+  addSilo,
+  archiveSilo,
   createSiloProductionEntry,
   createSiloShipment,
+  createSiloShipmentGroup,
   deleteSiloProductionEntry,
   deleteSiloShipment,
+  initializeSilos,
+  listActiveSilos,
   listSiloMovementArticles,
+  listSiloMovementSilos,
   listSiloProductionEntries,
   listSiloShipments,
   loadLotMovements,
   loadSiloMovements,
+  renameSilo,
   replaceSiloMovements,
   setLotManualDepletion,
   updateSiloProductionEntry,
   updateSiloShipment,
 } from "./siloDb";
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
-import { buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
+import { allocateFifoShipment, buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
 import { buildFilteredRegistryWorkbook, type FilteredRegistryRow } from "./registryExcel";
+import { buildShipmentsReportWorkbook } from "./shipmentsReport";
 import { extractExpeditionPdfText, importExpeditionShipments, parseExpeditionPdfText } from "./expeditionPdfImport";
 import { computeArticleStock, computeShipmentAvailability, computeSiloMatrix, computeSiloOccupancy, computeTotalStock } from "./siloStock";
-import { SHIPMENT_TYPES, SILOS } from "../shared/silo";
+import { SHIPMENT_TYPES } from "../shared/silo";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
@@ -99,6 +107,20 @@ async function assertShipmentWithinStock(silo: string, article: string, quantity
   }
 }
 
+/**
+ * Liste des silos à afficher/exporter : les silos configurés (Réglages),
+ * dans l'ordre choisi, puis ceux rencontrés uniquement dans d'anciens
+ * mouvements — même principe que les articles (voir listActiveProductionArticles
+ * / listSiloMovementArticles) : retirer un silo ne fait jamais disparaître un
+ * stock ou un historique déjà enregistré sous ce code.
+ */
+async function resolveSiloCodes(): Promise<string[]> {
+  await initializeSilos();
+  const [configured, fromMovements] = await Promise.all([listActiveSilos(), listSiloMovementSilos()]);
+  const configuredCodes = configured.map((silo) => silo.code);
+  return [...configuredCodes, ...fromMovements.filter((code) => !configuredCodes.includes(code))];
+}
+
 const DEFAULT_ADMIN_USERNAME = "admin";
 const DEFAULT_ADMIN_PASSWORD = "123456";
 
@@ -136,7 +158,11 @@ const SILO_IMPORT_PREFIX = "silo-import/";
 const PROGRAM_IMPORT_PREFIX = "program-import/";
 const EXPEDITION_PDF_IMPORT_PREFIX = "expedition-pdf-import/";
 const importPdfFileNameInput = z.string().trim().min(1).max(255).refine((fileName) => /\.pdf$/i.test(fileName), "Importez un fichier PDF au format .pdf.");
-const siloInput = z.enum(SILOS);
+// Silo dynamique (voir settings.listSilos/addSilo/renameSilo/archiveSilo) :
+// simple chaîne plutôt qu'un enum figé, comme siloArticleInput pour les
+// articles — la liste réellement proposée est celle des silos actifs, gérée
+// depuis les Réglages plutôt que fixée à la compilation.
+const siloInput = z.string().trim().min(1, "Choisissez un silo.").max(16);
 const optionalDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ").optional().or(z.literal("").transform(() => undefined));
 const siloArticleInput = z.string().trim().min(1, "Indiquez l’article.").max(64);
 const lotNumberInput = z.string().trim().max(64).optional().transform((value) => value || undefined);
@@ -148,7 +174,7 @@ const siloEntryInput = z.object({
   article: siloArticleInput,
   lotNumber: lotNumberInput,
   totalQuantity: z.number().finite().optional(),
-  allocations: z.array(z.object({ silo: siloInput, quantity: siloQuantityInput })).max(SILOS.length),
+  allocations: z.array(z.object({ silo: siloInput, quantity: siloQuantityInput })).max(64),
 });
 const siloShipmentInput = z.object({
   shipmentDate: optionalDateInput,
@@ -157,6 +183,12 @@ const siloShipmentInput = z.object({
   quantity: siloQuantityInput,
   silo: siloInput,
   shipmentType: z.enum(SHIPMENT_TYPES),
+});
+
+const shipmentReportFilterInput = z.object({
+  shipmentType: z.enum(SHIPMENT_TYPES).optional(),
+  dateFrom: optionalDateInput,
+  dateTo: optionalDateInput,
 });
 
 const registryFilterInput = z.object({
@@ -170,12 +202,34 @@ const importFileNameInput = z.string().trim().min(1).max(255).refine((fileName) 
 
 const importSourceInput = z.string().startsWith("production-import/");
 
-async function importWorkbookBuffer(buffer: Buffer) {
+/** Télécharge et valide la taille d'un fichier précédemment téléversé (voir prepareExcelUpload), partagé par l'aperçu et l'import réel. */
+async function fetchImportBuffer(storageKey: string, label: string): Promise<Buffer> {
+  const sourceUrl = await storageGetSignedUrl(storageKey);
+  const response = await fetch(sourceUrl);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.error(`[ImportExcel] Échec de la récupération du fichier téléversé (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+    throw new TRPCError({ code: "BAD_REQUEST", message: `Le fichier ${label} téléversé est indisponible (${response.status}). Réessayez l’import.` });
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: `Le fichier ${label} dépasse la limite de 5,7 Mo.` });
+  return buffer;
+}
+
+async function importWorkbookBuffer(buffer: Buffer, applyModifications: boolean) {
   const parsed = await parseImportedWorkbook(buffer);
   if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
-  const result = await importProductionRows(parsed.rows);
+  const result = await importProductionRows(parsed.rows, { applyModifications });
   await syncExcelFromRecords();
   return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+}
+
+/** Aperçu (sans écrire) d'un import Excel du registre — voir previewProductionImport. */
+async function previewWorkbookBuffer(buffer: Buffer) {
+  const parsed = await parseImportedWorkbook(buffer);
+  if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
+  const preview = await previewProductionImport(parsed.rows);
+  return { ...preview, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
 
 export function calculateRecord(input: z.infer<typeof recordInput>) {
@@ -256,6 +310,25 @@ export const appRouter = router({
       assertAdminSession(ctx);
       return archiveProductionOperator(input.id);
     }),
+    listSilos: publicProcedure.query(async () => {
+      await initializeSilos();
+      return listActiveSilos();
+    }),
+    addSilo: publicProcedure.input(z.object({ code: z.string().trim().min(1, "Saisissez un silo.").max(16) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSilo(input.code);
+    }),
+    /** Renomme un silo : le nouveau code remplace l'ancien dans les entrées et expéditions déjà enregistrées (voir renameSilo). */
+    renameSilo: publicProcedure.input(z.object({ id: z.number().int().positive(), code: z.string().trim().min(1, "Saisissez un silo.").max(16) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await renameSilo(input.id, input.code);
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce silo est introuvable." });
+      return updated;
+    }),
+    archiveSilo: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSilo(input.id);
+    }),
   }),
   dailyProgram: router({
     list: publicProcedure.query(() => listDailyPrograms()),
@@ -329,11 +402,12 @@ export const appRouter = router({
   silo: router({
     /** État courant des silos : matrice, occupation et stock par article. */
     state: publicProcedure.query(async () => {
-      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles] = await Promise.all([
+      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles, siloCodes] = await Promise.all([
         loadSiloMovements(),
         loadLotMovements(),
         listActiveProductionArticles(),
         listSiloMovementArticles(),
+        resolveSiloCodes(),
       ]);
       // Les articles configurés donnent l’ordre des colonnes ; ceux rencontrés
       // uniquement dans d’anciens mouvements restent visibles à la suite.
@@ -342,10 +416,10 @@ export const appRouter = router({
       // Un lot fermé manuellement dans la traçabilité des lots ne doit plus
       // apparaître comme stock disponible ici (voir manualDepletionWriteOffs).
       const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots);
-      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], SILOS, articles);
-      const occupancy = computeSiloOccupancy(matrix, SILOS, articles);
+      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], siloCodes, articles);
+      const occupancy = computeSiloOccupancy(matrix, siloCodes, articles);
       return {
-        silos: [...SILOS],
+        silos: siloCodes,
         articles,
         matrix,
         occupancy,
@@ -369,11 +443,38 @@ export const appRouter = router({
       return deleteSiloProductionEntry(input.id);
     }),
     listShipments: publicProcedure.query(() => listSiloShipments()),
+    /**
+     * Sans N° Lot précisé, la quantité est répartie sur les lots actifs les
+     * plus anciens d'abord (FIFO) — une ligne d'expédition par lot réellement
+     * entamé plutôt qu'une seule ligne portant un lot arbitraire (voir
+     * allocateFifoShipment dans siloLots.ts) ; le classeur Silo_PF reflète
+     * alors correctement chaque lot touché sans traitement supplémentaire,
+     * puisqu'il liste simplement les lignes d'expédition telles quelles.
+     * Un N° Lot précisé explicitement (correction, cas particulier) garde le
+     * comportement d'une seule ligne.
+     */
     createShipment: publicProcedure.input(siloShipmentInput).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity);
-      const { quantity, ...shipment } = input;
-      return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
+      const { quantity, lotNumber, ...shipment } = input;
+      if (lotNumber) {
+        const created = await createSiloShipment({ ...shipment, lotNumber, quantity: quantity.toFixed(2) });
+        return { shipments: [created] };
+      }
+
+      const date = shipment.shipmentDate ?? new Date().toISOString().slice(0, 10);
+      const lotMovements = await loadLotMovements();
+      const ledger = computeLotLedger(
+        lotMovements.allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
+        lotMovements.shipments.filter((movement) => !movement.shipmentDate || movement.shipmentDate <= date),
+      );
+      const chunks = allocateFifoShipment(ledger.lots, shipment.article, shipment.silo, quantity);
+      // Reliées par un splitGroupId partagé (voir createSiloShipmentGroup) :
+      // seule cette saisie précise s'affiche comme une expédition répartie sur
+      // plusieurs lots, jamais une autre qui partagerait par coïncidence la
+      // même date, le même article, le même silo et le même type.
+      const created = await createSiloShipmentGroup(chunks.map((chunk) => ({ ...shipment, lotNumber: chunk.lotNumber ?? undefined, quantity: chunk.quantity.toFixed(2) })));
+      return { shipments: created };
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -405,7 +506,7 @@ export const appRouter = router({
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });
 
-      const parsed = await parseSiloWorkbook(buffer);
+      const parsed = await parseSiloWorkbook(buffer, await resolveSiloCodes());
       if (parsed.entries.length === 0 && parsed.shipments.length === 0) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `Aucun mouvement de silo n’a été trouvé dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
       }
@@ -470,15 +571,16 @@ export const appRouter = router({
     }),
     /** Reconstruit le classeur Silo_PF complet, formules comprises. */
     exportExcel: publicProcedure.query(async () => {
-      const [entries, shipments, configuredArticles, movementArticles] = await Promise.all([
+      const [entries, shipments, configuredArticles, movementArticles, siloCodes] = await Promise.all([
         listSiloProductionEntries(),
         listSiloShipments(),
         listActiveProductionArticles(),
         listSiloMovementArticles(),
+        resolveSiloCodes(),
       ]);
       const configuredCodes = configuredArticles.map((article) => article.code);
       const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
-      const workbook = await buildSiloWorkbook(entries, shipments, articles);
+      const workbook = await buildSiloWorkbook(entries, shipments, articles, siloCodes);
       return {
         fileName: `Silo_PF_${new Date().toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64"),
@@ -502,11 +604,35 @@ export const appRouter = router({
     }),
     /** Export Excel de la traçabilité des lots (une ligne par lot). */
     exportLotLedger: publicProcedure.query(async () => {
-      const { allocations, shipments } = await loadLotMovements();
+      const [{ allocations, shipments }, siloCodes] = await Promise.all([loadLotMovements(), resolveSiloCodes()]);
       const ledger = computeLotLedger(allocations, shipments);
-      const workbook = await buildLotLedgerWorkbook(ledger);
+      const workbook = await buildLotLedgerWorkbook(ledger, siloCodes);
       return {
         fileName: `Tracabilite_Lots_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64"),
+      };
+    }),
+    /** Export Excel des expéditions filtrées par type (Vrac/Sac) et par période, comme depuis Ajouter une expédition. */
+    exportShipmentsReport: publicProcedure.input(shipmentReportFilterInput).query(async ({ input }) => {
+      const shipments = await listSiloShipments();
+      const filtered = shipments
+        .filter((shipment) => !input.shipmentType || shipment.shipmentType === input.shipmentType)
+        .filter((shipment) => !input.dateFrom || (shipment.shipmentDate ?? "") >= input.dateFrom)
+        .filter((shipment) => !input.dateTo || (shipment.shipmentDate ?? "") <= input.dateTo);
+      const workbook = await buildShipmentsReportWorkbook(
+        filtered.map((shipment) => ({
+          shipmentDate: shipment.shipmentDate,
+          article: shipment.article,
+          lotNumber: shipment.lotNumber,
+          quantity: Number(shipment.quantity),
+          silo: shipment.silo,
+          shipmentType: shipment.shipmentType,
+          splitGroupId: shipment.splitGroupId,
+        })),
+        input,
+      );
+      return {
+        fileName: `Expeditions_${new Date().toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64"),
       };
     }),
@@ -514,10 +640,10 @@ export const appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
-    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000) })).mutation(async ({ ctx, input }) => {
+    importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), applyModifications: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
       assertAdminSession(ctx);
-      return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
+      return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"), input.applyModifications ?? false);
     }),
     prepareExcelUpload: publicProcedure.input(z.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -533,18 +659,22 @@ export const appRouter = router({
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put" as const, key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
+    /**
+     * Aperçu de l'import sans rien écrire : combien de lignes seraient
+     * ajoutées, combien correspondent à une modification d'une ligne
+     * existante (avec le détail des champs) et combien sont déjà identiques.
+     * Le registre demande la confirmation de l'utilisateur avant d'appeler
+     * importExcelFromStorage avec applyModifications s'il y a des lignes à
+     * modifier (voir Registry.tsx) — les lignes nouvelles, elles, s'ajoutent
+     * toujours sans confirmation supplémentaire.
+     */
+    previewExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      const sourceUrl = await storageGetSignedUrl(input.storageKey);
-      const response = await fetch(sourceUrl);
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        console.error(`[ImportExcel] Échec de la récupération du fichier téléversé (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
-        throw new TRPCError({ code: "BAD_REQUEST", message: `Le fichier Excel téléversé est indisponible (${response.status}). Réessayez l’import.` });
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel dépasse la limite de 5,7 Mo." });
-      return importWorkbookBuffer(buffer);
+      return previewWorkbookBuffer(await fetchImportBuffer(input.storageKey, "Excel"));
+    }),
+    importExcelFromStorage: publicProcedure.input(z.object({ storageKey: importSourceInput, applyModifications: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return importWorkbookBuffer(await fetchImportBuffer(input.storageKey, "Excel"), input.applyModifications ?? false);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
     /** Export Excel du registre filtré (page Rapports) : même recherche/période que le Registre. */

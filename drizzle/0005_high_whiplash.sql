@@ -1,0 +1,1 @@
+ALTER TABLE "silo_shipments" ADD COLUMN "splitGroupId" integer;

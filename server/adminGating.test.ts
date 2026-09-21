@@ -43,6 +43,11 @@ describe("mutations réservées à la session admin (sans mot de passe par actio
     await expect(appRouter.createCaller(createContext(true)).production.create(payload)).resolves.toMatchObject({ article: "GATE-TEST-C" });
   });
 
+  it("settings.addSilo refuse un visiteur et accepte un admin", async () => {
+    await expect(appRouter.createCaller(createContext(false)).settings.addSilo({ code: "GATE-SILO-A" })).rejects.toThrow(/administrateur/i);
+    await expect(appRouter.createCaller(createContext(true)).settings.addSilo({ code: "GATE-SILO-A" })).resolves.toMatchObject({ code: "GATE-SILO-A" });
+  });
+
   it("les requêtes de lecture restent publiques (visiteur inclus)", async () => {
     const caller = appRouter.createCaller(createContext(false));
     await expect(caller.production.list()).resolves.toBeDefined();

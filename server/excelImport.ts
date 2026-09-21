@@ -75,8 +75,9 @@ function parseNumeric(value: ExcelJS.CellValue, text: string) {
 }
 
 function toIsoDate(value: ExcelJS.CellValue, text: string, fallbackYear?: number): string | undefined {
+  // Getters UTC, pas locaux : voir la note équivalente sur readDate dans siloExcel.ts.
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
   }
   if (typeof value === "number") {
     const date = new Date(Date.UTC(1899, 11, 30) + value * 86_400_000);
@@ -216,46 +217,187 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
   return { rows, errors };
 }
 
-export async function importProductionRows(rows: ImportedProductionRow[]) {
-  const db = await getDb();
-  const existing = db ? await db.select().from(productionRecords) : await listProductionRecords();
+type ExistingProductionRecord = ProductionFingerprintInput & { id: number };
+
+export type ImportDecision =
+  | { kind: "unchanged"; row: ImportedProductionRow }
+  | { kind: "create"; row: ImportedProductionRow; values: ReturnType<typeof calculateRow> }
+  | { kind: "update"; row: ImportedProductionRow; existingId: number; before: ExistingProductionRecord; values: ReturnType<typeof calculateRow> };
+
+/**
+ * Date + article + production, normalisés comme dans productionRowFingerprint :
+ * sert à retrouver une ligne existante quand le fichier n'a pas de colonne ID
+ * (le cas courant — voir plus bas). La production fait partie de la clé : une
+ * ligne qui change de date, d'article OU de production décrit une production
+ * différente, pas une correction de la même ligne (ex. deux lots distincts du
+ * même article le même jour) — elle est donc toujours ajoutée telle quelle,
+ * jamais proposée comme modification. Seul un écart sur un autre champ (temps,
+ * arrêts, rebuts, cadence, commentaire) déclenche une demande de confirmation.
+ */
+function naturalKey(productionDate: string, article: string, productionTons: number | string) {
+  return `${productionDate}::${article.trim().toUpperCase()}::${Number(productionTons).toFixed(2)}`;
+}
+
+/**
+ * Compare les lignes importées à l'état actuel du registre, sans rien écrire.
+ * Une ligne existante n'est jamais associée à deux lignes importées à la fois
+ * (claimedIds) : chaque ligne du fichier est mise en correspondance avec au
+ * plus une ligne du registre, dans cet ordre —
+ *   1. même ID (colonne ID du fichier, rarement présente) ;
+ *   2. à défaut, la plus ancienne ligne existante pas encore associée qui
+ *      partage la même date, le même article ET la même production ("clé
+ *      naturelle", voir naturalKey ci-dessus) — le classeur maintenu à la main
+ *      n'a presque jamais de colonne ID, donc c'est la correspondance normale.
+ *      Plusieurs lignes existantes peuvent partager cette clé (deux saisies du
+ *      même jour, même article, même tonnage, mais des arrêts ou rebuts
+ *      différents) : associées par position (1ère ligne du fichier avec cette
+ *      clé ↔ la plus ancienne, etc.) — la meilleure approximation possible
+ *      sans identifiant stable côté fichier, mais réordonner ces lignes
+ *      précises dans le fichier peut alors leur faire échanger leur correspondance.
+ * Une ligne sans correspondance est "create". Une ligne mise en correspondance
+ * dont le contenu (hors indicateurs recalculés) est identique est "unchanged"
+ * (jamais réimportée en double) ; sinon "update" (jamais appliquée sans
+ * confirmation — voir previewProductionImport et importProductionRows).
+ */
+function planImportDecisions(rows: ImportedProductionRow[], existing: ExistingProductionRecord[]): ImportDecision[] {
   const byId = new Map(existing.map((record) => [record.id, record]));
-  const existingFingerprints = new Set(existing.map((record) => productionRowFingerprint(record)));
+  const byNaturalKey = new Map<string, ExistingProductionRecord[]>();
+  for (const record of existing) {
+    const key = naturalKey(record.productionDate, record.article, record.productionTons);
+    const group = byNaturalKey.get(key) ?? [];
+    group.push(record);
+    byNaturalKey.set(key, group);
+  }
+  for (const group of Array.from(byNaturalKey.values())) group.sort((a, b) => a.id - b.id);
+  const claimedIds = new Set<number>();
+  // Deux lignes identiques dans le même fichier (copier-coller involontaire, sans
+  // correspondance existante) ne doivent pas non plus créer deux lignes.
+  const seenNewFingerprints = new Set<string>();
+
+  const decisions: ImportDecision[] = [];
+  for (const row of rows) {
+    const values = calculateRow(row);
+    const fingerprint = productionRowFingerprint(values);
+    let existingRecord = row.id ? byId.get(row.id) : undefined;
+    if (!existingRecord) {
+      const key = naturalKey(values.productionDate, values.article, values.productionTons);
+      existingRecord = (byNaturalKey.get(key) ?? []).find((candidate) => !claimedIds.has(candidate.id));
+    }
+
+    if (existingRecord) {
+      claimedIds.add(existingRecord.id);
+      if (productionRowFingerprint(existingRecord) === fingerprint) {
+        decisions.push({ kind: "unchanged", row });
+      } else {
+        decisions.push({ kind: "update", row, existingId: existingRecord.id, before: existingRecord, values });
+      }
+    } else if (seenNewFingerprints.has(fingerprint)) {
+      decisions.push({ kind: "unchanged", row });
+    } else {
+      decisions.push({ kind: "create", row, values });
+      seenNewFingerprints.add(fingerprint);
+    }
+  }
+  return decisions;
+}
+
+async function loadExistingProductionRecords(): Promise<ExistingProductionRecord[]> {
+  const db = await getDb();
+  return db ? await db.select().from(productionRecords) : await listProductionRecords();
+}
+
+const CHANGE_FIELDS: Array<{ field: keyof ProductionFingerprintInput; label: string }> = [
+  { field: "productionDate", label: "Date" },
+  { field: "article", label: "Article" },
+  { field: "totalProductionHours", label: "Temps total prod. (h)" },
+  { field: "plannedStopsHours", label: "Arrêts plan. (h)" },
+  { field: "unplannedStopsHours", label: "Arrêts non pl. (h)" },
+  { field: "productionTons", label: "Production (T)" },
+  { field: "wasteTons", label: "Rebuts (T)" },
+  { field: "standardRate", label: "Cadence std" },
+  { field: "comment", label: "Commentaire" },
+];
+
+function formatChangeValue(field: keyof ProductionFingerprintInput, value: unknown): string {
+  if (field === "productionDate" || field === "article") return String(value ?? "");
+  if (field === "comment") return String(value ?? "").trim() || "—";
+  return Number(value).toFixed(2);
+}
+
+/** Ne garde que les champs dont la valeur affichée diffère réellement entre l'ancienne et la nouvelle ligne. */
+function describeChanges(before: ExistingProductionRecord, after: ReturnType<typeof calculateRow>) {
+  return CHANGE_FIELDS
+    .map(({ field, label }) => ({ field, label, before: formatChangeValue(field, before[field]), after: formatChangeValue(field, after[field]) }))
+    .filter((change) => change.before !== change.after);
+}
+
+export type ProductionImportPreview = {
+  toCreate: number;
+  toUpdate: Array<{ id: number; productionDate: string; article: string; changes: Array<{ field: string; label: string; before: string; after: string }> }>;
+  unchanged: number;
+};
+
+/**
+ * Aperçu d'un import Excel, sans écrire quoi que ce soit : combien de lignes
+ * seraient ajoutées, combien correspondent à une modification d'une ligne
+ * existante (avec le détail des champs qui changeraient) et combien sont déjà
+ * identiques et n'apporteraient rien. Sert à demander la permission de
+ * l'utilisateur avant de modifier une ancienne saisie (voir Registry.tsx).
+ */
+export async function previewProductionImport(rows: ImportedProductionRow[]): Promise<ProductionImportPreview> {
+  const decisions = planImportDecisions(rows, await loadExistingProductionRecords());
+  const toUpdate = decisions
+    .filter((decision): decision is Extract<ImportDecision, { kind: "update" }> => decision.kind === "update")
+    .map((decision) => ({ id: decision.existingId, productionDate: decision.values.productionDate, article: decision.values.article, changes: describeChanges(decision.before, decision.values) }));
+  return {
+    toCreate: decisions.filter((decision) => decision.kind === "create").length,
+    toUpdate,
+    unchanged: decisions.filter((decision) => decision.kind === "unchanged").length,
+  };
+}
+
+/**
+ * Applique un import Excel : les lignes nouvelles sont toujours ajoutées et
+ * les doublons (par ID inchangé ou par contenu identique) toujours ignorés,
+ * mais une ligne qui modifierait une ligne existante n'est écrite que si
+ * `applyModifications` vaut true — après que l'utilisateur a confirmé
+ * l'aperçu de previewProductionImport ci-dessus. Par défaut à true pour les
+ * appels directs (scripts, tests) ; le routeur tRPC passe explicitement false
+ * tant que l'utilisateur n'a pas confirmé.
+ */
+export async function importProductionRows(rows: ImportedProductionRow[], options: { applyModifications?: boolean } = {}) {
+  const applyModifications = options.applyModifications ?? true;
+  const db = await getDb();
+  const decisions = planImportDecisions(rows, await loadExistingProductionRecords());
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  for (const row of rows) {
-    const values = calculateRow(row);
-    const existingRecord = row.id ? byId.get(row.id) : undefined;
-    const fingerprint = productionRowFingerprint(values);
-    if (existingRecord) {
-      if (productionRowFingerprint(existingRecord) === fingerprint) {
-        skipped += 1;
+  let pendingModifications = 0;
+  for (const decision of decisions) {
+    if (decision.kind === "unchanged") {
+      skipped += 1;
+      continue;
+    }
+    if (decision.kind === "create") {
+      if (db) {
+        await db.insert(productionRecords).values(decision.values);
+      } else {
+        await createProductionRecord(decision.values);
+      }
+      created += 1;
+    } else {
+      if (!applyModifications) {
+        pendingModifications += 1;
         continue;
       }
       if (db) {
-        await db.update(productionRecords).set({ ...values, updatedAt: new Date() }).where(eq(productionRecords.id, existingRecord.id));
+        await db.update(productionRecords).set({ ...decision.values, updatedAt: new Date() }).where(eq(productionRecords.id, decision.existingId));
       } else {
-        await updateProductionRecord(existingRecord.id, values);
+        await updateProductionRecord(decision.existingId, decision.values);
       }
-      existingFingerprints.delete(productionRowFingerprint(existingRecord));
-      existingFingerprints.add(fingerprint);
       updated += 1;
-    } else if (existingFingerprints.has(fingerprint)) {
-      skipped += 1;
-      continue;
-    } else {
-      if (db) {
-        const [createdRow] = await db.insert(productionRecords).values(values).returning();
-        byId.set(createdRow.id, createdRow as typeof existing[number]);
-      } else {
-        const createdRecord = await createProductionRecord(values);
-        byId.set(createdRecord.id, createdRecord);
-      }
-      existingFingerprints.add(fingerprint);
-      created += 1;
     }
-    await addProductionArticle(row.article);
+    await addProductionArticle(decision.row.article);
   }
-  return { created, updated, skipped, total: rows.length };
+  return { created, updated, skipped, pendingModifications, total: rows.length };
 }

@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
-import { SILOS } from "@shared/silo";
 import type { LotConsumptionSource } from "../../../server/siloLots";
 import "./silo.css";
 
@@ -14,6 +13,16 @@ const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
 const describeSource = (source: LotConsumptionSource) =>
   source.type === "shipment" ? `Expédition ${source.shipmentType.toLowerCase()} · ${formatDate(source.date)}` : `Correction · ${formatDate(source.date)}`;
+// Départage deux lots entrés à la même date : le n° de lot (attribué par le
+// système externe à la fabrication) reflète l'ordre réel bien mieux que
+// l'ordre de saisie — voir compareLotOrder côté serveur (server/siloLots.ts),
+// dupliqué ici plutôt qu'importé pour ne pas embarquer le code serveur dans le bundle client.
+const compareLotOrder = (a: { lotNumber: string | null; entryId: number }, b: { lotNumber: string | null; entryId: number }) => {
+  if (a.lotNumber && b.lotNumber) return a.lotNumber.localeCompare(b.lotNumber);
+  if (a.lotNumber) return -1;
+  if (b.lotNumber) return 1;
+  return a.entryId - b.entryId;
+};
 
 export default function SiloLots() {
   const { openSidebar } = useSidebar();
@@ -44,9 +53,7 @@ export default function SiloLots() {
       ? `Réactiver le lot ${lot.lotNumber || "sans numéro"} ? Son statut redeviendra celui calculé automatiquement.`
       : `Marquer le lot ${lot.lotNumber || "sans numéro"} comme épuisé ? Il ne sera plus proposé comme disponible, quelle que soit la quantité restante calculée.`;
     if (!window.confirm(confirmMessage)) return;
-    // `lot.silo` vient de la traçabilité déjà calculée côté serveur : c'est
-    // toujours l'un des silos connus, d'où ce recadrage de type.
-    setDepletion.mutate({ entryId: lot.entryId, silo: lot.silo as (typeof SILOS)[number], manuallyDepleted: !lot.manuallyDepleted });
+    setDepletion.mutate({ entryId: lot.entryId, silo: lot.silo, manuallyDepleted: !lot.manuallyDepleted });
   };
   const editLot = (lot: { entryId: number }) => setLocation(`/silo-pf-production?edit=${lot.entryId}`);
 
@@ -58,7 +65,7 @@ export default function SiloLots() {
     .filter((lot) => articleFilter === "all" || lot.article === articleFilter)
     .filter((lot) => showDepleted || lot.status === "active")
     .filter((lot) => !lotQuery.trim() || (lot.lotNumber ?? "").toLowerCase().includes(lotQuery.trim().toLowerCase()))
-    .sort((a, b) => a.silo.localeCompare(b.silo) || (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || a.entryId - b.entryId),
+    .sort((a, b) => a.silo.localeCompare(b.silo) || (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b)),
   [lots, siloFilter, articleFilter, showDepleted, lotQuery]);
 
   const activeCount = lots.filter((lot) => lot.status === "active").length;

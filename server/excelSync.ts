@@ -3,6 +3,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import sourceData from "../client/src/data/app-data.json";
 import { productionRecords, synchronizedExcelFiles } from "../drizzle/schema";
 import { getDb, getSynchronizedExcelFileFallback, listProductionRecords, saveSynchronizedExcelFileFallback } from "./db";
+import { excelDate } from "./siloExcel";
 import { storagePut } from "./storage";
 
 type SourceDay = {
@@ -153,7 +154,7 @@ export async function syncExcelFromRecords() {
   records.forEach((record) => {
     worksheet.addRow({
       id: record.id,
-      date: new Date(`${record.productionDate}T00:00:00`),
+      date: excelDate(record.productionDate),
       article: record.article,
       hours: asNumber(record.totalProductionHours),
       plannedStops: asNumber(record.plannedStopsHours),

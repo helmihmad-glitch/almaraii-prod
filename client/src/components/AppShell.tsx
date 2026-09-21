@@ -162,10 +162,6 @@ export default function AppShell({ children, shortcuts }: { children: ReactNode;
               )}
             </nav>
           </div>
-          <div className="rail-footer">
-            <div className="status-pulse"><span />Source synchronisée</div>
-            <small>Classeur : Dashboard_Production.xlsx<br />Dernière lecture · aujourd’hui</small>
-          </div>
         </aside>
         {sidebarOpen && <button className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" />}
         <div className="main-content">{children}</div>

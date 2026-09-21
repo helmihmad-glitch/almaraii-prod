@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
+import { allocateFifoShipment, buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
 
 describe("tracabilite FIFO des lots", () => {
   it("consomme le lot le plus ancien en premier (exemple demande)", () => {
@@ -67,6 +67,24 @@ describe("tracabilite FIFO des lots", () => {
 
     expect(lots.find((lot) => lot.lotNumber === "ancien")!.remainingQuantity).toBe(5);
     expect(lots.find((lot) => lot.lotNumber === "recent")!.remainingQuantity).toBe(10);
+  });
+
+  it("à date d'entree egale, consomme par n° de lot croissant meme si les lots sont saisis dans l'ordre inverse", () => {
+    // Cas réel signalé : trois lots entrés le même jour, mais saisis dans
+    // l'application dans l'ordre inverse de leur n° de lot (2600677 saisi en
+    // premier). La sortie doit tout de même entamer 2600675 en premier.
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 99, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600677-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 101, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600676-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 103, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600675-0917", silo: "SPF11", quantity: 5 },
+      ],
+      [{ shipmentId: 1, shipmentDate: "2026-09-18", article: "DG3", silo: "SPF11", quantity: 8, shipmentType: "Sac" }],
+    );
+
+    expect(lots.find((lot) => lot.lotNumber === "2600675-0917")).toMatchObject({ remainingQuantity: 0, status: "depleted" });
+    expect(lots.find((lot) => lot.lotNumber === "2600676-0917")).toMatchObject({ remainingQuantity: 7, status: "active" });
+    expect(lots.find((lot) => lot.lotNumber === "2600677-0917")).toMatchObject({ remainingQuantity: 10, status: "active" });
   });
 
   it("garde des files separees par silo : un meme article dans deux silos ne se melange pas", () => {
@@ -339,5 +357,100 @@ describe("tracabilite FIFO des lots", () => {
     );
 
     expect(lots[0].remainingQuantity).toBe(10);
+  });
+});
+
+describe("allocateFifoShipment (répartition d'une expédition sans N° Lot précisé)", () => {
+  it("répartit sur plusieurs lots quand le premier ne suffit pas (exemple : SPF11, 5 + 10 + 10 T, expédition de 18 T)", () => {
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600675-0917", silo: "SPF11", quantity: 5 },
+        { entryId: 2, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600676-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 3, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600677-0917", silo: "SPF11", quantity: 10 },
+      ],
+      [],
+    );
+
+    const chunks = allocateFifoShipment(lots, "CG3", "SPF11", 18);
+
+    expect(chunks).toEqual([
+      { lotNumber: "2600675-0917", quantity: 5 },
+      { lotNumber: "2600676-0917", quantity: 10 },
+      { lotNumber: "2600677-0917", quantity: 3 },
+    ]);
+
+    // Le 1er et le 2e lot sont épuisés par cette répartition, le 3e reste actif avec 7 T restantes.
+    const afterShipment = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600675-0917", silo: "SPF11", quantity: 5 },
+        { entryId: 2, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600676-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 3, entryDate: "2026-09-17", article: "CG3", lotNumber: "2600677-0917", silo: "SPF11", quantity: 10 },
+      ],
+      chunks.map((chunk, index) => ({ shipmentId: index + 1, shipmentDate: "2026-09-18", article: "CG3", silo: "SPF11", quantity: chunk.quantity, shipmentType: "Vrac" as const })),
+    ).lots;
+    expect(afterShipment.find((lot) => lot.lotNumber === "2600675-0917")!.status).toBe("depleted");
+    expect(afterShipment.find((lot) => lot.lotNumber === "2600676-0917")!.status).toBe("depleted");
+    const third = afterShipment.find((lot) => lot.lotNumber === "2600677-0917")!;
+    expect(third.status).toBe("active");
+    expect(third.remainingQuantity).toBe(7);
+  });
+
+  it("tient dans un seul lot quand il suffit : un seul tronçon", () => {
+    const { lots } = computeLotLedger([{ entryId: 1, entryDate: "2026-09-17", article: "CM1", lotNumber: "A", silo: "SPF2", quantity: 20 }], []);
+    expect(allocateFifoShipment(lots, "CM1", "SPF2", 12)).toEqual([{ lotNumber: "A", quantity: 12 }]);
+  });
+
+  it("départage par n° de lot plutôt que par ordre de saisie (entryId), quand plusieurs lots partagent la même date d'entrée", () => {
+    // Cas réel signalé : les trois lots saisis en une seule fois (même date
+    // d'entrée), mais dans l'ordre INVERSE de leur numéro de lot — 2600677
+    // saisi en premier (entryId le plus bas), 2600675 saisi en dernier. Le n°
+    // de lot (attribué par le système externe à la fabrication) doit
+    // l'emporter sur l'ordre de saisie, qui ne reflète ici pas du tout
+    // l'ordre réel de fabrication.
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 99, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600677-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 101, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600676-0917", silo: "SPF11", quantity: 10 },
+        { entryId: 103, entryDate: "2026-09-17", article: "DG3", lotNumber: "2600675-0917", silo: "SPF11", quantity: 5 },
+      ],
+      [],
+    );
+
+    // Toujours le plus petit n° de lot (2600675) en premier, jamais celui saisi en premier (2600677, entryId 99).
+    expect(allocateFifoShipment(lots, "DG3", "SPF11", 18)).toEqual([
+      { lotNumber: "2600675-0917", quantity: 5 },
+      { lotNumber: "2600676-0917", quantity: 10 },
+      { lotNumber: "2600677-0917", quantity: 3 },
+    ]);
+  });
+
+  it("repli sur entryId seulement quand les deux lots comparés n'ont pas de n° de lot", () => {
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 2, entryDate: "2026-09-17", article: "CM1", lotNumber: null, silo: "SPF2", quantity: 10 },
+        { entryId: 1, entryDate: "2026-09-17", article: "CM1", lotNumber: null, silo: "SPF2", quantity: 5 },
+        { entryId: 3, entryDate: "2026-09-17", article: "CM1", lotNumber: "NUMEROTE", silo: "SPF2", quantity: 8 },
+      ],
+      [],
+    );
+
+    // Le lot numéroté passe avant les deux non numérotés, qui se départagent ensuite par entryId.
+    expect(allocateFifoShipment(lots, "CM1", "SPF2", 23).map((chunk) => chunk.quantity)).toEqual([8, 5, 10]);
+  });
+
+  it("ignore les lots épuisés ou d'un autre article/silo", () => {
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 1, entryDate: "2026-09-17", article: "CM1", lotNumber: "EPUISE", silo: "SPF2", quantity: 5 },
+        { entryId: 2, entryDate: "2026-09-17", article: "CM1", lotNumber: "ACTIF", silo: "SPF2", quantity: 10 },
+      ],
+      [{ shipmentId: 1, shipmentDate: "2026-09-17", article: "CM1", silo: "SPF2", quantity: 5, shipmentType: "Vrac" }],
+    );
+    expect(allocateFifoShipment(lots, "CM1", "SPF2", 4)).toEqual([{ lotNumber: "ACTIF", quantity: 4 }]);
+  });
+
+  it("signale un reliquat plutôt que de le perdre si les lots actifs ne couvrent pas toute la quantité", () => {
+    const { lots } = computeLotLedger([{ entryId: 1, entryDate: "2026-09-17", article: "CM1", lotNumber: "A", silo: "SPF2", quantity: 5 }], []);
+    expect(allocateFifoShipment(lots, "CM1", "SPF2", 8)).toEqual([{ lotNumber: "A", quantity: 5 }, { lotNumber: null, quantity: 3 }]);
   });
 });

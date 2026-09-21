@@ -4,16 +4,19 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   InsertSiloProductionEntry,
   InsertSiloShipment,
+  silos,
   siloProductionAllocations,
   siloProductionEntries,
   siloShipments,
 } from "../drizzle/schema";
 import { getDb } from "./db";
+import { SILOS } from "../shared/silo";
 
 export type SiloAllocationDraft = { silo: string; quantity: number };
 type FallbackEntry = { id: number; entryDate: string | null; article: string; lotNumber: string | null; totalQuantity: string | null; createdAt: Date; updatedAt: Date };
 type FallbackAllocation = { id: number; entryId: number; silo: string; quantity: string; manuallyDepleted: boolean; createdAt: Date; updatedAt: Date };
-type FallbackShipment = { id: number; shipmentDate: string | null; article: string; lotNumber: string | null; quantity: string; silo: string; shipmentType: string; createdAt: Date; updatedAt: Date };
+type FallbackShipment = { id: number; shipmentDate: string | null; article: string; lotNumber: string | null; quantity: string; silo: string; shipmentType: string; splitGroupId: number | null; createdAt: Date; updatedAt: Date };
+type FallbackSilo = { id: number; code: string; isActive: boolean; sortOrder: number; createdAt: Date; updatedAt: Date };
 
 // Stockage de secours pour le développement local sans base de données, sur le
 // même principe que server/db.ts : les écritures échouant sur un système de
@@ -21,7 +24,7 @@ type FallbackShipment = { id: number; shipmentDate: string | null; article: stri
 // Vitest (process.env.VITEST) utilise son propre fichier, jamais celui du
 // serveur de développement — voir le commentaire équivalent dans server/db.ts.
 const fallbackPath = path.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
-const emptyStore = () => ({ entries: [] as FallbackEntry[], allocations: [] as FallbackAllocation[], shipments: [] as FallbackShipment[], nextId: 1 });
+const emptyStore = () => ({ entries: [] as FallbackEntry[], allocations: [] as FallbackAllocation[], shipments: [] as FallbackShipment[], silos: [] as FallbackSilo[], nextId: 1 });
 
 function loadFallbackStore() {
   if (!existsSync(fallbackPath)) return emptyStore();
@@ -32,7 +35,10 @@ function loadFallbackStore() {
       // manuallyDepleted : absent des fichiers de secours écrits avant cette
       // fonctionnalité, donc à défaut "actif" (false) plutôt qu'une erreur.
       allocations: (parsed.allocations ?? []).map((allocation) => ({ ...allocation, manuallyDepleted: allocation.manuallyDepleted ?? false })),
-      shipments: parsed.shipments ?? [],
+      // splitGroupId : absent des fichiers de secours écrits avant cette fonctionnalité, donc à défaut "saisie seule" (null).
+      shipments: (parsed.shipments ?? []).map((shipment) => ({ ...shipment, splitGroupId: shipment.splitGroupId ?? null })),
+      // silos : absent des fichiers de secours écrits avant cette fonctionnalité (voir initializeSilos, qui les sème au premier accès).
+      silos: parsed.silos ?? [],
       nextId: parsed.nextId ?? 1,
     };
   } catch {
@@ -57,6 +63,121 @@ function persist() {
 
 const nextId = () => store.nextId++;
 const now = () => new Date();
+
+/**
+ * Sème la liste des silos avec les valeurs d'origine (SPF1..SPF12, voir
+ * shared/silo.ts) au tout premier accès, une seule fois — sur le même
+ * principe que initializeProductionArticles pour les articles. N'écrase
+ * jamais une liste déjà configurée (retirer puis reconfigurer les 12 silos
+ * ne les sèmerait pas deux fois).
+ */
+export async function initializeSilos() {
+  const db = await getDb();
+  if (!db) {
+    if (store.silos.length > 0) return;
+    SILOS.forEach((code, index) => {
+      store.silos.push({ id: nextId(), code, isActive: true, sortOrder: index, createdAt: now(), updatedAt: now() });
+    });
+    persist();
+    return;
+  }
+  const existing = await db.select({ id: silos.id }).from(silos).limit(1);
+  if (existing.length > 0) return;
+  await db.insert(silos).values(SILOS.map((code, index) => ({ code, isActive: true, sortOrder: index }))).onConflictDoNothing();
+}
+
+/** Silos actifs, dans l'ordre choisi (voir sortOrder) — jamais alphabétique, qui placerait SPF10 avant SPF2. */
+export async function listActiveSilos() {
+  const db = await getDb();
+  if (!db) return [...store.silos].filter((silo) => silo.isActive).sort((a, b) => a.sortOrder - b.sortOrder);
+  return db.select().from(silos).where(eq(silos.isActive, true)).orderBy(asc(silos.sortOrder));
+}
+
+/** Ajoute un silo, ou réactive celui du même code s'il avait été retiré (comme addProductionArticle pour les articles). */
+export async function addSilo(code: string) {
+  const normalizedCode = code.trim().toUpperCase();
+  const db = await getDb();
+  if (!db) {
+    const existing = store.silos.find((silo) => silo.code === normalizedCode);
+    if (existing) {
+      existing.isActive = true;
+      existing.updatedAt = now();
+      persist();
+      return existing;
+    }
+    const maxSortOrder = store.silos.reduce((max, silo) => Math.max(max, silo.sortOrder), -1);
+    const created: FallbackSilo = { id: nextId(), code: normalizedCode, isActive: true, sortOrder: maxSortOrder + 1, createdAt: now(), updatedAt: now() };
+    store.silos.push(created);
+    persist();
+    return created;
+  }
+
+  const [{ maxSortOrder } = { maxSortOrder: null }] = await db.select({ maxSortOrder: silos.sortOrder }).from(silos).orderBy(desc(silos.sortOrder)).limit(1);
+  const [created] = await db.insert(silos).values({ code: normalizedCode, isActive: true, sortOrder: (maxSortOrder ?? -1) + 1 }).onConflictDoUpdate({
+    target: silos.code,
+    set: { isActive: true, updatedAt: new Date() },
+  }).returning();
+  return created;
+}
+
+/**
+ * Renomme un silo : le nouveau code remplace l'ancien partout où il est déjà
+ * utilisé (entrées de production et expéditions déjà enregistrées), pour
+ * qu'aucune donnée existante ne se retrouve orpheline d'un code qui n'existe
+ * plus dans la liste configurée.
+ */
+export async function renameSilo(id: number, newCode: string) {
+  const normalizedCode = newCode.trim().toUpperCase();
+  const db = await getDb();
+  if (!db) {
+    const existing = store.silos.find((silo) => silo.id === id);
+    if (!existing) return undefined;
+    const oldCode = existing.code;
+    if (oldCode === normalizedCode) return existing;
+    existing.code = normalizedCode;
+    existing.updatedAt = now();
+    store.allocations.forEach((allocation) => { if (allocation.silo === oldCode) { allocation.silo = normalizedCode; allocation.updatedAt = now(); } });
+    store.shipments.forEach((shipment) => { if (shipment.silo === oldCode) { shipment.silo = normalizedCode; shipment.updatedAt = now(); } });
+    persist();
+    return existing;
+  }
+
+  const [existing] = await db.select().from(silos).where(eq(silos.id, id)).limit(1);
+  if (!existing) return undefined;
+  if (existing.code === normalizedCode) return existing;
+  const [updated] = await db.update(silos).set({ code: normalizedCode, updatedAt: new Date() }).where(eq(silos.id, id)).returning();
+  await db.update(siloProductionAllocations).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloProductionAllocations.silo, existing.code));
+  await db.update(siloShipments).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloShipments.silo, existing.code));
+  return updated;
+}
+
+/** Retire un silo de la liste active (jamais supprimé : l'historique déjà enregistré sous ce code reste intact). */
+export async function archiveSilo(id: number) {
+  const db = await getDb();
+  if (!db) {
+    const silo = store.silos.find((item) => item.id === id);
+    if (silo) { silo.isActive = false; silo.updatedAt = now(); persist(); }
+    return { success: true } as const;
+  }
+  await db.update(silos).set({ isActive: false, updatedAt: new Date() }).where(eq(silos.id, id));
+  return { success: true } as const;
+}
+
+/** Codes de silo rencontrés dans les mouvements mais absents de la liste active — pour ne jamais faire disparaître un stock ou un historique déjà enregistré sous un silo retiré. */
+export async function listSiloMovementSilos() {
+  const db = await getDb();
+  if (!db) {
+    const codes = new Set<string>();
+    store.allocations.forEach((allocation) => codes.add(allocation.silo));
+    store.shipments.forEach((shipment) => codes.add(shipment.silo));
+    return Array.from(codes);
+  }
+  const [allocationSilos, shipmentSilos] = await Promise.all([
+    db.selectDistinct({ silo: siloProductionAllocations.silo }).from(siloProductionAllocations),
+    db.selectDistinct({ silo: siloShipments.silo }).from(siloShipments),
+  ]);
+  return Array.from(new Set([...allocationSilos.map((row) => row.silo), ...shipmentSilos.map((row) => row.silo)]));
+}
 
 /** Entrées de production avec leur répartition par silo, la plus récente d’abord. */
 export async function listSiloProductionEntries() {
@@ -188,6 +309,7 @@ export async function createSiloShipment(shipment: Omit<InsertSiloShipment, "id"
       quantity: shipment.quantity,
       silo: shipment.silo,
       shipmentType: shipment.shipmentType,
+      splitGroupId: shipment.splitGroupId ?? null,
       createdAt: now(),
       updatedAt: now(),
     };
@@ -198,6 +320,51 @@ export async function createSiloShipment(shipment: Omit<InsertSiloShipment, "id"
 
   const [created] = await db.insert(siloShipments).values(shipment).returning();
   return created;
+}
+
+/**
+ * Crée plusieurs lignes d'expédition ensemble, en les reliant par un
+ * splitGroupId partagé (l'id de la première ligne) dès qu'il y en a plus
+ * d'une — le cas d'une expédition répartie automatiquement sur plusieurs
+ * lots FIFO (voir allocateFifoShipment). Une seule ligne reste indépendante
+ * (splitGroupId nul), exactement comme une saisie manuelle d'un seul lot :
+ * l'interface ne doit jamais afficher comme "une même expédition répartie"
+ * des lignes saisies séparément qui partagent seulement les mêmes valeurs
+ * par coïncidence (même date, article, silo et type).
+ */
+export async function createSiloShipmentGroup(shipments: Omit<InsertSiloShipment, "id" | "splitGroupId">[]) {
+  if (shipments.length <= 1) {
+    return shipments.length === 0 ? [] : [await createSiloShipment(shipments[0])];
+  }
+
+  const db = await getDb();
+  if (!db) {
+    const created = shipments.map((shipment) => {
+      const row: FallbackShipment = {
+        id: nextId(),
+        shipmentDate: shipment.shipmentDate ?? null,
+        article: shipment.article,
+        lotNumber: shipment.lotNumber ?? null,
+        quantity: shipment.quantity,
+        silo: shipment.silo,
+        shipmentType: shipment.shipmentType,
+        splitGroupId: null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      store.shipments.push(row);
+      return row;
+    });
+    const groupId = created[0].id;
+    created.forEach((row) => { row.splitGroupId = groupId; });
+    persist();
+    return created;
+  }
+
+  const createdRows = await db.insert(siloShipments).values(shipments).returning();
+  const groupId = createdRows[0].id;
+  await db.update(siloShipments).set({ splitGroupId: groupId }).where(inArray(siloShipments.id, createdRows.map((row) => row.id)));
+  return createdRows.map((row) => ({ ...row, splitGroupId: groupId }));
 }
 
 export async function updateSiloShipment(id: number, shipment: Partial<InsertSiloShipment>) {
@@ -270,6 +437,7 @@ export async function replaceSiloMovements(entries: { entry: Omit<InsertSiloProd
         quantity: shipment.quantity,
         silo: shipment.silo,
         shipmentType: shipment.shipmentType,
+        splitGroupId: null,
         createdAt: now(),
         updatedAt: now(),
       });
@@ -390,7 +558,7 @@ export async function loadLotMovements() {
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity,
       manuallyDepleted: siloProductionAllocations.manuallyDepleted,
-    }).from(siloProductionAllocations),
+    }).from(siloProductionAllocations).orderBy(asc(siloProductionAllocations.id)), // ordre de saisie : départage les lots entrés à la même date dans le grand livre FIFO (voir computeLotLedger).
     db.select({
       shipmentId: siloShipments.id,
       shipmentDate: siloShipments.shipmentDate,

@@ -98,6 +98,19 @@
 .silo-lot-detail-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: #4f6054; }
 .silo-lot-detail-list strong { color: #a24c37; font-weight: 700; }
 .silo-lot-detail-empty { margin: 0; color: #7c8980; font-size: 11px; }
+/* Expédition répartie sur plusieurs lots (voir allocateFifoShipment côté
+   serveur) : une ligne résumée et cliquable, dépliable sur le même principe
+   que la traçabilité des lots ci-dessus (silo-lot-detail-*). */
+.silo-shipment-group-row { cursor: pointer; }
+.silo-shipment-group-row:hover { background: #f6faf3; }
+.silo-shipment-summary { display: flex; align-items: center; gap: 6px; max-width: 320px; color: #97a598; }
+.silo-shipment-summary svg { flex: none; transition: transform .15s ease; }
+.silo-shipment-summary span { white-space: normal; color: #4f6054; }
+.silo-muted-cell { color: #97a598; }
+.silo-shipment-detail-row td { background: #fbfcf8; padding: 10px 16px !important; border-top: 0 !important; }
+.silo-shipment-detail-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.silo-shipment-detail-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: #4f6054; }
+.silo-shipment-detail-list strong { color: #a24c37; font-weight: 700; }
 .silo-form { display: grid; gap: 15px; margin-bottom: 20px; }
 .silo-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .silo-fields label, .silo-allocation-fields label { display: flex; flex-direction: column; gap: 6px; color: #65736e; font-size: 11px; font-weight: 600; }

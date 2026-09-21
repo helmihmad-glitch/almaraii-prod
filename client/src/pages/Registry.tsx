@@ -45,19 +45,28 @@ function buildKpis(rows: RegistryRow[]) {
   return { totalHours, plannedStops, unplannedStops, activeHours: realHours, production, waste, availability, performance, quality, trs: availability * performance * quality };
 }
 
-type PendingImport = { file: File; fileName: string };
+type ImportChange = { field: string; label: string; before: string; after: string };
+type ImportReview = {
+  storageKey: string;
+  fileName: string;
+  toCreate: number;
+  toUpdate: Array<{ id: number; productionDate: string; article: string; changes: ImportChange[] }>;
+  unchanged: number;
+};
 
 export default function Registry() {
   const { openSidebar } = useSidebar();
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importReview, setImportReview] = useState<ImportReview | null>(null);
   const hasInitializedExcel = useRef(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const registryQuery = trpc.production.list.useQuery();
   const initializeExcel = trpc.production.initialize.useMutation({ onSuccess: () => registryQuery.refetch() });
   const prepareExcelUpload = trpc.production.prepareExcelUpload.useMutation();
+  const previewExcel = trpc.production.previewExcelFromStorage.useMutation();
   const importExcel = trpc.production.importExcelFromStorage.useMutation();
   useEffect(() => { if (!registryQuery.isLoading && !hasInitializedExcel.current) { hasInitializedExcel.current = true; initializeExcel.mutate(); } }, [registryQuery.isLoading, initializeExcel]);
   const removeLine = trpc.production.delete.useMutation({
@@ -78,47 +87,83 @@ export default function Registry() {
     .sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id), [allRows, query, dateFrom, dateTo]);
   const kpis = useMemo(() => buildKpis(rows), [rows]);
 
+  const uploadToImportStorage = async (file: File) => {
+    const prepared = await prepareExcelUpload.mutateAsync({ fileName: file.name });
+    const contentType = file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (prepared.mode === "vercel-blob") {
+      await uploadToVercelBlob(prepared.key, file, { access: "private", handleUploadUrl: "/api/blob-upload", contentType });
+    } else {
+      const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: file });
+      if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");
+    }
+    return prepared.key;
+  };
+
+  /** N'écrit rien : ajoute les nouvelles lignes et, si applyModifications, applique aussi les modifications confirmées. */
+  const finalizeImport = async (storageKey: string, applyModifications: boolean) => {
+    setIsImporting(true);
+    try {
+      const result = await importExcel.mutateAsync({ storageKey, applyModifications });
+      await registryQuery.refetch();
+      const parts = [`${result.created} ligne(s) ajoutée(s)`];
+      if (applyModifications) parts.push(`${result.updated} modification(s) appliquée(s)`);
+      else if (result.pendingModifications) parts.push(`${result.pendingModifications} modification(s) non appliquée(s) (annulée${result.pendingModifications > 1 ? "s" : ""})`);
+      parts.push(`${result.skipped} doublon(s) déjà identique(s) ignoré(s)`);
+      toast.success("Import Excel terminé", { description: `${parts.join(", ")}.` });
+      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
+      setImportReview(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’import Excel a échoué.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // Le fichier est téléversé puis comparé au registre avant toute écriture :
+  // les lignes nouvelles s'ajoutent tout de suite, mais une ligne qui
+  // modifierait une saisie déjà enregistrée n'est jamais appliquée sans
+  // l'accord explicite de l'utilisateur (voir previewProductionImport côté serveur).
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".xlsx")) { toast.error("Sélectionnez un fichier Excel au format .xlsx."); return; }
     if (file.size > 5_700_000) { toast.error("Le fichier Excel dépasse la limite de 5,7 Mo."); return; }
-    setPendingImport({ file, fileName: file.name });
-  };
-  const submitImport = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!pendingImport) return;
+    setIsImporting(true);
     try {
-      const prepared = await prepareExcelUpload.mutateAsync({ fileName: pendingImport.fileName });
-      const contentType = pendingImport.file.type || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-      let storageKey: string;
-      if (prepared.mode === "vercel-blob") {
-        await uploadToVercelBlob(prepared.key, pendingImport.file, {
-          access: "private",
-          handleUploadUrl: "/api/blob-upload",
-          contentType,
-        });
-        storageKey = prepared.key;
+      const storageKey = await uploadToImportStorage(file);
+      const preview = await previewExcel.mutateAsync({ storageKey });
+      if (preview.toUpdate.length === 0) {
+        await finalizeImport(storageKey, false);
       } else {
-        const upload = await fetch(prepared.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: pendingImport.file });
-        if (!upload.ok) throw new Error("Le téléversement du fichier Excel a échoué. Vérifiez votre connexion puis réessayez.");
-        storageKey = prepared.key;
+        setImportReview({ storageKey, fileName: file.name, toCreate: preview.toCreate, toUpdate: preview.toUpdate, unchanged: preview.unchanged });
       }
-      const result = await importExcel.mutateAsync({ storageKey });
-      await registryQuery.refetch();
-      toast.success("Import Excel terminé", { description: `${result.created} ligne(s) ajoutée(s), ${result.updated} ligne(s) mise(s) à jour et ${result.skipped} doublon(s) identique(s) ignoré(s).` });
-      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
-      setPendingImport(null);
+      if (preview.rejected) toast.warning(`${preview.rejected} ligne(s) ignorée(s)`, { description: preview.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "L’import Excel a échoué.");
+    } finally {
+      setIsImporting(false);
     }
   };
   return <div className="registry-screen">
-    {pendingImport && <div className="registry-import-dialog-backdrop" role="presentation"><form className="registry-import-dialog" onSubmit={submitImport} role="dialog" aria-modal="true" aria-labelledby="import-dialog-title"><span className="registry-kicker"><Upload size={14} />Confirmation d’import</span><h2 id="import-dialog-title">Importer <em>{pendingImport.fileName}</em></h2><p>Le fichier est téléversé directement et ne traverse pas la limite de requête de Vercel. Les lignes seront ensuite ajoutées ou mises à jour dans le registre.</p><div className="registry-import-dialog-actions"><button type="button" className="registry-clear" onClick={() => setPendingImport(null)} disabled={prepareExcelUpload.isPending || importExcel.isPending}>Annuler</button><button type="submit" className="registry-import" disabled={prepareExcelUpload.isPending || importExcel.isPending}>{prepareExcelUpload.isPending || importExcel.isPending ? "Import…" : "Confirmer l’import"}</button></div></form></div>}
+    {importReview && <div className="registry-import-dialog-backdrop" role="presentation"><div className="registry-import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-dialog-title">
+      <span className="registry-kicker"><Upload size={14} />Confirmation d’import</span>
+      <h2 id="import-dialog-title">Importer <em>{importReview.fileName}</em></h2>
+      <p>{importReview.toCreate} nouvelle{importReview.toCreate > 1 ? "s" : ""} ligne{importReview.toCreate > 1 ? "s" : ""} {importReview.toCreate > 1 ? "seront ajoutées" : "sera ajoutée"} sans autre confirmation. En revanche, {importReview.toUpdate.length} ligne{importReview.toUpdate.length > 1 ? "s" : ""} déjà enregistrée{importReview.toUpdate.length > 1 ? "s" : ""} {importReview.toUpdate.length > 1 ? "seraient modifiées" : "serait modifiée"} — vérifiez avant d’appliquer :</p>
+      <ul className="registry-import-changes">
+        {importReview.toUpdate.map((update) => <li key={update.id}><strong>{update.article}</strong> du {prettyDate(update.productionDate)}
+          <ul>{update.changes.map((change) => <li key={change.field}>{change.label} : {change.before} → {change.after}</li>)}</ul>
+        </li>)}
+      </ul>
+      <div className="registry-import-dialog-actions">
+        <button type="button" className="registry-clear" onClick={() => setImportReview(null)} disabled={isImporting}>Annuler tout l’import</button>
+        <button type="button" className="registry-clear" onClick={() => finalizeImport(importReview.storageKey, false)} disabled={isImporting}>Ajouter les nouvelles lignes seulement</button>
+        <button type="button" className="registry-import" onClick={() => finalizeImport(importReview.storageKey, true)} disabled={isImporting}>{isImporting ? "Import…" : "Ajouter et appliquer les modifications"}</button>
+      </div>
+    </div></div>}
     <header className="registry-topbar">
       <button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button>
-      <Link href="/" className="registry-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
+      <Link href="/" className="registry-back"><ArrowLeft size={16} />Accueil</Link>
       <div className="registry-brand"><span className="registry-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></span><div><strong>Almaraïi</strong><small>Production Pulse</small></div></div>
       <Link href="/?entry=1" className="registry-add"><Plus size={16} />Saisir une production</Link>
     </header>
@@ -133,7 +178,7 @@ export default function Registry() {
           <label className="registry-date">Du<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
           <label className="registry-date">Au<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
           {(query || dateFrom || dateTo) && <button className="registry-clear" onClick={() => { setQuery(""); setDateFrom(""); setDateTo(""); }}>Effacer les filtres</button>}
-          <button className="registry-import" onClick={() => importInputRef.current?.click()} disabled={importExcel.isPending}><Upload size={15} />{importExcel.isPending ? "Import…" : "Importer Excel"}</button>
+          <button className="registry-import" onClick={() => importInputRef.current?.click()} disabled={isImporting}><Upload size={15} />{isImporting ? "Import…" : "Importer Excel"}</button>
           <input ref={importInputRef} className="registry-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleImportFile} aria-label="Choisir un fichier Excel à importer" />
           <Link href="/rapports" className="registry-export"><Database size={15} />Voir les rapports</Link>
         </div>

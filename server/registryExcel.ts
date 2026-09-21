@@ -2,7 +2,7 @@
 // (recherche + période) que l'ancien export CSV, mais un classeur Excel mis en
 // forme comme les autres rapports (titre, en-tête coloré, bordures, total).
 import ExcelJS from "exceljs";
-import { columnLetter, styleHeaderRow, writeTitle } from "./siloExcel";
+import { columnLetter, excelDate, styleHeaderRow, writeTitle } from "./siloExcel";
 
 export type FilteredRegistryRow = {
   productionDate: string; // AAAA-MM-JJ
@@ -68,7 +68,7 @@ export async function buildFilteredRegistryWorkbook(rows: FilteredRegistryRow[],
   rows.forEach((row, index) => {
     const excelRow = worksheet.getRow(FIRST_DATA_ROW + index);
     const dateCell = excelRow.getCell(FIRST_COL);
-    dateCell.value = new Date(`${row.productionDate}T00:00:00`);
+    dateCell.value = excelDate(row.productionDate);
     dateCell.numFmt = "dd/mm/yyyy";
     excelRow.getCell(FIRST_COL + 1).value = row.article;
     const productionCell = excelRow.getCell(FIRST_COL + 2);

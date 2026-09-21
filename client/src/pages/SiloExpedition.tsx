@@ -1,19 +1,18 @@
-import { useMemo, useRef, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Database, FileText, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
+import { ArrowLeft, ChevronDown, Database, FileText, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
-import { SHIPMENT_TYPES, SILOS } from "@shared/silo";
+import { SHIPMENT_TYPES } from "@shared/silo";
 import "./silo.css";
 
 type ShipmentDraft = { shipmentDate: string; article: string; lotNumber: string; quantity: string; silo: string; shipmentType: string };
 
 const today = () => new Date().toISOString().slice(0, 10);
 const emptyShipment = (): ShipmentDraft => ({ shipmentDate: today(), article: "", lotNumber: "", quantity: "", silo: "", shipmentType: SHIPMENT_TYPES[0] });
-const siloRank = (value: string) => SILOS.indexOf(value as (typeof SILOS)[number]);
 const fmt = (value: number) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
@@ -39,6 +38,10 @@ export default function SiloExpedition() {
   const [shipmentSiloFilter, setShipmentSiloFilter] = useState("all");
   const [shipmentArticleFilter, setShipmentArticleFilter] = useState("all");
   const [shipmentLotQuery, setShipmentLotQuery] = useState("");
+  const [shipmentTypeFilter, setShipmentTypeFilter] = useState("all");
+  const [shipmentDateFrom, setShipmentDateFrom] = useState("");
+  const [shipmentDateTo, setShipmentDateTo] = useState("");
+  const [expandedShipmentGroupId, setExpandedShipmentGroupId] = useState<number | null>(null);
 
   const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
@@ -49,17 +52,47 @@ export default function SiloExpedition() {
   // sans attendre l'aller-retour serveur (qui reste la vérification faisant foi, y compris pour
   // les modifications — voir assertShipmentWithinStock côté serveur).
   const stateQuery = trpc.silo.state.useQuery(undefined, LIVE_QUERY_OPTIONS);
+  const silosQuery = trpc.settings.listSilos.useQuery();
   const shipments = shipmentsQuery.data ?? [];
   const articles = articlesQuery.data ?? [];
+  const silos = useMemo(() => (silosQuery.data ?? []).map((silo) => silo.code), [silosQuery.data]);
+  const siloRank = (value: string) => silos.indexOf(value);
 
   // Ordre SPF1 → SPF12 (jamais alphabétique, qui placerait SPF10 avant SPF2), silos réellement utilisés uniquement.
-  const shipmentSiloOptions = useMemo(() => SILOS.filter((silo) => shipments.some((shipment) => shipment.silo === silo)), [shipments]);
+  const shipmentSiloOptions = useMemo(() => silos.filter((silo) => shipments.some((shipment) => shipment.silo === silo)), [shipments, silos]);
   const shipmentArticleOptions = useMemo(() => Array.from(new Set(shipments.map((shipment) => shipment.article))).sort(), [shipments]);
   const filteredShipments = useMemo(() => shipments
     .filter((shipment) => shipmentSiloFilter === "all" || shipment.silo === shipmentSiloFilter)
     .filter((shipment) => shipmentArticleFilter === "all" || shipment.article === shipmentArticleFilter)
-    .filter((shipment) => !shipmentLotQuery.trim() || (shipment.lotNumber ?? "").toLowerCase().includes(shipmentLotQuery.trim().toLowerCase())),
-  [shipments, shipmentSiloFilter, shipmentArticleFilter, shipmentLotQuery]);
+    .filter((shipment) => !shipmentLotQuery.trim() || (shipment.lotNumber ?? "").toLowerCase().includes(shipmentLotQuery.trim().toLowerCase()))
+    .filter((shipment) => shipmentTypeFilter === "all" || shipment.shipmentType === shipmentTypeFilter)
+    .filter((shipment) => !shipmentDateFrom || (shipment.shipmentDate ?? "") >= shipmentDateFrom)
+    .filter((shipment) => !shipmentDateTo || (shipment.shipmentDate ?? "") <= shipmentDateTo),
+  [shipments, shipmentSiloFilter, shipmentArticleFilter, shipmentLotQuery, shipmentTypeFilter, shipmentDateFrom, shipmentDateTo]);
+
+  // Une expédition répartie sur plusieurs lots (voir allocateFifoShipment et
+  // createSiloShipmentGroup côté serveur) tient sur une seule ligne du
+  // tableau, regroupée par splitGroupId — jamais par coïncidence de valeurs :
+  // deux expéditions saisies séparément qui partagent seulement la même date,
+  // le même article, le même silo et le même type (deux camions du même jour,
+  // par exemple) ne doivent jamais apparaître comme une seule expédition
+  // répartie sur plusieurs lots. Même règle que le classeur Silo_PF (voir buildSiloWorkbook).
+  const groupedShipments = useMemo(() => {
+    const seenGroupIds = new Set<number>();
+    const groups: (typeof filteredShipments)[] = [];
+    filteredShipments.forEach((shipment) => {
+      if (shipment.splitGroupId) {
+        if (seenGroupIds.has(shipment.splitGroupId)) return;
+        seenGroupIds.add(shipment.splitGroupId);
+        groups.push(filteredShipments.filter((item) => item.splitGroupId === shipment.splitGroupId));
+        return;
+      }
+      groups.push([shipment]);
+    });
+    return groups;
+  }, [filteredShipments]);
+  const describeShipmentGroup = (group: (typeof filteredShipments)[number][]) =>
+    group.map((item) => `${fmt(Number(item.quantity))} T sur ${item.lotNumber || "lot non identifié"}`).join(", ");
 
   // Lots encore actifs pour l'article en cours de saisie : la base des suggestions
   // de N° Lot et de silo ci-dessous (elles s'affinent l'une l'autre).
@@ -85,9 +118,9 @@ export default function SiloExpedition() {
   const siloSelectOptions = useMemo(() => {
     const candidates = shipmentDraft.lotNumber ? lotsForArticle.filter((lot) => lot.lotNumber === shipmentDraft.lotNumber) : lotsForArticle;
     const active = Array.from(new Set(candidates.map((lot) => lot.silo))).sort((a, b) => siloRank(a) - siloRank(b));
-    const base = active.length > 0 ? active : [...SILOS];
+    const base = active.length > 0 ? active : [...silos];
     return shipmentDraft.silo && !base.includes(shipmentDraft.silo) ? [shipmentDraft.silo, ...base] : base;
-  }, [lotsForArticle, shipmentDraft.lotNumber, shipmentDraft.silo]);
+  }, [lotsForArticle, shipmentDraft.lotNumber, shipmentDraft.silo, silos]);
 
   const handleArticleChange = (value: string) => {
     // Un autre article change entièrement le stock disponible : on repart d'un lot et d'un silo vierges.
@@ -119,7 +152,21 @@ export default function SiloExpedition() {
   };
   const onError = (fallback: string) => (error: { message?: string }) => toast.error(error.message || fallback);
 
-  const createShipment = trpc.silo.createShipment.useMutation({ onSuccess: async () => { await refresh(); setShipmentDraft(emptyShipment()); toast.success("Expédition ajoutée"); }, onError: onError("Impossible d’ajouter cette expédition.") });
+  const createShipment = trpc.silo.createShipment.useMutation({
+    onSuccess: async (result) => {
+      await refresh();
+      setShipmentDraft(emptyShipment());
+      // Sans N° Lot précisé, le serveur répartit la quantité sur plusieurs lots
+      // FIFO si un seul n'y suffit pas (voir routers.ts) : une ligne par lot réellement entamé.
+      if (result.shipments.length > 1) {
+        const lots = result.shipments.map((shipment) => `${fmt(Number(shipment.quantity))} T sur ${shipment.lotNumber || "lot non identifié"}`).join(", ");
+        toast.success(`Expédition répartie sur ${result.shipments.length} lots`, { description: lots });
+      } else {
+        toast.success("Expédition ajoutée");
+      }
+    },
+    onError: onError("Impossible d’ajouter cette expédition."),
+  });
   const updateShipment = trpc.silo.updateShipment.useMutation({ onSuccess: async () => { await refresh(); setEditingShipmentId(null); setShipmentDraft(emptyShipment()); toast.success("Expédition mise à jour"); }, onError: onError("Impossible de modifier cette expédition.") });
   const deleteShipment = trpc.silo.deleteShipment.useMutation({ onSuccess: async () => { await refresh(); toast.success("Expédition supprimée"); }, onError: onError("Impossible de supprimer cette expédition.") });
   const prepareImport = trpc.silo.prepareExcelUpload.useMutation();
@@ -223,7 +270,7 @@ export default function SiloExpedition() {
       article: shipmentDraft.article.trim(),
       lotNumber: shipmentDraft.lotNumber.trim() || undefined,
       quantity,
-      silo: shipmentDraft.silo as typeof SILOS[number],
+      silo: shipmentDraft.silo,
       shipmentType: shipmentDraft.shipmentType as typeof SHIPMENT_TYPES[number],
     };
     if (editingShipmentId) updateShipment.mutate({ id: editingShipmentId, ...payload }); else createShipment.mutate(payload);
@@ -306,6 +353,9 @@ export default function SiloExpedition() {
               <label>Silo<select value={shipmentSiloFilter} onChange={(event) => setShipmentSiloFilter(event.target.value)}><option value="all">Tous</option>{shipmentSiloOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
               <label>Article<select value={shipmentArticleFilter} onChange={(event) => setShipmentArticleFilter(event.target.value)}><option value="all">Tous</option>{shipmentArticleOptions.map((article) => <option key={article} value={article}>{article}</option>)}</select></label>
               <label>N° Lot<input value={shipmentLotQuery} onChange={(event) => setShipmentLotQuery(event.target.value)} placeholder="Rechercher…" /></label>
+              <label>Type<select value={shipmentTypeFilter} onChange={(event) => setShipmentTypeFilter(event.target.value)}><option value="all">Tous</option>{SHIPMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+              <label>Du<input type="date" value={shipmentDateFrom} onChange={(event) => { setShipmentDateFrom(event.target.value); if (shipmentDateTo && event.target.value > shipmentDateTo) setShipmentDateTo(event.target.value); }} aria-label="Depuis" /></label>
+              <label>Au<input type="date" value={shipmentDateTo} onChange={(event) => { setShipmentDateTo(event.target.value); if (shipmentDateFrom && event.target.value < shipmentDateFrom) setShipmentDateFrom(event.target.value); }} aria-label="Jusqu’au" /></label>
             </div>
           </div>
           <form className="silo-form" onSubmit={submitShipment}>
@@ -327,17 +377,58 @@ export default function SiloExpedition() {
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th><th>Actions</th></tr></thead>
               <tbody>
-                {filteredShipments.map((shipment) => (
-                  <tr key={shipment.id}>
-                    <td>{formatDate(shipment.shipmentDate)}</td>
-                    <td className="silo-strong-cell">{shipment.article}</td>
-                    <td>{shipment.lotNumber || "—"}</td>
-                    <td>{fmt(Number(shipment.quantity))}</td>
-                    <td>{shipment.silo}</td>
-                    <td><span className={`silo-type-tag ${shipment.shipmentType === "Vrac" ? "silo-type-vrac" : ""}`}>{shipment.shipmentType}</span></td>
-                    <td><span className="silo-row-actions"><button type="button" onClick={() => editShipment(shipment)} aria-label="Modifier l’expédition"><Pencil size={14} /></button><button type="button" onClick={() => removeShipment(shipment.id)} aria-label="Supprimer l’expédition"><Trash2 size={14} /></button></span></td>
-                  </tr>
-                ))}
+                {groupedShipments.map((group) => {
+                  const first = group[0];
+                  if (group.length === 1) {
+                    return (
+                      <tr key={first.id}>
+                        <td>{formatDate(first.shipmentDate)}</td>
+                        <td className="silo-strong-cell">{first.article}</td>
+                        <td>{first.lotNumber || "—"}</td>
+                        <td>{fmt(Number(first.quantity))}</td>
+                        <td>{first.silo}</td>
+                        <td><span className={`silo-type-tag ${first.shipmentType === "Vrac" ? "silo-type-vrac" : ""}`}>{first.shipmentType}</span></td>
+                        <td><span className="silo-row-actions"><button type="button" onClick={() => editShipment(first)} aria-label="Modifier l’expédition"><Pencil size={14} /></button><button type="button" onClick={() => removeShipment(first.id)} aria-label="Supprimer l’expédition"><Trash2 size={14} /></button></span></td>
+                      </tr>
+                    );
+                  }
+
+                  // Expédition répartie sur plusieurs lots : une ligne résumée et
+                  // cliquable ("5,00 T sur 2600675-0917, …"), dépliable pour
+                  // retrouver le détail — et les actions — de chaque lot.
+                  const total = group.reduce((sum, item) => sum + Number(item.quantity), 0);
+                  const expanded = expandedShipmentGroupId === first.id;
+                  return (
+                    <Fragment key={`group-${first.id}`}>
+                      <tr className="silo-shipment-group-row" onClick={() => setExpandedShipmentGroupId(expanded ? null : first.id)}>
+                        <td>{formatDate(first.shipmentDate)}</td>
+                        <td className="silo-strong-cell">{first.article}</td>
+                        <td className="silo-shipment-summary"><ChevronDown size={14} style={{ transform: expanded ? "rotate(180deg)" : undefined }} /><span>{describeShipmentGroup(group)}</span></td>
+                        <td className="silo-strong-cell">{fmt(total)}</td>
+                        <td>{first.silo}</td>
+                        <td><span className={`silo-type-tag ${first.shipmentType === "Vrac" ? "silo-type-vrac" : ""}`}>{first.shipmentType}</span></td>
+                        <td className="silo-muted-cell">—</td>
+                      </tr>
+                      {expanded && (
+                        <tr className="silo-shipment-detail-row">
+                          <td colSpan={7}>
+                            <ul className="silo-shipment-detail-list">
+                              {group.map((item) => (
+                                <li key={item.id}>
+                                  <span><strong>{item.lotNumber || "Lot non identifié"}</strong> — {fmt(Number(item.quantity))} T</span>
+                                  <span className="silo-row-actions">
+                                    <button type="button" onClick={() => editShipment(item)} aria-label="Modifier l’expédition"><Pencil size={14} /></button>
+                                    <button type="button" onClick={() => removeShipment(item.id)} aria-label="Supprimer l’expédition"><Trash2 size={14} /></button>
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">{shipments.length === 0 ? "Aucune expédition enregistrée." : "Aucune expédition ne correspond à ces filtres."}</div>}

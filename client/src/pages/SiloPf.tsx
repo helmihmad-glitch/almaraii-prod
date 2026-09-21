@@ -37,7 +37,7 @@ export default function SiloPf() {
   if (stateQuery.error) {
     return (
       <main className="silo-screen">
-        <header className="silo-topbar"><Link href="/" className="silo-back"><ArrowLeft size={16} />Vue d’ensemble</Link><div className="silo-brand"><div className="silo-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div></header>
+        <header className="silo-topbar"><Link href="/" className="silo-back"><ArrowLeft size={16} />Accueil</Link><div className="silo-brand"><div className="silo-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div></header>
         <section className="silo-page"><div className="silo-error-card"><Database size={22} /><div><strong>Les silos ne peuvent pas être chargés</strong><span>{stateQuery.error.message}</span></div></div></section>
       </main>
     );
@@ -47,7 +47,7 @@ export default function SiloPf() {
     <main className="silo-screen">
       <header className="silo-topbar">
         <button className="mobile-menu" onClick={openSidebar} aria-label="Ouvrir le menu"><Menu size={20} /></button>
-        <Link href="/" className="silo-back"><ArrowLeft size={16} />Vue d’ensemble</Link>
+        <Link href="/" className="silo-back"><ArrowLeft size={16} />Accueil</Link>
         <div className="silo-brand"><div className="silo-brand-mark"><img src={BRAND_LOGO_URL} alt="Logo Almaraïi" /></div><span>Almaraïi <small>Production Pulse</small></span></div>
         <div className="silo-manage-links">
           <Link href="/silo-pf-production" className="silo-manage-link"><Boxes size={15} />Production</Link>

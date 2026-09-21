@@ -85,6 +85,21 @@ function roundTons(value: number) {
   return Math.round(value * 1e6) / 1e6;
 }
 
+/**
+ * Départage deux lots entrés à la même date : le n° de lot (attribué par le
+ * système externe au moment de la production) reflète l'ordre réel de
+ * fabrication bien plus fidèlement que l'ordre de saisie dans l'application —
+ * une saisie groupée ou tardive peut très bien enregistrer les lots dans le
+ * désordre (voir le commentaire équivalent dans computeLotLedger). À défaut
+ * de n° de lot des deux côtés, repli sur l'ordre de saisie (entryId).
+ */
+export function compareLotOrder(a: { lotNumber: string | null; entryId: number }, b: { lotNumber: string | null; entryId: number }): number {
+  if (a.lotNumber && b.lotNumber) return a.lotNumber.localeCompare(b.lotNumber);
+  if (a.lotNumber) return -1;
+  if (b.lotNumber) return 1;
+  return a.entryId - b.entryId;
+}
+
 export function computeLotLedger(allocations: LotAllocationInput[], shipments: LotShipmentInput[]): LotLedger {
   const groups = new Map<string, { article: string; silo: string; events: QueueEvent[] }>();
   let sequence = 0;
@@ -142,7 +157,12 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
 
   for (const group of Array.from(groups.values())) {
     const { article, silo, events } = group;
-    events.sort((a: QueueEvent, b: QueueEvent) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.sequence - b.sequence));
+    events.sort((a: QueueEvent, b: QueueEvent) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      // Deux lots produits (pas des sorties) à la même date : voir compareLotOrder.
+      if (a.kind === "produce" && b.kind === "produce") return compareLotOrder(a, b) || a.sequence - b.sequence;
+      return a.sequence - b.sequence;
+    });
 
     // File d'attente FIFO des lots encore actifs pour ce couple (article, silo).
     const queue: LotBalance[] = [];
@@ -216,6 +236,37 @@ export function manualDepletionWriteOffs(lots: LotBalance[]): { article: string;
     .filter((row) => row.quantity > 1e-9);
 }
 
+export type FifoAllocationChunk = { lotNumber: string | null; quantity: number };
+
+/**
+ * Répartit une quantité à expédier sur les lots actifs les plus anciens
+ * d'abord (FIFO) pour cet article et ce silo, un seul lot ne suffisant pas
+ * toujours à couvrir toute l'expédition (ex. 18 T alors que le lot le plus
+ * ancien n'en a que 5) : un tronçon par lot réellement entamé, dans l'ordre
+ * FIFO — exactement la même règle que la consommation dans computeLotLedger,
+ * appliquée par avance pour savoir combien enregistrer sur chaque lot. Un
+ * éventuel reliquat que les lots actifs ne couvrent pas (ne devrait pas
+ * arriver si la quantité a déjà été validée face au stock affiché, voir
+ * assertShipmentWithinStock côté appelant) est renvoyé avec lotNumber: null
+ * plutôt que d'être silencieusement perdu.
+ */
+export function allocateFifoShipment(lots: LotBalance[], article: string, silo: string, quantity: number): FifoAllocationChunk[] {
+  const candidates = lots
+    .filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active")
+    .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
+  const chunks: FifoAllocationChunk[] = [];
+  let remaining = quantity;
+  for (const lot of candidates) {
+    if (remaining <= 1e-9) break;
+    const taken = Math.min(lot.remainingQuantity, remaining);
+    if (taken <= 1e-9) continue;
+    chunks.push({ lotNumber: lot.lotNumber, quantity: roundTons(taken) });
+    remaining -= taken;
+  }
+  if (remaining > 1e-9) chunks.push({ lotNumber: null, quantity: roundTons(remaining) });
+  return chunks;
+}
+
 const LEDGER_SHEET_NAME = "Traçabilité des lots";
 const LEDGER_FIRST_COL = 2; // colonne B : une marge à gauche, comme les classeurs existants de l'application.
 const LEDGER_LAST_COL = LEDGER_FIRST_COL + 5; // Silo, Article, Date, N° Lot, Qté par lot, Qté silo.
@@ -252,18 +303,18 @@ const formatLedgerDate = (value: string | null) => (value ? LEDGER_DATE_FORMATTE
  * Reprend les couleurs déjà utilisées pour le classeur Silo_PF (voir
  * server/siloExcel.ts) afin de rester cohérent.
  */
-export async function buildLotLedgerWorkbook(ledger: LotLedger): Promise<Buffer> {
+export async function buildLotLedgerWorkbook(ledger: LotLedger, silos: readonly string[] = SILOS): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Almaraïi Production Pulse";
   workbook.created = new Date();
   workbook.modified = new Date();
 
   const activeLots = ledger.lots.filter((lot) => lot.status === "active");
-  const groups: { silo: string; lots: LotBalance[] }[] = SILOS.map((silo) => ({
+  const groups: { silo: string; lots: LotBalance[] }[] = silos.map((silo) => ({
     silo,
     lots: activeLots
       .filter((lot) => lot.silo === silo)
-      .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || a.entryId - b.entryId),
+      .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b)),
   }));
   const totalRemaining = activeLots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
 

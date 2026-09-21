@@ -31,12 +31,17 @@
 .registry-import-dialog textarea { min-height: 104px; padding: 11px 13px; resize: vertical; font: inherit; line-height: 1.45; }
 .registry-import-dialog input:focus,
 .registry-import-dialog textarea:focus { outline: 3px solid rgba(232, 181, 58, .35); border-color: #a87916; }
-.registry-import-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.registry-import-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+
+/* Détail des modifications proposées avant confirmation (voir Registry.tsx, aperçu d'import). */
+.registry-import-changes { margin: 0; padding: 10px 12px; list-style: none; display: grid; gap: 10px; max-height: 260px; overflow-y: auto; border: 1px solid #e5e9df; border-radius: 12px; background: #fbfbf6; }
+.registry-import-changes > li { font-size: .85rem; color: var(--ink); }
+.registry-import-changes ul { margin: 5px 0 0; padding-left: 16px; display: grid; gap: 3px; color: #68776c; font-size: .8rem; list-style: disc; }
 
 .registry-row-actions { display: inline-flex; align-items: center; gap: 6px; }
 
 @media (max-width: 520px) {
   .registry-import-dialog { padding: 22px 18px; }
-  .registry-import-dialog-actions { display: grid; grid-template-columns: 1fr 1.35fr; }
+  .registry-import-dialog-actions { display: grid; grid-template-columns: 1fr; }
   .registry-import-dialog-actions button { justify-content: center; }
 }

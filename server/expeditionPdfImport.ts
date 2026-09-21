@@ -7,7 +7,7 @@
 // computeLotLedger dans siloLots.ts) — le lot actif le plus ancien pour cet
 // article et ce silo, tel qu'il se présentait à cette date-là. Même règle
 // que la suggestion de lot affichée à la saisie manuelle d'une expédition.
-import { computeLotLedger } from "./siloLots";
+import { compareLotOrder, computeLotLedger } from "./siloLots";
 import { createSiloShipment, loadLotMovements } from "./siloDb";
 
 /**
@@ -138,7 +138,7 @@ async function resolveFifoLot(article: string, silo: string, date: string): Prom
   );
   const candidates = ledger.lots
     .filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active")
-    .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? ""));
+    .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
   return candidates[0]?.lotNumber ?? null;
 }
 

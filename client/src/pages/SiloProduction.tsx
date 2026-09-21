@@ -6,14 +6,12 @@ import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
-import { SILOS } from "@shared/silo";
 import "./silo.css";
 
 type EntryDraft = { entryDate: string; article: string; lotNumber: string; totalQuantity: string; allocations: Record<string, string> };
 
 const today = () => new Date().toISOString().slice(0, 10);
-const emptyAllocations = () => Object.fromEntries(SILOS.map((silo) => [silo, ""])) as Record<string, string>;
-const emptyEntry = (): EntryDraft => ({ entryDate: today(), article: "", lotNumber: "", totalQuantity: "", allocations: emptyAllocations() });
+const emptyEntry = (): EntryDraft => ({ entryDate: today(), article: "", lotNumber: "", totalQuantity: "", allocations: {} });
 const fmt = (value: number) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
@@ -41,13 +39,15 @@ export default function SiloProduction() {
 
   const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const articlesQuery = trpc.settings.listArticles.useQuery();
+  const silosQuery = trpc.settings.listSilos.useQuery();
   const entries = entriesQuery.data ?? [];
   const articles = articlesQuery.data ?? [];
+  const silos = useMemo(() => (silosQuery.data ?? []).map((silo) => silo.code), [silosQuery.data]);
 
   // Une entrée peut être répartie sur plusieurs silos (voir la répartition du
   // formulaire) : l'ordre SPF1 → SPF12 (jamais alphabétique, qui placerait
   // SPF10 avant SPF2) ne garde que les silos réellement utilisés.
-  const entrySiloOptions = useMemo(() => SILOS.filter((silo) => entries.some((entry) => entry.allocations.some((allocation) => allocation.silo === silo))), [entries]);
+  const entrySiloOptions = useMemo(() => silos.filter((silo) => entries.some((entry) => entry.allocations.some((allocation) => allocation.silo === silo))), [entries, silos]);
   const entryArticleOptions = useMemo(() => Array.from(new Set(entries.map((entry) => entry.article))).sort(), [entries]);
   const filteredEntries = useMemo(() => entries
     .filter((entry) => siloFilter === "all" || entry.allocations.some((allocation) => allocation.silo === siloFilter))
@@ -103,7 +103,7 @@ export default function SiloProduction() {
     }
   };
 
-  const allocatedTotal = SILOS.reduce((total, silo) => total + (parseQuantity(entryDraft.allocations[silo] ?? "") || 0), 0);
+  const allocatedTotal = silos.reduce((total, silo) => total + (parseQuantity(entryDraft.allocations[silo] ?? "") || 0), 0);
   const declaredTotal = parseQuantity(entryDraft.totalQuantity);
   const totalMismatch = declaredTotal !== undefined && declaredTotal !== null && Math.abs(declaredTotal - allocatedTotal) > 0.005;
 
@@ -111,8 +111,8 @@ export default function SiloProduction() {
     event.preventDefault();
     if (!entryDraft.article.trim()) { toast.error("Indiquez l’article produit."); return; }
 
-    const allocations: { silo: typeof SILOS[number]; quantity: number }[] = [];
-    for (const silo of SILOS) {
+    const allocations: { silo: string; quantity: number }[] = [];
+    for (const silo of silos) {
       const quantity = parseQuantity(entryDraft.allocations[silo] ?? "");
       if (quantity === null) { toast.error(`Quantité invalide pour ${silo}.`); return; }
       if (quantity !== undefined && quantity !== 0) allocations.push({ silo, quantity });
@@ -132,7 +132,7 @@ export default function SiloProduction() {
 
   const editEntry = (entry: typeof entries[number]) => {
     setEditingEntryId(entry.id);
-    const allocations = emptyAllocations();
+    const allocations: Record<string, string> = {};
     entry.allocations.forEach((allocation) => { allocations[allocation.silo] = String(Number(allocation.quantity)); });
     setEntryDraft({
       entryDate: entry.entryDate ?? "",
@@ -218,7 +218,7 @@ export default function SiloProduction() {
             <fieldset className="silo-allocation-fields">
               <legend>Répartition par silo (T) — une quantité négative corrige un silo</legend>
               <div>
-                {SILOS.map((silo) => (
+                {silos.map((silo) => (
                   <label key={silo}>{silo}<input value={entryDraft.allocations[silo] ?? ""} onChange={(event) => setEntryDraft({ ...entryDraft, allocations: { ...entryDraft.allocations, [silo]: event.target.value } })} placeholder="—" inputMode="decimal" /></label>
                 ))}
               </div>

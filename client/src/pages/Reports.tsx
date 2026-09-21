@@ -5,12 +5,13 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { ArrowLeft, Boxes, CalendarDays, Database, Download, FileSpreadsheet, FileText, Menu, PackageSearch, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Boxes, CalendarDays, Database, Download, FileSpreadsheet, FileText, Menu, PackageSearch, SlidersHorizontal, Truck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
 import { generateDayPdf } from "@/lib/dayPdfReport";
 import { generateDailyProgramPdf } from "@/lib/dailyProgramPdf";
+import { SHIPMENT_TYPES } from "@shared/silo";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -56,6 +57,29 @@ export default function Reports() {
       toast.error(error instanceof Error ? error.message : "L’export de la traçabilité a échoué.");
     } finally {
       setIsExportingLots(false);
+    }
+  };
+
+  // --- Expéditions filtrées par type (Vrac/Sac) et par période (classeur Excel) ---
+  const [shipmentReportType, setShipmentReportType] = useState("");
+  const [shipmentReportFrom, setShipmentReportFrom] = useState("");
+  const [shipmentReportTo, setShipmentReportTo] = useState("");
+  const [isExportingShipments, setIsExportingShipments] = useState(false);
+  const exportShipmentsReport = trpc.useUtils().silo.exportShipmentsReport;
+  const downloadShipmentsReport = async () => {
+    setIsExportingShipments(true);
+    try {
+      const { fileName, fileBase64 } = await exportShipmentsReport.fetch({
+        shipmentType: (shipmentReportType || undefined) as (typeof SHIPMENT_TYPES)[number] | undefined,
+        dateFrom: shipmentReportFrom || undefined,
+        dateTo: shipmentReportTo || undefined,
+      });
+      await downloadWorkbook(fileName, fileBase64);
+      toast.success("Expéditions exportées", { description: fileName });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "L’export des expéditions a échoué.");
+    } finally {
+      setIsExportingShipments(false);
     }
   };
 
@@ -138,7 +162,7 @@ export default function Reports() {
       <section className="settings-page">
         <div className="settings-hero">
           <div><span className="settings-kicker"><FileSpreadsheet size={14} />Export centralisé</span><h1>Centre de <em>rapports</em></h1><p>Choisissez un rapport et exportez-le directement, sans passer par chaque page de gestion.</p></div>
-          <div className="settings-status"><Download size={18} /><div><strong>6 rapports</strong><span>Excel et PDF</span></div></div>
+          <div className="settings-status"><Download size={18} /><div><strong>7 rapports</strong><span>Excel et PDF</span></div></div>
         </div>
 
         <div className="reports-group">
@@ -155,6 +179,8 @@ export default function Reports() {
               <p className="settings-copy">Classeur Excel du suivi FIFO des lots, silo par silo, avec la quantité restante par article.</p>
               <button type="button" className="settings-primary" onClick={downloadLedger} disabled={isExportingLots}><Download size={16} />{isExportingLots ? "Export…" : "Exporter en Excel"}</button>
             </article>
+
+
           </div>
         </div>
 
@@ -188,6 +214,16 @@ export default function Reports() {
               </div>
             </article>
 
+            <article className="settings-card">
+              <div className="settings-card-heading"><div className="settings-icon security"><Truck size={19} /></div><div><span>Type & période</span><h2>Expéditions filtrées</h2></div></div>
+              <p className="settings-copy">Classeur Excel des expéditions filtrées par type (Vrac/Sac) et par période, comme depuis Ajouter une expédition.</p>
+              <div className="password-form">
+                <label>Type<select value={shipmentReportType} onChange={(event) => setShipmentReportType(event.target.value)}><option value="">Tous</option>{SHIPMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                <label>Du<input type="date" value={shipmentReportFrom} onChange={(event) => setShipmentReportFrom(event.target.value)} /></label>
+                <label>Au<input type="date" value={shipmentReportTo} onChange={(event) => setShipmentReportTo(event.target.value)} /></label>
+                <button type="button" className="settings-primary" onClick={downloadShipmentsReport} disabled={isExportingShipments}><Download size={16} />{isExportingShipments ? "Export…" : "Exporter en Excel"}</button>
+              </div>
+            </article>
             <article className="settings-card">
               <div className="settings-card-heading"><div className="settings-icon security"><FileText size={19} /></div><div><span>Rapport détaillé</span><h2>Rapport Production / Jour</h2></div></div>
               <p className="settings-copy">Rapport PDF détaillé d’une journée de production, avec un commentaire facultatif.</p>

@@ -36,6 +36,20 @@
       "when": 1789668975083,
       "tag": "0004_dazzling_jean_grey",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789985034856,
+      "tag": "0005_high_whiplash",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789995818628,
+      "tag": "0006_graceful_robin_chapel",
+      "breakpoints": true
     }
   ]
 }

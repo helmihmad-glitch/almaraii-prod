@@ -102,6 +102,24 @@ export const dailyProgramLines = pgTable("daily_program_lines", {
 // correction/transfert (les quantités peuvent alors être négatives), comme dans
 // le classeur d’origine.
 
+/**
+ * Liste des silos configurés (Réglages) : dynamique, plutôt que la liste figée
+ * SPF1..SPF12 d'origine (voir shared/silo.ts, qui ne sert plus que de valeurs
+ * initiales — voir initializeSilos dans server/siloDb.ts). Retirer un silo ne
+ * le supprime jamais (isActive: false) : le code reste valable dans l'historique
+ * des entrées et expéditions déjà enregistrées. sortOrder préserve un ordre
+ * choisi (SPF1 → SPF12, jamais alphabétique, qui placerait SPF10 avant SPF2)
+ * plutôt que de dépendre du nom.
+ */
+export const silos = pgTable("silos", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 16 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [uniqueIndex("silos_code_unique").on(table.code)]);
+
 export const siloProductionEntries = pgTable("silo_production_entries", {
   id: serial("id").primaryKey(),
   entryDate: varchar("entryDate", { length: 10 }),
@@ -135,6 +153,14 @@ export const siloShipments = pgTable("silo_shipments", {
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
   silo: varchar("silo", { length: 16 }).notNull(),
   shipmentType: varchar("shipmentType", { length: 8 }).notNull(),
+  // Identifiant partagé par les lignes créées ensemble par une même saisie
+  // répartie automatiquement sur plusieurs lots (voir allocateFifoShipment,
+  // createSiloShipmentGroup) — l'id de la première ligne du groupe. Nul pour
+  // une expédition saisie seule : deux expéditions distinctes qui partagent
+  // par ailleurs la même date, le même article, le même silo et le même type
+  // (des sorties du même jour sans rapport entre elles) ne doivent jamais être
+  // affichées comme une seule expédition repartie sur plusieurs lots.
+  splitGroupId: integer("splitGroupId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [index("silo_shipments_date_index").on(table.shipmentDate)]);
@@ -151,6 +177,8 @@ export type DailyProgram = typeof dailyPrograms.$inferSelect;
 export type InsertDailyProgram = typeof dailyPrograms.$inferInsert;
 export type DailyProgramLine = typeof dailyProgramLines.$inferSelect;
 export type InsertDailyProgramLine = typeof dailyProgramLines.$inferInsert;
+export type SiloRow = typeof silos.$inferSelect;
+export type InsertSiloRow = typeof silos.$inferInsert;
 export type SiloProductionEntry = typeof siloProductionEntries.$inferSelect;
 export type InsertSiloProductionEntry = typeof siloProductionEntries.$inferInsert;
 export type SiloProductionAllocation = typeof siloProductionAllocations.$inferSelect;

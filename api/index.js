@@ -156,6 +156,14 @@ var dailyProgramLines = pgTable("daily_program_lines", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [index("daily_program_lines_program_sequence_index").on(table.programId, table.sequence)]);
+var silos = pgTable("silos", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 16 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  sortOrder: integer("sortOrder").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
+}, (table) => [uniqueIndex("silos_code_unique").on(table.code)]);
 var siloProductionEntries = pgTable("silo_production_entries", {
   id: serial("id").primaryKey(),
   entryDate: varchar("entryDate", { length: 10 }),
@@ -187,6 +195,14 @@ var siloShipments = pgTable("silo_shipments", {
   quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
   silo: varchar("silo", { length: 16 }).notNull(),
   shipmentType: varchar("shipmentType", { length: 8 }).notNull(),
+  // Identifiant partagé par les lignes créées ensemble par une même saisie
+  // répartie automatiquement sur plusieurs lots (voir allocateFifoShipment,
+  // createSiloShipmentGroup) — l'id de la première ligne du groupe. Nul pour
+  // une expédition saisie seule : deux expéditions distinctes qui partagent
+  // par ailleurs la même date, le même article, le même silo et le même type
+  // (des sorties du même jour sans rapport entre elles) ne doivent jamais être
+  // affichées comme une seule expédition repartie sur plusieurs lots.
+  splitGroupId: integer("splitGroupId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [index("silo_shipments_date_index").on(table.shipmentDate)]);
@@ -683,7 +699,7 @@ async function saveAdminCredentials(username, digest) {
 }
 
 // server/excelSync.ts
-import ExcelJS from "exceljs";
+import ExcelJS2 from "exceljs";
 import { asc as asc2, eq as eq2 } from "drizzle-orm";
 
 // client/src/data/app-data.json
@@ -3170,6 +3186,318 @@ var app_data_default = {
   ]
 };
 
+// server/siloExcel.ts
+import ExcelJS from "exceljs";
+
+// shared/silo.ts
+var SILOS = ["SPF1", "SPF2", "SPF3", "SPF4", "SPF5", "SPF6", "SPF7", "SPF8", "SPF9", "SPF10", "SPF11", "SPF12"];
+var SHIPMENT_TYPES = ["Sac", "Vrac"];
+
+// server/siloExcel.ts
+var PRODUCTION_SHEET = "Production ";
+var SHIPMENT_SHEET = "Expidition Vrac-Sac";
+var PRODUCTION_FIRST_ROW = 6;
+var SHIPMENT_FIRST_ROW = 7;
+var STATE_FIRST_ROW = 9;
+var OCCUPANCY_FIRST_ROW = 6;
+var PRODUCTION_DATE_COL = 3;
+var PRODUCTION_SILO_FIRST_COL = 7;
+var STATE_ARTICLE_FIRST_COL = 4;
+function excelDate(isoDate) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+function columnLetter(index2) {
+  let letter = "";
+  let current = index2;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    letter = String.fromCharCode(65 + remainder) + letter;
+    current = Math.floor((current - remainder - 1) / 26);
+  }
+  return letter;
+}
+function normalizeHeader(value) {
+  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function readText(cell) {
+  if (!cell) return "";
+  try {
+    return cell.text?.trim() ?? "";
+  } catch {
+    const value = cell.value;
+    return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  }
+}
+function readNumber(cell) {
+  if (!cell) return void 0;
+  const value = cell.value;
+  if (typeof value === "number") return value;
+  if (value && typeof value === "object" && "result" in value && typeof value.result === "number") return value.result;
+  const text2 = readText(cell).replace(/\s/g, "").replace(",", ".");
+  if (!text2) return void 0;
+  const parsed = Number(text2);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
+function readDate(cell) {
+  if (!cell) return void 0;
+  const value = cell.value;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
+  }
+  if (typeof value === "number") {
+    const date = new Date(Date.UTC(1899, 11, 30) + value * 864e5);
+    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+  }
+  const text2 = readText(cell);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) return text2;
+  const french = text2.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`;
+  return void 0;
+}
+function findHeaderRow(worksheet, isMatch) {
+  for (let rowNumber = 1; rowNumber <= Math.min(40, worksheet.rowCount); rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const columns = /* @__PURE__ */ new Map();
+    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+      const header = normalizeHeader(readText(cell));
+      if (header && !columns.has(header)) columns.set(header, colNumber);
+    });
+    if (isMatch(columns)) return { rowNumber, columns };
+  }
+  return void 0;
+}
+function findColumn(columns, aliases) {
+  for (const alias of aliases) {
+    const found = columns.get(alias);
+    if (found !== void 0) return found;
+  }
+  return void 0;
+}
+var DATE_ALIASES = ["DATE"];
+var ARTICLE_ALIASES = ["ARTICLE", "ARTICLES", "PRODUIT"];
+var LOT_ALIASES = ["NLOT", "NOLOT", "LOT", "NUMEROLOT"];
+var QUANTITY_ALIASES = ["QTET", "QTE", "QUANTITET", "QUANTITE", "QTETOTALET", "QTETOTALE"];
+var SILO_ALIASES = ["SILO"];
+var SHIPMENT_TYPE_ALIASES = ["EXPEDITION", "TYPE", "TYPEEXPEDITION"];
+var IGNORED_ROW_LABELS = ["ARTICLE", "TOTAL", "TOTAUX", "TOTALGENERAL"];
+async function parseSiloWorkbook(buffer, knownSilos = SILOS) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const entries = [];
+  const shipments = [];
+  const errors = [];
+  const productionSheet = workbook.worksheets.find((worksheet) => findHeaderRow(worksheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && Array.from(columns.keys()).filter((header) => /^SPF\d+$/.test(header)).length >= 2));
+  const shipmentSheet = workbook.worksheets.find((worksheet) => findHeaderRow(worksheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && findColumn(columns, SILO_ALIASES) !== void 0 && findColumn(columns, QUANTITY_ALIASES) !== void 0 && Array.from(columns.keys()).every((header) => !/^SPF\d+$/.test(header))));
+  if (productionSheet) {
+    const header = findHeaderRow(productionSheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && Array.from(columns.keys()).filter((key) => /^SPF\d+$/.test(key)).length >= 2);
+    const articleCol = findColumn(header.columns, ARTICLE_ALIASES);
+    const dateCol = findColumn(header.columns, DATE_ALIASES);
+    const lotCol = findColumn(header.columns, LOT_ALIASES);
+    const totalCol = findColumn(header.columns, QUANTITY_ALIASES);
+    const siloColumns = [];
+    knownSilos.forEach((silo) => {
+      const column = header.columns.get(normalizeHeader(silo));
+      if (column !== void 0) siloColumns.push({ silo, column });
+    });
+    let lastDate;
+    for (let rowNumber = header.rowNumber + 1; rowNumber <= productionSheet.rowCount; rowNumber += 1) {
+      const row = productionSheet.getRow(rowNumber);
+      const article = readText(row.getCell(articleCol));
+      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader(article))) continue;
+      const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
+      if (rowDate) lastDate = rowDate;
+      const allocations = [];
+      siloColumns.forEach(({ silo, column }) => {
+        const quantity = readNumber(row.getCell(column));
+        if (quantity !== void 0 && quantity !== 0) allocations.push({ silo, quantity });
+      });
+      if (allocations.length === 0) continue;
+      entries.push({
+        entryDate: rowDate ?? lastDate,
+        article,
+        lotNumber: lotCol ? readText(row.getCell(lotCol)) || void 0 : void 0,
+        totalQuantity: totalCol ? readNumber(row.getCell(totalCol)) : void 0,
+        allocations
+      });
+    }
+  } else {
+    errors.push("Feuille des entr\xE9es de production introuvable : une ligne d\u2019en-t\xEAte avec \xAB Article \xBB et les colonnes SPF est attendue.");
+  }
+  if (shipmentSheet) {
+    const header = findHeaderRow(shipmentSheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && findColumn(columns, SILO_ALIASES) !== void 0 && findColumn(columns, QUANTITY_ALIASES) !== void 0 && Array.from(columns.keys()).every((key) => !/^SPF\d+$/.test(key)));
+    const articleCol = findColumn(header.columns, ARTICLE_ALIASES);
+    const siloCol = findColumn(header.columns, SILO_ALIASES);
+    const quantityCol = findColumn(header.columns, QUANTITY_ALIASES);
+    const dateCol = findColumn(header.columns, DATE_ALIASES);
+    const lotCol = findColumn(header.columns, LOT_ALIASES);
+    const typeCol = findColumn(header.columns, SHIPMENT_TYPE_ALIASES);
+    let lastDate;
+    let lastArticle;
+    let lastSilo;
+    let lastType;
+    for (let rowNumber = header.rowNumber + 1; rowNumber <= shipmentSheet.rowCount; rowNumber += 1) {
+      const row = shipmentSheet.getRow(rowNumber);
+      const rawArticle = readText(row.getCell(articleCol));
+      const rawSilo = readText(row.getCell(siloCol)).toUpperCase();
+      const quantity = readNumber(row.getCell(quantityCol));
+      if (rawArticle && IGNORED_ROW_LABELS.includes(normalizeHeader(rawArticle))) continue;
+      if (!rawArticle && !rawSilo && quantity === void 0) continue;
+      const article = rawArticle || lastArticle;
+      const silo = rawSilo || lastSilo;
+      if (!article) continue;
+      if (rawArticle) lastArticle = rawArticle;
+      if (rawSilo) lastSilo = rawSilo;
+      const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
+      if (rowDate) lastDate = rowDate;
+      if (quantity === void 0) {
+        errors.push(`Feuille ${shipmentSheet.name}, ligne ${rowNumber} : quantit\xE9 exp\xE9di\xE9e illisible.`);
+        continue;
+      }
+      if (!silo || !knownSilos.includes(silo)) {
+        errors.push(`Feuille ${shipmentSheet.name}, ligne ${rowNumber} : silo \xAB ${silo || "vide"} \xBB inconnu.`);
+        continue;
+      }
+      const rawType = typeCol ? readText(row.getCell(typeCol)) : "";
+      if (rawType) lastType = rawType;
+      const shipmentType = SHIPMENT_TYPES.find((type) => normalizeHeader(type) === normalizeHeader(rawType || lastType || "")) ?? SHIPMENT_TYPES[0];
+      shipments.push({
+        shipmentDate: rowDate ?? lastDate,
+        article,
+        lotNumber: lotCol ? readText(row.getCell(lotCol)) || void 0 : void 0,
+        quantity,
+        silo,
+        shipmentType
+      });
+    }
+  } else {
+    errors.push("Feuille des exp\xE9ditions introuvable : une ligne d\u2019en-t\xEAte avec \xAB Article \xBB, \xAB Qt\xE9 \xBB et \xAB Silo \xBB est attendue.");
+  }
+  return { entries, shipments, errors };
+}
+var TITLE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF132B35" } };
+var HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4826" } };
+function styleHeaderRow(row, firstCol, lastCol) {
+  for (let col = firstCol; col <= lastCol; col += 1) {
+    const cell = row.getCell(col);
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = HEADER_FILL;
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  }
+  row.height = 24;
+}
+function writeTitle(worksheet, rowNumber, firstCol, lastCol, title) {
+  const row = worksheet.getRow(rowNumber);
+  row.getCell(firstCol).value = title;
+  worksheet.mergeCells(rowNumber, firstCol, rowNumber, lastCol);
+  const cell = row.getCell(firstCol);
+  cell.font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
+  cell.fill = TITLE_FILL;
+  cell.alignment = { vertical: "middle", horizontal: "center" };
+  row.height = 26;
+}
+async function buildSiloWorkbook(entries, shipments, articles, silos2 = SILOS) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Almara\xEFi Production Pulse";
+  workbook.created = /* @__PURE__ */ new Date();
+  workbook.modified = /* @__PURE__ */ new Date();
+  const exportedArticles = articles.length > 0 ? [...articles] : ["\u2014"];
+  const siloLastCol = PRODUCTION_SILO_FIRST_COL + silos2.length - 1;
+  const stateLastArticleCol = STATE_ARTICLE_FIRST_COL + exportedArticles.length - 1;
+  const stateLastRow = STATE_FIRST_ROW + silos2.length - 1;
+  const occupancyLastRow = OCCUPANCY_FIRST_ROW + silos2.length - 1;
+  const production = workbook.addWorksheet(PRODUCTION_SHEET, { views: [{ state: "frozen", ySplit: 5 }] });
+  writeTitle(production, 3, PRODUCTION_DATE_COL, siloLastCol, "\u{1F4CA}  SYNTH\xC8SE \u2014 Tra\xE7abilit\xE9 des Lots par Silo");
+  const productionHeader = production.getRow(5);
+  ["Date", "Article", "N\xB0 Lot", "Qt\xE9 totale (T)", ...silos2].forEach((label, index2) => {
+    productionHeader.getCell(PRODUCTION_DATE_COL + index2).value = label;
+  });
+  styleHeaderRow(productionHeader, PRODUCTION_DATE_COL, siloLastCol);
+  production.getColumn(PRODUCTION_DATE_COL).width = 13;
+  production.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
+  production.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
+  production.getColumn(PRODUCTION_DATE_COL + 3).width = 14;
+  silos2.forEach((_, index2) => {
+    production.getColumn(PRODUCTION_SILO_FIRST_COL + index2).width = 9;
+  });
+  entries.forEach((entry, index2) => {
+    const row = production.getRow(PRODUCTION_FIRST_ROW + index2);
+    if (entry.entryDate) {
+      row.getCell(PRODUCTION_DATE_COL).value = excelDate(entry.entryDate);
+      row.getCell(PRODUCTION_DATE_COL).numFmt = "dd/mm/yyyy";
+    }
+    row.getCell(PRODUCTION_DATE_COL + 1).value = entry.article;
+    if (entry.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = entry.lotNumber;
+    if (entry.totalQuantity !== null) {
+      row.getCell(PRODUCTION_DATE_COL + 3).value = Number(entry.totalQuantity);
+      row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
+    }
+    entry.allocations.forEach((allocation) => {
+      const siloIndex = silos2.indexOf(allocation.silo);
+      if (siloIndex === -1) return;
+      const cell = row.getCell(PRODUCTION_SILO_FIRST_COL + siloIndex);
+      cell.value = Number(allocation.quantity);
+      cell.numFmt = "0.00";
+    });
+  });
+  const shipment = workbook.addWorksheet(SHIPMENT_SHEET, { views: [{ state: "frozen", ySplit: 6 }] });
+  const shipmentLastCol = PRODUCTION_DATE_COL + 6;
+  writeTitle(shipment, 2, PRODUCTION_DATE_COL, shipmentLastCol, "  EXP\xC9DITIONS VRAC / SAC");
+  const shipmentLabels = ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Qt\xE9 G(T)", "Silo", "Exp\xE9dition"];
+  [6].forEach((rowNumber) => {
+    const row = shipment.getRow(rowNumber);
+    shipmentLabels.forEach((label, index2) => {
+      row.getCell(PRODUCTION_DATE_COL + index2).value = label;
+    });
+    styleHeaderRow(row, PRODUCTION_DATE_COL, shipmentLastCol);
+  });
+  shipment.getColumn(PRODUCTION_DATE_COL).width = 13;
+  shipment.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
+  shipment.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
+  shipment.getColumn(PRODUCTION_DATE_COL + 3).width = 11;
+  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 11;
+  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 9;
+  shipment.getColumn(PRODUCTION_DATE_COL + 6).width = 12;
+  shipments.forEach((line, index2) => {
+    const row = shipment.getRow(SHIPMENT_FIRST_ROW + index2);
+    if (line.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = line.lotNumber;
+    row.getCell(PRODUCTION_DATE_COL + 3).value = Number(line.quantity);
+    row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
+  });
+  const shipmentGroupKey2 = (line, index2) => line.splitGroupId ? `group:${line.splitGroupId}` : `single:${index2}`;
+  const shipmentGroupColumns = [PRODUCTION_DATE_COL, PRODUCTION_DATE_COL + 1, PRODUCTION_DATE_COL + 4, PRODUCTION_DATE_COL + 5, PRODUCTION_DATE_COL + 6];
+  let groupStart = 0;
+  while (groupStart < shipments.length) {
+    let groupEnd = groupStart;
+    while (groupEnd + 1 < shipments.length && shipmentGroupKey2(shipments[groupEnd + 1], groupEnd + 1) === shipmentGroupKey2(shipments[groupStart], groupStart)) groupEnd += 1;
+    const startRow = SHIPMENT_FIRST_ROW + groupStart;
+    const endRow = SHIPMENT_FIRST_ROW + groupEnd;
+    const group = shipments.slice(groupStart, groupEnd + 1);
+    if (endRow > startRow) shipmentGroupColumns.forEach((col) => shipment.mergeCells(startRow, col, endRow, col));
+    const dateCell = shipment.getCell(startRow, PRODUCTION_DATE_COL);
+    if (group[0].shipmentDate) {
+      dateCell.value = excelDate(group[0].shipmentDate);
+      dateCell.numFmt = "dd/mm/yyyy";
+    }
+    dateCell.alignment = { vertical: "middle", horizontal: "center" };
+    const articleCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 1);
+    articleCell.value = group[0].article;
+    articleCell.alignment = { vertical: "middle", horizontal: "center" };
+    const totalCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 4);
+    totalCell.value = group.reduce((sum, line) => sum + Number(line.quantity), 0);
+    totalCell.numFmt = "0.00";
+    totalCell.alignment = { vertical: "middle", horizontal: "center" };
+    const siloCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 5);
+    siloCell.value = group[0].silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    const typeCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 6);
+    typeCell.value = group[0].shipmentType;
+    typeCell.alignment = { vertical: "middle", horizontal: "center" };
+    groupStart = groupEnd + 1;
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
 // server/storage.ts
 import { issueSignedToken, presignUrl as blobPresignUrl, put as blobPut } from "@vercel/blob";
 function isVercelBlobConfigured() {
@@ -3317,7 +3645,7 @@ async function getSynchronizedExcelFile() {
 async function syncExcelFromRecords() {
   const db = await getDb();
   const records = db ? await db.select().from(productionRecords).orderBy(asc2(productionRecords.productionDate), asc2(productionRecords.article), asc2(productionRecords.id)) : await listProductionRecords();
-  const workbook = new ExcelJS.Workbook();
+  const workbook = new ExcelJS2.Workbook();
   workbook.creator = "Almara\xEFi Production Pulse";
   workbook.created = /* @__PURE__ */ new Date();
   workbook.modified = /* @__PURE__ */ new Date();
@@ -3351,7 +3679,7 @@ async function syncExcelFromRecords() {
   records.forEach((record) => {
     worksheet.addRow({
       id: record.id,
-      date: /* @__PURE__ */ new Date(`${record.productionDate}T00:00:00`),
+      date: excelDate(record.productionDate),
       article: record.article,
       hours: asNumber(record.totalProductionHours),
       plannedStops: asNumber(record.plannedStopsHours),
@@ -3414,7 +3742,7 @@ async function initializeSynchronizedExcel() {
 }
 
 // server/excelImport.ts
-import ExcelJS2 from "exceljs";
+import ExcelJS3 from "exceljs";
 import { eq as eq3 } from "drizzle-orm";
 var requiredHeaders = {
   date: ["DATE", "DATEDEPRODUCTION", "JOUR"],
@@ -3452,7 +3780,7 @@ var frenchMonthNumbers = {
   dec: "12",
   decembre: "12"
 };
-function normalizeHeader(value) {
+function normalizeHeader2(value) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 function matchesHeader(header, aliases) {
@@ -3474,7 +3802,7 @@ function parseNumeric(value, text2) {
 }
 function toIsoDate(value, text2, fallbackYear) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}-${String(value.getUTCDate()).padStart(2, "0")}`;
   }
   if (typeof value === "number") {
     const date = new Date(Date.UTC(1899, 11, 30) + value * 864e5);
@@ -3497,11 +3825,11 @@ function findSheetYear(worksheet) {
   const year = `${firstRows} ${worksheet.name}`.match(/(20\d{2})/)?.[1];
   return year ? Number(year) : void 0;
 }
-function findHeaderRow(worksheet) {
+function findHeaderRow2(worksheet) {
   for (let rowNumber = 1; rowNumber <= Math.min(100, worksheet.rowCount); rowNumber += 1) {
     const row = worksheet.getRow(rowNumber);
     const rowValues = Array.isArray(row.values) ? row.values : [];
-    const headers = rowValues.map((value) => normalizeHeader(String(value ?? "")));
+    const headers = rowValues.map((value) => normalizeHeader2(String(value ?? "")));
     if (headers.some((header) => matchesHeader(header, requiredHeaders.date)) && headers.some((header) => matchesHeader(header, requiredHeaders.article))) return row;
   }
   return void 0;
@@ -3545,19 +3873,19 @@ function productionRowFingerprint(row) {
   ].join("|");
 }
 async function parseImportedWorkbook(buffer) {
-  const workbook = new ExcelJS2.Workbook();
+  const workbook = new ExcelJS3.Workbook();
   await workbook.xlsx.load(buffer);
   if (workbook.worksheets.length === 0) return { rows: [], errors: ["Le fichier Excel ne contient aucune feuille."] };
   const rows = [];
   const errors = [];
   let foundRegistrySheet = false;
   for (const worksheet of workbook.worksheets) {
-    const headerRow = findHeaderRow(worksheet);
+    const headerRow = findHeaderRow2(worksheet);
     if (!headerRow) continue;
     foundRegistrySheet = true;
     const sheetYear = findSheetYear(worksheet);
     const headerIndexes = /* @__PURE__ */ new Map();
-    headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => headerIndexes.set(normalizeHeader(readCellText(cell)), columnNumber));
+    headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => headerIndexes.set(normalizeHeader2(readCellText(cell)), columnNumber));
     const findColumn2 = (aliases) => Array.from(headerIndexes.entries()).find(([header]) => matchesHeader(header, aliases))?.[1];
     const columns = Object.fromEntries(Object.entries(requiredHeaders).map(([key, aliases]) => [key, findColumn2(aliases)]));
     const realHoursColumn = findColumn2(optionalHeaders.realHours);
@@ -3607,56 +3935,121 @@ async function parseImportedWorkbook(buffer) {
   if (!foundRegistrySheet) return { rows: [], errors: ["Les en-t\xEAtes de date et d\u2019article sont introuvables dans les cent premi\xE8res lignes de toutes les feuilles du fichier."] };
   return { rows, errors };
 }
-async function importProductionRows(rows) {
-  const db = await getDb();
-  const existing = db ? await db.select().from(productionRecords) : await listProductionRecords();
+function naturalKey(productionDate, article, productionTons) {
+  return `${productionDate}::${article.trim().toUpperCase()}::${Number(productionTons).toFixed(2)}`;
+}
+function planImportDecisions(rows, existing) {
   const byId = new Map(existing.map((record) => [record.id, record]));
-  const existingFingerprints = new Set(existing.map((record) => productionRowFingerprint(record)));
+  const byNaturalKey = /* @__PURE__ */ new Map();
+  for (const record of existing) {
+    const key = naturalKey(record.productionDate, record.article, record.productionTons);
+    const group = byNaturalKey.get(key) ?? [];
+    group.push(record);
+    byNaturalKey.set(key, group);
+  }
+  for (const group of Array.from(byNaturalKey.values())) group.sort((a, b) => a.id - b.id);
+  const claimedIds = /* @__PURE__ */ new Set();
+  const seenNewFingerprints = /* @__PURE__ */ new Set();
+  const decisions = [];
+  for (const row of rows) {
+    const values = calculateRow(row);
+    const fingerprint = productionRowFingerprint(values);
+    let existingRecord = row.id ? byId.get(row.id) : void 0;
+    if (!existingRecord) {
+      const key = naturalKey(values.productionDate, values.article, values.productionTons);
+      existingRecord = (byNaturalKey.get(key) ?? []).find((candidate) => !claimedIds.has(candidate.id));
+    }
+    if (existingRecord) {
+      claimedIds.add(existingRecord.id);
+      if (productionRowFingerprint(existingRecord) === fingerprint) {
+        decisions.push({ kind: "unchanged", row });
+      } else {
+        decisions.push({ kind: "update", row, existingId: existingRecord.id, before: existingRecord, values });
+      }
+    } else if (seenNewFingerprints.has(fingerprint)) {
+      decisions.push({ kind: "unchanged", row });
+    } else {
+      decisions.push({ kind: "create", row, values });
+      seenNewFingerprints.add(fingerprint);
+    }
+  }
+  return decisions;
+}
+async function loadExistingProductionRecords() {
+  const db = await getDb();
+  return db ? await db.select().from(productionRecords) : await listProductionRecords();
+}
+var CHANGE_FIELDS = [
+  { field: "productionDate", label: "Date" },
+  { field: "article", label: "Article" },
+  { field: "totalProductionHours", label: "Temps total prod. (h)" },
+  { field: "plannedStopsHours", label: "Arr\xEAts plan. (h)" },
+  { field: "unplannedStopsHours", label: "Arr\xEAts non pl. (h)" },
+  { field: "productionTons", label: "Production (T)" },
+  { field: "wasteTons", label: "Rebuts (T)" },
+  { field: "standardRate", label: "Cadence std" },
+  { field: "comment", label: "Commentaire" }
+];
+function formatChangeValue(field, value) {
+  if (field === "productionDate" || field === "article") return String(value ?? "");
+  if (field === "comment") return String(value ?? "").trim() || "\u2014";
+  return Number(value).toFixed(2);
+}
+function describeChanges(before, after) {
+  return CHANGE_FIELDS.map(({ field, label }) => ({ field, label, before: formatChangeValue(field, before[field]), after: formatChangeValue(field, after[field]) })).filter((change) => change.before !== change.after);
+}
+async function previewProductionImport(rows) {
+  const decisions = planImportDecisions(rows, await loadExistingProductionRecords());
+  const toUpdate = decisions.filter((decision) => decision.kind === "update").map((decision) => ({ id: decision.existingId, productionDate: decision.values.productionDate, article: decision.values.article, changes: describeChanges(decision.before, decision.values) }));
+  return {
+    toCreate: decisions.filter((decision) => decision.kind === "create").length,
+    toUpdate,
+    unchanged: decisions.filter((decision) => decision.kind === "unchanged").length
+  };
+}
+async function importProductionRows(rows, options = {}) {
+  const applyModifications = options.applyModifications ?? true;
+  const db = await getDb();
+  const decisions = planImportDecisions(rows, await loadExistingProductionRecords());
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  for (const row of rows) {
-    const values = calculateRow(row);
-    const existingRecord = row.id ? byId.get(row.id) : void 0;
-    const fingerprint = productionRowFingerprint(values);
-    if (existingRecord) {
-      if (productionRowFingerprint(existingRecord) === fingerprint) {
-        skipped += 1;
+  let pendingModifications = 0;
+  for (const decision of decisions) {
+    if (decision.kind === "unchanged") {
+      skipped += 1;
+      continue;
+    }
+    if (decision.kind === "create") {
+      if (db) {
+        await db.insert(productionRecords).values(decision.values);
+      } else {
+        await createProductionRecord(decision.values);
+      }
+      created += 1;
+    } else {
+      if (!applyModifications) {
+        pendingModifications += 1;
         continue;
       }
       if (db) {
-        await db.update(productionRecords).set({ ...values, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(productionRecords.id, existingRecord.id));
+        await db.update(productionRecords).set({ ...decision.values, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(productionRecords.id, decision.existingId));
       } else {
-        await updateProductionRecord(existingRecord.id, values);
+        await updateProductionRecord(decision.existingId, decision.values);
       }
-      existingFingerprints.delete(productionRowFingerprint(existingRecord));
-      existingFingerprints.add(fingerprint);
       updated += 1;
-    } else if (existingFingerprints.has(fingerprint)) {
-      skipped += 1;
-      continue;
-    } else {
-      if (db) {
-        const [createdRow] = await db.insert(productionRecords).values(values).returning();
-        byId.set(createdRow.id, createdRow);
-      } else {
-        const createdRecord = await createProductionRecord(values);
-        byId.set(createdRecord.id, createdRecord);
-      }
-      existingFingerprints.add(fingerprint);
-      created += 1;
     }
-    await addProductionArticle(row.article);
+    await addProductionArticle(decision.row.article);
   }
-  return { created, updated, skipped, total: rows.length };
+  return { created, updated, skipped, pendingModifications, total: rows.length };
 }
 
 // server/dailyProgramExcel.ts
-import ExcelJS3 from "exceljs";
-function normalizeHeader2(value) {
+import ExcelJS4 from "exceljs";
+function normalizeHeader3(value) {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
-function readText(cell) {
+function readText2(cell) {
   if (!cell) return "";
   const value = cell.value;
   if (value === null || value === void 0) return "";
@@ -3684,19 +4077,19 @@ function readTime(cell) {
     const totalMinutes = Math.round(fraction * 24 * 60) % (24 * 60);
     return `${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}`;
   }
-  const match = readText(cell).match(/^(\d{1,2})[:h](\d{2})/i);
+  const match = readText2(cell).match(/^(\d{1,2})[:h](\d{2})/i);
   return match ? `${match[1].padStart(2, "0")}:${match[2]}` : void 0;
 }
 function findCellTextMatching(row, columnCount, pattern) {
   for (let col = 1; col <= columnCount; col += 1) {
-    const text2 = readText(row.getCell(col));
+    const text2 = readText2(row.getCell(col));
     if (pattern.test(text2)) return text2;
   }
   return void 0;
 }
 function isRowEmpty(row, columnCount) {
   for (let col = 1; col <= columnCount; col += 1) {
-    if (readText(row.getCell(col))) return false;
+    if (readText2(row.getCell(col))) return false;
   }
   return true;
 }
@@ -3729,7 +4122,7 @@ var HEADER_ALIASES = {
 function findHeaderColumns(row, columnCount) {
   const found = {};
   for (let col = 1; col <= columnCount; col += 1) {
-    const header = normalizeHeader2(readText(row.getCell(col)));
+    const header = normalizeHeader3(readText2(row.getCell(col)));
     if (!header) continue;
     for (const key of Object.keys(HEADER_ALIASES)) {
       if (found[key] === void 0 && HEADER_ALIASES[key].includes(header)) found[key] = col;
@@ -3739,7 +4132,7 @@ function findHeaderColumns(row, columnCount) {
   return found;
 }
 async function parseDailyProgramWorkbook(buffer) {
-  const workbook = new ExcelJS3.Workbook();
+  const workbook = new ExcelJS4.Workbook();
   await workbook.xlsx.load(buffer);
   const days = [];
   const errors = [];
@@ -3789,7 +4182,7 @@ async function parseDailyProgramWorkbook(buffer) {
         finalizeCurrent();
         continue;
       }
-      const sequence = Number(readText(row.getCell(columns.sequence)));
+      const sequence = Number(readText2(row.getCell(columns.sequence)));
       const plannedStart = readTime(row.getCell(columns.start));
       const plannedEnd = readTime(row.getCell(columns.end));
       if (!Number.isFinite(sequence) || !plannedStart || !plannedEnd) {
@@ -3798,13 +4191,13 @@ async function parseDailyProgramWorkbook(buffer) {
       }
       current.lines.push({
         sequence,
-        article: readText(row.getCell(columns.article)) || null,
-        version: readText(row.getCell(columns.version)) || null,
-        bagQuantity: readText(row.getCell(columns.bag)) || null,
-        bulkQuantity: readText(row.getCell(columns.bulk)) || null,
+        article: readText2(row.getCell(columns.article)) || null,
+        version: readText2(row.getCell(columns.version)) || null,
+        bagQuantity: readText2(row.getCell(columns.bag)) || null,
+        bulkQuantity: readText2(row.getCell(columns.bulk)) || null,
         plannedStart,
         plannedEnd,
-        observation: readText(row.getCell(columns.observation)) || null
+        observation: readText2(row.getCell(columns.observation)) || null
       });
     }
     finalizeCurrent();
@@ -3873,7 +4266,7 @@ import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as rea
 import path2 from "node:path";
 import { and, asc as asc3, desc as desc3, eq as eq4, inArray } from "drizzle-orm";
 var fallbackPath = path2.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
-var emptyStore = () => ({ entries: [], allocations: [], shipments: [], nextId: 1 });
+var emptyStore = () => ({ entries: [], allocations: [], shipments: [], silos: [], nextId: 1 });
 function loadFallbackStore2() {
   if (!existsSync2(fallbackPath)) return emptyStore();
   try {
@@ -3883,7 +4276,10 @@ function loadFallbackStore2() {
       // manuallyDepleted : absent des fichiers de secours écrits avant cette
       // fonctionnalité, donc à défaut "actif" (false) plutôt qu'une erreur.
       allocations: (parsed.allocations ?? []).map((allocation) => ({ ...allocation, manuallyDepleted: allocation.manuallyDepleted ?? false })),
-      shipments: parsed.shipments ?? [],
+      // splitGroupId : absent des fichiers de secours écrits avant cette fonctionnalité, donc à défaut "saisie seule" (null).
+      shipments: (parsed.shipments ?? []).map((shipment) => ({ ...shipment, splitGroupId: shipment.splitGroupId ?? null })),
+      // silos : absent des fichiers de secours écrits avant cette fonctionnalité (voir initializeSilos, qui les sème au premier accès).
+      silos: parsed.silos ?? [],
       nextId: parsed.nextId ?? 1
     };
   } catch {
@@ -3905,6 +4301,110 @@ function persist() {
 }
 var nextId = () => store.nextId++;
 var now = () => /* @__PURE__ */ new Date();
+async function initializeSilos() {
+  const db = await getDb();
+  if (!db) {
+    if (store.silos.length > 0) return;
+    SILOS.forEach((code, index2) => {
+      store.silos.push({ id: nextId(), code, isActive: true, sortOrder: index2, createdAt: now(), updatedAt: now() });
+    });
+    persist();
+    return;
+  }
+  const existing = await db.select({ id: silos.id }).from(silos).limit(1);
+  if (existing.length > 0) return;
+  await db.insert(silos).values(SILOS.map((code, index2) => ({ code, isActive: true, sortOrder: index2 }))).onConflictDoNothing();
+}
+async function listActiveSilos() {
+  const db = await getDb();
+  if (!db) return [...store.silos].filter((silo) => silo.isActive).sort((a, b) => a.sortOrder - b.sortOrder);
+  return db.select().from(silos).where(eq4(silos.isActive, true)).orderBy(asc3(silos.sortOrder));
+}
+async function addSilo(code) {
+  const normalizedCode = code.trim().toUpperCase();
+  const db = await getDb();
+  if (!db) {
+    const existing = store.silos.find((silo) => silo.code === normalizedCode);
+    if (existing) {
+      existing.isActive = true;
+      existing.updatedAt = now();
+      persist();
+      return existing;
+    }
+    const maxSortOrder2 = store.silos.reduce((max, silo) => Math.max(max, silo.sortOrder), -1);
+    const created2 = { id: nextId(), code: normalizedCode, isActive: true, sortOrder: maxSortOrder2 + 1, createdAt: now(), updatedAt: now() };
+    store.silos.push(created2);
+    persist();
+    return created2;
+  }
+  const [{ maxSortOrder } = { maxSortOrder: null }] = await db.select({ maxSortOrder: silos.sortOrder }).from(silos).orderBy(desc3(silos.sortOrder)).limit(1);
+  const [created] = await db.insert(silos).values({ code: normalizedCode, isActive: true, sortOrder: (maxSortOrder ?? -1) + 1 }).onConflictDoUpdate({
+    target: silos.code,
+    set: { isActive: true, updatedAt: /* @__PURE__ */ new Date() }
+  }).returning();
+  return created;
+}
+async function renameSilo(id, newCode) {
+  const normalizedCode = newCode.trim().toUpperCase();
+  const db = await getDb();
+  if (!db) {
+    const existing2 = store.silos.find((silo) => silo.id === id);
+    if (!existing2) return void 0;
+    const oldCode = existing2.code;
+    if (oldCode === normalizedCode) return existing2;
+    existing2.code = normalizedCode;
+    existing2.updatedAt = now();
+    store.allocations.forEach((allocation) => {
+      if (allocation.silo === oldCode) {
+        allocation.silo = normalizedCode;
+        allocation.updatedAt = now();
+      }
+    });
+    store.shipments.forEach((shipment) => {
+      if (shipment.silo === oldCode) {
+        shipment.silo = normalizedCode;
+        shipment.updatedAt = now();
+      }
+    });
+    persist();
+    return existing2;
+  }
+  const [existing] = await db.select().from(silos).where(eq4(silos.id, id)).limit(1);
+  if (!existing) return void 0;
+  if (existing.code === normalizedCode) return existing;
+  const [updated] = await db.update(silos).set({ code: normalizedCode, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(silos.id, id)).returning();
+  await db.update(siloProductionAllocations).set({ silo: normalizedCode, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(siloProductionAllocations.silo, existing.code));
+  await db.update(siloShipments).set({ silo: normalizedCode, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(siloShipments.silo, existing.code));
+  return updated;
+}
+async function archiveSilo(id) {
+  const db = await getDb();
+  if (!db) {
+    const silo = store.silos.find((item) => item.id === id);
+    if (silo) {
+      silo.isActive = false;
+      silo.updatedAt = now();
+      persist();
+    }
+    return { success: true };
+  }
+  await db.update(silos).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq4(silos.id, id));
+  return { success: true };
+}
+async function listSiloMovementSilos() {
+  const db = await getDb();
+  if (!db) {
+    const codes = /* @__PURE__ */ new Set();
+    store.allocations.forEach((allocation) => codes.add(allocation.silo));
+    store.shipments.forEach((shipment) => codes.add(shipment.silo));
+    return Array.from(codes);
+  }
+  const [allocationSilos, shipmentSilos] = await Promise.all([
+    db.selectDistinct({ silo: siloProductionAllocations.silo }).from(siloProductionAllocations),
+    db.selectDistinct({ silo: siloShipments.silo }).from(siloShipments)
+  ]);
+  return Array.from(/* @__PURE__ */ new Set([...allocationSilos.map((row) => row.silo), ...shipmentSilos.map((row) => row.silo)]));
+}
 async function listSiloProductionEntries() {
   const db = await getDb();
   if (!db) {
@@ -4007,6 +4507,7 @@ async function createSiloShipment(shipment) {
       quantity: shipment.quantity,
       silo: shipment.silo,
       shipmentType: shipment.shipmentType,
+      splitGroupId: shipment.splitGroupId ?? null,
       createdAt: now(),
       updatedAt: now()
     };
@@ -4016,6 +4517,40 @@ async function createSiloShipment(shipment) {
   }
   const [created] = await db.insert(siloShipments).values(shipment).returning();
   return created;
+}
+async function createSiloShipmentGroup(shipments) {
+  if (shipments.length <= 1) {
+    return shipments.length === 0 ? [] : [await createSiloShipment(shipments[0])];
+  }
+  const db = await getDb();
+  if (!db) {
+    const created = shipments.map((shipment) => {
+      const row = {
+        id: nextId(),
+        shipmentDate: shipment.shipmentDate ?? null,
+        article: shipment.article,
+        lotNumber: shipment.lotNumber ?? null,
+        quantity: shipment.quantity,
+        silo: shipment.silo,
+        shipmentType: shipment.shipmentType,
+        splitGroupId: null,
+        createdAt: now(),
+        updatedAt: now()
+      };
+      store.shipments.push(row);
+      return row;
+    });
+    const groupId2 = created[0].id;
+    created.forEach((row) => {
+      row.splitGroupId = groupId2;
+    });
+    persist();
+    return created;
+  }
+  const createdRows = await db.insert(siloShipments).values(shipments).returning();
+  const groupId = createdRows[0].id;
+  await db.update(siloShipments).set({ splitGroupId: groupId }).where(inArray(siloShipments.id, createdRows.map((row) => row.id)));
+  return createdRows.map((row) => ({ ...row, splitGroupId: groupId }));
 }
 async function updateSiloShipment(id, shipment) {
   const db = await getDb();
@@ -4073,6 +4608,7 @@ async function replaceSiloMovements(entries, shipments) {
         quantity: shipment.quantity,
         silo: shipment.silo,
         shipmentType: shipment.shipmentType,
+        splitGroupId: null,
         createdAt: now(),
         updatedAt: now()
       });
@@ -4167,7 +4703,8 @@ async function loadLotMovements() {
       silo: siloProductionAllocations.silo,
       quantity: siloProductionAllocations.quantity,
       manuallyDepleted: siloProductionAllocations.manuallyDepleted
-    }).from(siloProductionAllocations),
+    }).from(siloProductionAllocations).orderBy(asc3(siloProductionAllocations.id)),
+    // ordre de saisie : départage les lots entrés à la même date dans le grand livre FIFO (voir computeLotLedger).
     db.select({
       shipmentId: siloShipments.id,
       shipmentDate: siloShipments.shipmentDate,
@@ -4213,421 +4750,17 @@ async function listSiloMovementArticles() {
   return Array.from(new Set([...entryArticles, ...shipmentArticles].map((row) => row.article.trim()).filter(Boolean)));
 }
 
-// server/siloExcel.ts
-import ExcelJS4 from "exceljs";
-
-// shared/silo.ts
-var SILOS = ["SPF1", "SPF2", "SPF3", "SPF4", "SPF5", "SPF6", "SPF7", "SPF8", "SPF9", "SPF10", "SPF11", "SPF12"];
-var SHIPMENT_TYPES = ["Sac", "Vrac"];
-
-// server/siloStock.ts
-function roundQuantity(value) {
-  return Math.round(value * 1e6) / 1e6;
-}
-function computeSiloMatrix(allocations, shipments, silos, articles) {
-  const produced = /* @__PURE__ */ new Map();
-  const shipped = /* @__PURE__ */ new Map();
-  const key = (silo, article) => `${silo}::${article}`;
-  for (const allocation of allocations) {
-    const mapKey = key(allocation.silo, allocation.article);
-    produced.set(mapKey, (produced.get(mapKey) ?? 0) + allocation.quantity);
-  }
-  for (const shipment of shipments) {
-    const mapKey = key(shipment.silo, shipment.article);
-    shipped.set(mapKey, (shipped.get(mapKey) ?? 0) + shipment.quantity);
-  }
-  const matrix = {};
-  for (const silo of silos) {
-    matrix[silo] = {};
-    for (const article of articles) {
-      const mapKey = key(silo, article);
-      const balance = roundQuantity((produced.get(mapKey) ?? 0) - (shipped.get(mapKey) ?? 0));
-      matrix[silo][article] = balance <= 0 ? null : balance;
-    }
-  }
-  return matrix;
-}
-function computeSiloOccupancy(matrix, silos, articles) {
-  return silos.map((silo) => {
-    const row = matrix[silo] ?? {};
-    const article = articles.find((candidate) => row[candidate] !== null && row[candidate] !== void 0) ?? null;
-    return { silo, article, quantity: article ? row[article] ?? null : null };
-  });
-}
-function computeArticleStock(occupancy, articles) {
-  return articles.map((article) => ({
-    article,
-    quantity: roundQuantity(occupancy.filter((row) => row.article === article).reduce((total, row) => total + (row.quantity ?? 0), 0))
-  }));
-}
-function computeTotalStock(occupancy) {
-  return roundQuantity(occupancy.reduce((total, row) => total + (row.quantity ?? 0), 0));
-}
-function computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId) {
-  const remainingShipments = excludeShipmentId === void 0 ? shipments : shipments.filter((shipment) => shipment.id !== excludeShipmentId);
-  const matrix = computeSiloMatrix(allocations, remainingShipments, [silo], [article]);
-  return matrix[silo]?.[article] ?? 0;
-}
-
-// server/siloExcel.ts
-var PRODUCTION_SHEET = "Production ";
-var SHIPMENT_SHEET = "Expidition Vrac-Sac";
-var STATE_SHEET = "Etat final silo";
-var OCCUPANCY_SHEET = "Silo_Article";
-var PRODUCTION_FIRST_ROW = 6;
-var PRODUCTION_LAST_ROW = 998;
-var SHIPMENT_FIRST_ROW = 7;
-var SHIPMENT_LAST_ROW = 999;
-var STATE_HEADER_ROW = 8;
-var STATE_FIRST_ROW = 9;
-var OCCUPANCY_FIRST_ROW = 6;
-var PRODUCTION_DATE_COL = 3;
-var PRODUCTION_SILO_FIRST_COL = 7;
-var STATE_SILO_COL = 3;
-var STATE_ARTICLE_FIRST_COL = 4;
-function columnLetter(index2) {
-  let letter = "";
-  let current = index2;
-  while (current > 0) {
-    const remainder = (current - 1) % 26;
-    letter = String.fromCharCode(65 + remainder) + letter;
-    current = Math.floor((current - remainder - 1) / 26);
-  }
-  return letter;
-}
-function normalizeHeader3(value) {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-function readText2(cell) {
-  if (!cell) return "";
-  try {
-    return cell.text?.trim() ?? "";
-  } catch {
-    const value = cell.value;
-    return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
-  }
-}
-function readNumber(cell) {
-  if (!cell) return void 0;
-  const value = cell.value;
-  if (typeof value === "number") return value;
-  if (value && typeof value === "object" && "result" in value && typeof value.result === "number") return value.result;
-  const text2 = readText2(cell).replace(/\s/g, "").replace(",", ".");
-  if (!text2) return void 0;
-  const parsed = Number(text2);
-  return Number.isFinite(parsed) ? parsed : void 0;
-}
-function readDate(cell) {
-  if (!cell) return void 0;
-  const value = cell.value;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-  }
-  if (typeof value === "number") {
-    const date = new Date(Date.UTC(1899, 11, 30) + value * 864e5);
-    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
-  }
-  const text2 = readText2(cell);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text2)) return text2;
-  const french = text2.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-  if (french) return `${french[3]}-${french[2].padStart(2, "0")}-${french[1].padStart(2, "0")}`;
-  return void 0;
-}
-function findHeaderRow2(worksheet, isMatch) {
-  for (let rowNumber = 1; rowNumber <= Math.min(40, worksheet.rowCount); rowNumber += 1) {
-    const row = worksheet.getRow(rowNumber);
-    const columns = /* @__PURE__ */ new Map();
-    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      const header = normalizeHeader3(readText2(cell));
-      if (header && !columns.has(header)) columns.set(header, colNumber);
-    });
-    if (isMatch(columns)) return { rowNumber, columns };
-  }
-  return void 0;
-}
-function findColumn(columns, aliases) {
-  for (const alias of aliases) {
-    const found = columns.get(alias);
-    if (found !== void 0) return found;
-  }
-  return void 0;
-}
-var DATE_ALIASES = ["DATE"];
-var ARTICLE_ALIASES = ["ARTICLE", "ARTICLES", "PRODUIT"];
-var LOT_ALIASES = ["NLOT", "NOLOT", "LOT", "NUMEROLOT"];
-var QUANTITY_ALIASES = ["QTET", "QTE", "QUANTITET", "QUANTITE", "QTETOTALET", "QTETOTALE"];
-var SILO_ALIASES = ["SILO"];
-var SHIPMENT_TYPE_ALIASES = ["EXPEDITION", "TYPE", "TYPEEXPEDITION"];
-var IGNORED_ROW_LABELS = ["ARTICLE", "TOTAL", "TOTAUX", "TOTALGENERAL"];
-async function parseSiloWorkbook(buffer) {
-  const workbook = new ExcelJS4.Workbook();
-  await workbook.xlsx.load(buffer);
-  const entries = [];
-  const shipments = [];
-  const errors = [];
-  const productionSheet = workbook.worksheets.find((worksheet) => findHeaderRow2(worksheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && Array.from(columns.keys()).filter((header) => /^SPF\d+$/.test(header)).length >= 2));
-  const shipmentSheet = workbook.worksheets.find((worksheet) => findHeaderRow2(worksheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && findColumn(columns, SILO_ALIASES) !== void 0 && findColumn(columns, QUANTITY_ALIASES) !== void 0 && Array.from(columns.keys()).every((header) => !/^SPF\d+$/.test(header))));
-  if (productionSheet) {
-    const header = findHeaderRow2(productionSheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && Array.from(columns.keys()).filter((key) => /^SPF\d+$/.test(key)).length >= 2);
-    const articleCol = findColumn(header.columns, ARTICLE_ALIASES);
-    const dateCol = findColumn(header.columns, DATE_ALIASES);
-    const lotCol = findColumn(header.columns, LOT_ALIASES);
-    const totalCol = findColumn(header.columns, QUANTITY_ALIASES);
-    const siloColumns = [];
-    SILOS.forEach((silo) => {
-      const column = header.columns.get(normalizeHeader3(silo));
-      if (column !== void 0) siloColumns.push({ silo, column });
-    });
-    let lastDate;
-    for (let rowNumber = header.rowNumber + 1; rowNumber <= productionSheet.rowCount; rowNumber += 1) {
-      const row = productionSheet.getRow(rowNumber);
-      const article = readText2(row.getCell(articleCol));
-      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader3(article))) continue;
-      const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
-      if (rowDate) lastDate = rowDate;
-      const allocations = [];
-      siloColumns.forEach(({ silo, column }) => {
-        const quantity = readNumber(row.getCell(column));
-        if (quantity !== void 0 && quantity !== 0) allocations.push({ silo, quantity });
-      });
-      if (allocations.length === 0) continue;
-      entries.push({
-        entryDate: rowDate ?? lastDate,
-        article,
-        lotNumber: lotCol ? readText2(row.getCell(lotCol)) || void 0 : void 0,
-        totalQuantity: totalCol ? readNumber(row.getCell(totalCol)) : void 0,
-        allocations
-      });
-    }
-  } else {
-    errors.push("Feuille des entr\xE9es de production introuvable : une ligne d\u2019en-t\xEAte avec \xAB Article \xBB et les colonnes SPF est attendue.");
-  }
-  if (shipmentSheet) {
-    const header = findHeaderRow2(shipmentSheet, (columns) => findColumn(columns, ARTICLE_ALIASES) !== void 0 && findColumn(columns, SILO_ALIASES) !== void 0 && findColumn(columns, QUANTITY_ALIASES) !== void 0 && Array.from(columns.keys()).every((key) => !/^SPF\d+$/.test(key)));
-    const articleCol = findColumn(header.columns, ARTICLE_ALIASES);
-    const siloCol = findColumn(header.columns, SILO_ALIASES);
-    const quantityCol = findColumn(header.columns, QUANTITY_ALIASES);
-    const dateCol = findColumn(header.columns, DATE_ALIASES);
-    const lotCol = findColumn(header.columns, LOT_ALIASES);
-    const typeCol = findColumn(header.columns, SHIPMENT_TYPE_ALIASES);
-    let lastDate;
-    for (let rowNumber = header.rowNumber + 1; rowNumber <= shipmentSheet.rowCount; rowNumber += 1) {
-      const row = shipmentSheet.getRow(rowNumber);
-      const article = readText2(row.getCell(articleCol));
-      const silo = readText2(row.getCell(siloCol)).toUpperCase();
-      if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader3(article))) continue;
-      if (!silo && readNumber(row.getCell(quantityCol)) === void 0) continue;
-      const rowDate = dateCol ? readDate(row.getCell(dateCol)) : void 0;
-      if (rowDate) lastDate = rowDate;
-      const quantity = readNumber(row.getCell(quantityCol));
-      if (quantity === void 0) {
-        errors.push(`Feuille ${shipmentSheet.name}, ligne ${rowNumber} : quantit\xE9 exp\xE9di\xE9e illisible.`);
-        continue;
-      }
-      if (!SILOS.includes(silo)) {
-        errors.push(`Feuille ${shipmentSheet.name}, ligne ${rowNumber} : silo \xAB ${silo || "vide"} \xBB inconnu.`);
-        continue;
-      }
-      const rawType = typeCol ? readText2(row.getCell(typeCol)) : "";
-      const shipmentType = SHIPMENT_TYPES.find((type) => normalizeHeader3(type) === normalizeHeader3(rawType)) ?? SHIPMENT_TYPES[0];
-      shipments.push({
-        shipmentDate: rowDate ?? lastDate,
-        article,
-        lotNumber: lotCol ? readText2(row.getCell(lotCol)) || void 0 : void 0,
-        quantity,
-        silo,
-        shipmentType
-      });
-    }
-  } else {
-    errors.push("Feuille des exp\xE9ditions introuvable : une ligne d\u2019en-t\xEAte avec \xAB Article \xBB, \xAB Qt\xE9 \xBB et \xAB Silo \xBB est attendue.");
-  }
-  return { entries, shipments, errors };
-}
-var TITLE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF132B35" } };
-var HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D4826" } };
-function styleHeaderRow(row, firstCol, lastCol) {
-  for (let col = firstCol; col <= lastCol; col += 1) {
-    const cell = row.getCell(col);
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = HEADER_FILL;
-    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-  }
-  row.height = 24;
-}
-function writeTitle(worksheet, rowNumber, firstCol, lastCol, title) {
-  const row = worksheet.getRow(rowNumber);
-  row.getCell(firstCol).value = title;
-  worksheet.mergeCells(rowNumber, firstCol, rowNumber, lastCol);
-  const cell = row.getCell(firstCol);
-  cell.font = { bold: true, size: 13, color: { argb: "FFFFFFFF" } };
-  cell.fill = TITLE_FILL;
-  cell.alignment = { vertical: "middle", horizontal: "center" };
-  row.height = 26;
-}
-async function buildSiloWorkbook(entries, shipments, articles) {
-  const workbook = new ExcelJS4.Workbook();
-  workbook.creator = "Almara\xEFi Production Pulse";
-  workbook.created = /* @__PURE__ */ new Date();
-  workbook.modified = /* @__PURE__ */ new Date();
-  const exportedArticles = articles.length > 0 ? [...articles] : ["\u2014"];
-  const siloLastCol = PRODUCTION_SILO_FIRST_COL + SILOS.length - 1;
-  const stateLastArticleCol = STATE_ARTICLE_FIRST_COL + exportedArticles.length - 1;
-  const stateLastRow = STATE_FIRST_ROW + SILOS.length - 1;
-  const occupancyLastRow = OCCUPANCY_FIRST_ROW + SILOS.length - 1;
-  const production = workbook.addWorksheet(PRODUCTION_SHEET, { views: [{ state: "frozen", ySplit: 5 }] });
-  writeTitle(production, 3, PRODUCTION_DATE_COL, siloLastCol, "\u{1F4CA}  SYNTH\xC8SE \u2014 Tra\xE7abilit\xE9 des Lots par Silo");
-  const productionHeader = production.getRow(5);
-  ["Date", "Article", "N\xB0 Lot", "Qt\xE9 totale (T)", ...SILOS].forEach((label, index2) => {
-    productionHeader.getCell(PRODUCTION_DATE_COL + index2).value = label;
-  });
-  styleHeaderRow(productionHeader, PRODUCTION_DATE_COL, siloLastCol);
-  production.getColumn(PRODUCTION_DATE_COL).width = 13;
-  production.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
-  production.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
-  production.getColumn(PRODUCTION_DATE_COL + 3).width = 14;
-  SILOS.forEach((_, index2) => {
-    production.getColumn(PRODUCTION_SILO_FIRST_COL + index2).width = 9;
-  });
-  entries.forEach((entry, index2) => {
-    const row = production.getRow(PRODUCTION_FIRST_ROW + index2);
-    if (entry.entryDate) {
-      row.getCell(PRODUCTION_DATE_COL).value = /* @__PURE__ */ new Date(`${entry.entryDate}T00:00:00`);
-      row.getCell(PRODUCTION_DATE_COL).numFmt = "dd/mm/yyyy";
-    }
-    row.getCell(PRODUCTION_DATE_COL + 1).value = entry.article;
-    if (entry.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = entry.lotNumber;
-    if (entry.totalQuantity !== null) {
-      row.getCell(PRODUCTION_DATE_COL + 3).value = Number(entry.totalQuantity);
-      row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
-    }
-    entry.allocations.forEach((allocation) => {
-      const siloIndex = SILOS.indexOf(allocation.silo);
-      if (siloIndex === -1) return;
-      const cell = row.getCell(PRODUCTION_SILO_FIRST_COL + siloIndex);
-      cell.value = Number(allocation.quantity);
-      cell.numFmt = "0.00";
-    });
-  });
-  const shipment = workbook.addWorksheet(SHIPMENT_SHEET, { views: [{ state: "frozen", ySplit: 6 }] });
-  const shipmentLastCol = PRODUCTION_DATE_COL + 5;
-  writeTitle(shipment, 2, PRODUCTION_DATE_COL, shipmentLastCol, "  EXP\xC9DITIONS VRAC / SAC");
-  const shipmentLabels = ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Silo", "Exp\xE9dition"];
-  [5, 6].forEach((rowNumber) => {
-    const row = shipment.getRow(rowNumber);
-    shipmentLabels.forEach((label, index2) => {
-      row.getCell(PRODUCTION_DATE_COL + index2).value = label;
-    });
-    styleHeaderRow(row, PRODUCTION_DATE_COL, shipmentLastCol);
-  });
-  shipment.getColumn(PRODUCTION_DATE_COL).width = 13;
-  shipment.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
-  shipment.getColumn(PRODUCTION_DATE_COL + 3).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 9;
-  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 12;
-  shipments.forEach((line, index2) => {
-    const row = shipment.getRow(SHIPMENT_FIRST_ROW + index2);
-    if (line.shipmentDate) {
-      row.getCell(PRODUCTION_DATE_COL).value = /* @__PURE__ */ new Date(`${line.shipmentDate}T00:00:00`);
-      row.getCell(PRODUCTION_DATE_COL).numFmt = "dd/mm/yyyy";
-    }
-    row.getCell(PRODUCTION_DATE_COL + 1).value = line.article;
-    if (line.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = line.lotNumber;
-    row.getCell(PRODUCTION_DATE_COL + 3).value = Number(line.quantity);
-    row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
-    row.getCell(PRODUCTION_DATE_COL + 4).value = line.silo;
-    row.getCell(PRODUCTION_DATE_COL + 5).value = line.shipmentType;
-  });
-  const allocationInputs = entries.flatMap((entry) => entry.allocations.map((allocation) => ({ article: entry.article, silo: allocation.silo, quantity: Number(allocation.quantity) })));
-  const shipmentInputs = shipments.map((line) => ({ article: line.article, silo: line.silo, quantity: Number(line.quantity) }));
-  const matrix = computeSiloMatrix(allocationInputs, shipmentInputs, SILOS, exportedArticles);
-  const occupancy = computeSiloOccupancy(matrix, SILOS, exportedArticles);
-  const articleStock = computeArticleStock(occupancy, exportedArticles);
-  const state = workbook.addWorksheet(STATE_SHEET);
-  writeTitle(state, 6, STATE_SILO_COL, stateLastArticleCol, "\xC9TAT FINAL DES SILOS SPF");
-  const stateHeader = state.getRow(STATE_HEADER_ROW);
-  stateHeader.getCell(STATE_SILO_COL).value = "Silo";
-  exportedArticles.forEach((article, index2) => {
-    stateHeader.getCell(STATE_ARTICLE_FIRST_COL + index2).value = article;
-  });
-  styleHeaderRow(stateHeader, STATE_SILO_COL, stateLastArticleCol);
-  state.getColumn(STATE_SILO_COL).width = 11;
-  exportedArticles.forEach((_, index2) => {
-    state.getColumn(STATE_ARTICLE_FIRST_COL + index2).width = 12;
-  });
-  const productionArticleRange = `'${PRODUCTION_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 1)}$${PRODUCTION_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 1)}$${PRODUCTION_LAST_ROW}`;
-  const shipmentQuantityRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 3)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 3)}$${SHIPMENT_LAST_ROW}`;
-  const shipmentArticleRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 1)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 1)}$${SHIPMENT_LAST_ROW}`;
-  const shipmentSiloRange = `'${SHIPMENT_SHEET}'!$${columnLetter(PRODUCTION_DATE_COL + 4)}$${SHIPMENT_FIRST_ROW}:$${columnLetter(PRODUCTION_DATE_COL + 4)}$${SHIPMENT_LAST_ROW}`;
-  SILOS.forEach((silo, siloIndex) => {
-    const rowNumber = STATE_FIRST_ROW + siloIndex;
-    const row = state.getRow(rowNumber);
-    row.getCell(STATE_SILO_COL).value = silo;
-    row.getCell(STATE_SILO_COL).font = { bold: true };
-    exportedArticles.forEach((article, articleIndex) => {
-      const articleColLetter = columnLetter(STATE_ARTICLE_FIRST_COL + articleIndex);
-      const siloColLetter = columnLetter(PRODUCTION_SILO_FIRST_COL + siloIndex);
-      const productionSiloRange = `'${PRODUCTION_SHEET}'!$${siloColLetter}$${PRODUCTION_FIRST_ROW}:$${siloColLetter}$${PRODUCTION_LAST_ROW}`;
-      const balance = `SUMIF(${productionArticleRange},${articleColLetter}$${STATE_HEADER_ROW},${productionSiloRange})-SUMIFS(${shipmentQuantityRange},${shipmentArticleRange},${articleColLetter}$${STATE_HEADER_ROW},${shipmentSiloRange},$${columnLetter(STATE_SILO_COL)}${rowNumber})`;
-      const value = matrix[silo]?.[article] ?? null;
-      const cell = row.getCell(STATE_ARTICLE_FIRST_COL + articleIndex);
-      cell.value = { formula: `IF((${balance})<=0,"",${balance})`, result: value === null ? "" : value };
-      cell.numFmt = "0.00";
-    });
-  });
-  const occupancySheet = workbook.addWorksheet(OCCUPANCY_SHEET);
-  writeTitle(occupancySheet, 3, 2, 4, "\xC9TAT FINAL DES SILOS PF");
-  writeTitle(occupancySheet, 3, 6, 7, "Stock _Article");
-  const occupancyHeader = occupancySheet.getRow(5);
-  ["Silo", "Article", "Qt\xE9"].forEach((label, index2) => {
-    occupancyHeader.getCell(2 + index2).value = label;
-  });
-  styleHeaderRow(occupancyHeader, 2, 4);
-  occupancySheet.getColumn(2).width = 11;
-  occupancySheet.getColumn(3).width = 12;
-  occupancySheet.getColumn(4).width = 12;
-  occupancySheet.getColumn(6).width = 12;
-  occupancySheet.getColumn(7).width = 13;
-  const stateArticleHeaderRange = `'${STATE_SHEET}'!$${columnLetter(STATE_ARTICLE_FIRST_COL)}$${STATE_HEADER_ROW}:$${columnLetter(stateLastArticleCol)}$${STATE_HEADER_ROW}`;
-  const stateBodyRange = `'${STATE_SHEET}'!$${columnLetter(STATE_ARTICLE_FIRST_COL)}$${STATE_FIRST_ROW}:$${columnLetter(stateLastArticleCol)}$${stateLastRow}`;
-  const stateSiloRange = `'${STATE_SHEET}'!$${columnLetter(STATE_SILO_COL)}$${STATE_FIRST_ROW}:$${columnLetter(STATE_SILO_COL)}$${stateLastRow}`;
-  SILOS.forEach((silo, index2) => {
-    const rowNumber = OCCUPANCY_FIRST_ROW + index2;
-    const row = occupancySheet.getRow(rowNumber);
-    const stateRowNumber = STATE_FIRST_ROW + index2;
-    const stateRowRange = `'${STATE_SHEET}'!${columnLetter(STATE_ARTICLE_FIRST_COL)}${stateRowNumber}:${columnLetter(stateLastArticleCol)}${stateRowNumber}`;
-    const occupancyRow = occupancy[index2];
-    row.getCell(2).value = silo;
-    row.getCell(2).font = { bold: true };
-    row.getCell(3).value = {
-      formula: `IFERROR(INDEX(${stateArticleHeaderRange},1,MATCH(1,INDEX((${stateRowRange}<>"")*1,0),0)),"")`,
-      result: occupancyRow?.article ?? ""
-    };
-    row.getCell(4).value = {
-      formula: `IF(C${rowNumber}="","",INDEX(${stateBodyRange},MATCH(B${rowNumber},${stateSiloRange},0),MATCH(C${rowNumber},${stateArticleHeaderRange},0)))`,
-      result: occupancyRow?.quantity ?? ""
-    };
-    row.getCell(4).numFmt = "0.00";
-  });
-  exportedArticles.forEach((article, index2) => {
-    const rowNumber = OCCUPANCY_FIRST_ROW + index2;
-    const row = occupancySheet.getRow(rowNumber);
-    row.getCell(6).value = article;
-    row.getCell(7).value = {
-      formula: `SUMIF($C$${OCCUPANCY_FIRST_ROW}:$C$${occupancyLastRow},F${rowNumber},$D$${OCCUPANCY_FIRST_ROW}:$D$${occupancyLastRow})`,
-      result: articleStock.find((stock) => stock.article === article)?.quantity ?? 0
-    };
-    row.getCell(7).numFmt = "0.00";
-  });
-  return Buffer.from(await workbook.xlsx.writeBuffer());
-}
-
 // server/siloLots.ts
 import ExcelJS5 from "exceljs";
 var UNDATED_SORT_KEY = "9999-99-99";
 function roundTons(value) {
   return Math.round(value * 1e6) / 1e6;
+}
+function compareLotOrder(a, b) {
+  if (a.lotNumber && b.lotNumber) return a.lotNumber.localeCompare(b.lotNumber);
+  if (a.lotNumber) return -1;
+  if (b.lotNumber) return 1;
+  return a.entryId - b.entryId;
 }
 function computeLotLedger(allocations, shipments) {
   const groups = /* @__PURE__ */ new Map();
@@ -4681,7 +4814,11 @@ function computeLotLedger(allocations, shipments) {
   const unattributed = [];
   for (const group of Array.from(groups.values())) {
     const { article, silo, events } = group;
-    events.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.sequence - b.sequence);
+    events.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      if (a.kind === "produce" && b.kind === "produce") return compareLotOrder(a, b) || a.sequence - b.sequence;
+      return a.sequence - b.sequence;
+    });
     const queue = [];
     for (const event of events) {
       if (event.kind === "produce") {
@@ -4732,6 +4869,20 @@ function computeLotLedger(allocations, shipments) {
 function manualDepletionWriteOffs(lots) {
   return lots.filter((lot) => lot.manuallyDepleted).map((lot) => ({ article: lot.article, silo: lot.silo, quantity: roundTons(lot.producedQuantity - lot.consumedQuantity) })).filter((row) => row.quantity > 1e-9);
 }
+function allocateFifoShipment(lots, article, silo, quantity) {
+  const candidates = lots.filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active").sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
+  const chunks = [];
+  let remaining = quantity;
+  for (const lot of candidates) {
+    if (remaining <= 1e-9) break;
+    const taken = Math.min(lot.remainingQuantity, remaining);
+    if (taken <= 1e-9) continue;
+    chunks.push({ lotNumber: lot.lotNumber, quantity: roundTons(taken) });
+    remaining -= taken;
+  }
+  if (remaining > 1e-9) chunks.push({ lotNumber: null, quantity: roundTons(remaining) });
+  return chunks;
+}
 var LEDGER_SHEET_NAME = "Tra\xE7abilit\xE9 des lots";
 var LEDGER_FIRST_COL = 2;
 var LEDGER_LAST_COL = LEDGER_FIRST_COL + 5;
@@ -4746,15 +4897,15 @@ var GRID_BORDER_SIDE = { style: "thin", color: { argb: "FFC4CEC0" } };
 var GRID_BORDER = { top: GRID_BORDER_SIDE, left: GRID_BORDER_SIDE, bottom: GRID_BORDER_SIDE, right: GRID_BORDER_SIDE };
 var LEDGER_DATE_FORMATTER = new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 var formatLedgerDate = (value) => value ? LEDGER_DATE_FORMATTER.format(/* @__PURE__ */ new Date(`${value}T00:00:00`)) : "\u2014";
-async function buildLotLedgerWorkbook(ledger) {
+async function buildLotLedgerWorkbook(ledger, silos2 = SILOS) {
   const workbook = new ExcelJS5.Workbook();
   workbook.creator = "Almara\xEFi Production Pulse";
   workbook.created = /* @__PURE__ */ new Date();
   workbook.modified = /* @__PURE__ */ new Date();
   const activeLots = ledger.lots.filter((lot) => lot.status === "active");
-  const groups = SILOS.map((silo) => ({
+  const groups = silos2.map((silo) => ({
     silo,
-    lots: activeLots.filter((lot) => lot.silo === silo).sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || a.entryId - b.entryId)
+    lots: activeLots.filter((lot) => lot.silo === silo).sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b))
   }));
   const totalRemaining = activeLots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
   const worksheet = workbook.addWorksheet(LEDGER_SHEET_NAME, { views: [{ state: "frozen", ySplit: LEDGER_HEADER_ROW }] });
@@ -4983,7 +5134,7 @@ async function buildFilteredRegistryWorkbook(rows, filters) {
   rows.forEach((row, index2) => {
     const excelRow = worksheet.getRow(FIRST_DATA_ROW + index2);
     const dateCell = excelRow.getCell(FIRST_COL);
-    dateCell.value = /* @__PURE__ */ new Date(`${row.productionDate}T00:00:00`);
+    dateCell.value = excelDate(row.productionDate);
     dateCell.numFmt = "dd/mm/yyyy";
     excelRow.getCell(FIRST_COL + 1).value = row.article;
     const productionCell = excelRow.getCell(FIRST_COL + 2);
@@ -5020,6 +5171,111 @@ async function buildFilteredRegistryWorkbook(rows, filters) {
     wasteCell.numFmt = "0.00";
   }
   for (let col = FIRST_COL; col <= LAST_COL; col += 1) {
+    const cell = totalRow.getCell(col);
+    cell.font = { bold: true };
+    cell.border = totalBorder;
+  }
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+// server/shipmentsReport.ts
+import ExcelJS7 from "exceljs";
+var FIRST_COL2 = 2;
+var LAST_COL2 = FIRST_COL2 + 6;
+var TITLE_ROW2 = 2;
+var FILTER_ROW2 = 3;
+var HEADER_ROW2 = 5;
+var FIRST_DATA_ROW2 = 6;
+var COLUMN_WIDTHS2 = [13, 11, 17, 11, 11, 9, 12];
+var THIN_BORDER2 = {
+  top: { style: "thin", color: { argb: "FFDADFD5" } },
+  left: { style: "thin", color: { argb: "FFDADFD5" } },
+  bottom: { style: "thin", color: { argb: "FFDADFD5" } },
+  right: { style: "thin", color: { argb: "FFDADFD5" } }
+};
+function describeFilters2(filters) {
+  const parts = [];
+  if (filters.shipmentType) parts.push(`type \xAB ${filters.shipmentType} \xBB`);
+  if (filters.dateFrom || filters.dateTo) {
+    const from = filters.dateFrom ? (/* @__PURE__ */ new Date(`${filters.dateFrom}T00:00:00`)).toLocaleDateString("fr-FR") : "\u2026";
+    const to = filters.dateTo ? (/* @__PURE__ */ new Date(`${filters.dateTo}T00:00:00`)).toLocaleDateString("fr-FR") : "\u2026";
+    parts.push(`du ${from} au ${to}`);
+  }
+  return parts.length ? `Filtres : ${parts.join(" \xB7 ")}` : "Aucun filtre appliqu\xE9 (toutes les exp\xE9ditions)";
+}
+var shipmentGroupKey = (line, index2) => line.splitGroupId ? `group:${line.splitGroupId}` : `single:${index2}`;
+async function buildShipmentsReportWorkbook(rows, filters) {
+  const workbook = new ExcelJS7.Workbook();
+  workbook.creator = "Almara\xEFi Production Pulse";
+  workbook.created = /* @__PURE__ */ new Date();
+  const worksheet = workbook.addWorksheet("Exp\xE9ditions", { views: [{ state: "frozen", ySplit: HEADER_ROW2 }] });
+  COLUMN_WIDTHS2.forEach((width, index2) => {
+    worksheet.getColumn(FIRST_COL2 + index2).width = width;
+  });
+  writeTitle(worksheet, TITLE_ROW2, FIRST_COL2, LAST_COL2, "\u{1F69A}  EXP\xC9DITIONS \u2014 Rapport filtr\xE9");
+  const filterRow = worksheet.getRow(FILTER_ROW2);
+  const filterCell = filterRow.getCell(FIRST_COL2);
+  filterCell.value = `${describeFilters2(filters)} \u2014 export\xE9 le ${(/* @__PURE__ */ new Date()).toLocaleDateString("fr-FR")} (${rows.length} ligne${rows.length > 1 ? "s" : ""})`;
+  worksheet.mergeCells(FILTER_ROW2, FIRST_COL2, FILTER_ROW2, LAST_COL2);
+  filterCell.font = { italic: true, color: { argb: "FF4D7B40" } };
+  filterCell.alignment = { horizontal: "left" };
+  const headerRow = worksheet.getRow(HEADER_ROW2);
+  ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Qt\xE9 G(T)", "Silo", "Exp\xE9dition"].forEach((label, index2) => {
+    headerRow.getCell(FIRST_COL2 + index2).value = label;
+  });
+  styleHeaderRow(headerRow, FIRST_COL2, LAST_COL2);
+  rows.forEach((row, index2) => {
+    const excelRow = worksheet.getRow(FIRST_DATA_ROW2 + index2);
+    if (row.lotNumber) excelRow.getCell(FIRST_COL2 + 2).value = row.lotNumber;
+    const quantityCell = excelRow.getCell(FIRST_COL2 + 3);
+    quantityCell.value = row.quantity;
+    quantityCell.numFmt = "0.00";
+    for (let col = FIRST_COL2; col <= LAST_COL2; col += 1) excelRow.getCell(col).border = THIN_BORDER2;
+  });
+  const groupColumns = [FIRST_COL2, FIRST_COL2 + 1, FIRST_COL2 + 4, FIRST_COL2 + 5, FIRST_COL2 + 6];
+  let groupStart = 0;
+  while (groupStart < rows.length) {
+    let groupEnd = groupStart;
+    while (groupEnd + 1 < rows.length && shipmentGroupKey(rows[groupEnd + 1], groupEnd + 1) === shipmentGroupKey(rows[groupStart], groupStart)) groupEnd += 1;
+    const startRow = FIRST_DATA_ROW2 + groupStart;
+    const endRow = FIRST_DATA_ROW2 + groupEnd;
+    const group = rows.slice(groupStart, groupEnd + 1);
+    if (endRow > startRow) groupColumns.forEach((col) => worksheet.mergeCells(startRow, col, endRow, col));
+    const dateCell = worksheet.getCell(startRow, FIRST_COL2);
+    if (group[0].shipmentDate) {
+      dateCell.value = excelDate(group[0].shipmentDate);
+      dateCell.numFmt = "dd/mm/yyyy";
+    }
+    dateCell.alignment = { vertical: "middle", horizontal: "center" };
+    const articleCell = worksheet.getCell(startRow, FIRST_COL2 + 1);
+    articleCell.value = group[0].article;
+    articleCell.alignment = { vertical: "middle", horizontal: "center" };
+    const totalCell = worksheet.getCell(startRow, FIRST_COL2 + 4);
+    totalCell.value = group.reduce((sum, line) => sum + line.quantity, 0);
+    totalCell.numFmt = "0.00";
+    totalCell.alignment = { vertical: "middle", horizontal: "center" };
+    const siloCell = worksheet.getCell(startRow, FIRST_COL2 + 5);
+    siloCell.value = group[0].silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    const typeCell = worksheet.getCell(startRow, FIRST_COL2 + 6);
+    typeCell.value = group[0].shipmentType;
+    typeCell.alignment = { vertical: "middle", horizontal: "center" };
+    groupStart = groupEnd + 1;
+  }
+  const totalRowNumber = FIRST_DATA_ROW2 + rows.length;
+  const totalRow = worksheet.getRow(totalRowNumber);
+  const totalLabelCell = totalRow.getCell(FIRST_COL2);
+  totalLabelCell.value = "Total";
+  worksheet.mergeCells(totalRowNumber, FIRST_COL2, totalRowNumber, FIRST_COL2 + 2);
+  const totalBorder = { top: { style: "thin", color: { argb: "FF4D7B40" } } };
+  if (rows.length > 0) {
+    const lastDataRow = totalRowNumber - 1;
+    const quantityRange = `${columnLetter(FIRST_COL2 + 3)}${FIRST_DATA_ROW2}:${columnLetter(FIRST_COL2 + 3)}${lastDataRow}`;
+    const quantityCell = totalRow.getCell(FIRST_COL2 + 3);
+    quantityCell.value = { formula: `SUM(${quantityRange})`, result: rows.reduce((sum, row) => sum + row.quantity, 0) };
+    quantityCell.numFmt = "0.00";
+  }
+  for (let col = FIRST_COL2; col <= LAST_COL2; col += 1) {
     const cell = totalRow.getCell(col);
     cell.font = { bold: true };
     cell.border = totalBorder;
@@ -5104,7 +5360,7 @@ async function resolveFifoLot(article, silo, date) {
     allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
     shipments.filter((shipment) => !shipment.shipmentDate || shipment.shipmentDate <= date)
   );
-  const candidates = ledger.lots.filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active").sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? ""));
+  const candidates = ledger.lots.filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active").sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
   return candidates[0]?.lotNumber ?? null;
 }
 async function importExpeditionShipments(shipments) {
@@ -5125,6 +5381,55 @@ async function importExpeditionShipments(shipments) {
     });
   }
   return { imported: ordered.length, warnings };
+}
+
+// server/siloStock.ts
+function roundQuantity(value) {
+  return Math.round(value * 1e6) / 1e6;
+}
+function computeSiloMatrix(allocations, shipments, silos2, articles) {
+  const produced = /* @__PURE__ */ new Map();
+  const shipped = /* @__PURE__ */ new Map();
+  const key = (silo, article) => `${silo}::${article}`;
+  for (const allocation of allocations) {
+    const mapKey = key(allocation.silo, allocation.article);
+    produced.set(mapKey, (produced.get(mapKey) ?? 0) + allocation.quantity);
+  }
+  for (const shipment of shipments) {
+    const mapKey = key(shipment.silo, shipment.article);
+    shipped.set(mapKey, (shipped.get(mapKey) ?? 0) + shipment.quantity);
+  }
+  const matrix = {};
+  for (const silo of silos2) {
+    matrix[silo] = {};
+    for (const article of articles) {
+      const mapKey = key(silo, article);
+      const balance = roundQuantity((produced.get(mapKey) ?? 0) - (shipped.get(mapKey) ?? 0));
+      matrix[silo][article] = balance <= 0 ? null : balance;
+    }
+  }
+  return matrix;
+}
+function computeSiloOccupancy(matrix, silos2, articles) {
+  return silos2.map((silo) => {
+    const row = matrix[silo] ?? {};
+    const article = articles.find((candidate) => row[candidate] !== null && row[candidate] !== void 0) ?? null;
+    return { silo, article, quantity: article ? row[article] ?? null : null };
+  });
+}
+function computeArticleStock(occupancy, articles) {
+  return articles.map((article) => ({
+    article,
+    quantity: roundQuantity(occupancy.filter((row) => row.article === article).reduce((total, row) => total + (row.quantity ?? 0), 0))
+  }));
+}
+function computeTotalStock(occupancy) {
+  return roundQuantity(occupancy.reduce((total, row) => total + (row.quantity ?? 0), 0));
+}
+function computeShipmentAvailability(allocations, shipments, silo, article, excludeShipmentId) {
+  const remainingShipments = excludeShipmentId === void 0 ? shipments : shipments.filter((shipment) => shipment.id !== excludeShipmentId);
+  const matrix = computeSiloMatrix(allocations, remainingShipments, [silo], [article]);
+  return matrix[silo]?.[article] ?? 0;
 }
 
 // server/routers.ts
@@ -5157,6 +5462,12 @@ async function assertShipmentWithinStock(silo, article, quantity, excludeShipmen
       message: `La quantit\xE9 exp\xE9di\xE9e (${quantity.toFixed(2)} T) d\xE9passe le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`
     });
   }
+}
+async function resolveSiloCodes() {
+  await initializeSilos();
+  const [configured, fromMovements] = await Promise.all([listActiveSilos(), listSiloMovementSilos()]);
+  const configuredCodes = configured.map((silo) => silo.code);
+  return [...configuredCodes, ...fromMovements.filter((code) => !configuredCodes.includes(code))];
 }
 var DEFAULT_ADMIN_USERNAME = "admin";
 var DEFAULT_ADMIN_PASSWORD = "123456";
@@ -5191,7 +5502,7 @@ var SILO_IMPORT_PREFIX = "silo-import/";
 var PROGRAM_IMPORT_PREFIX = "program-import/";
 var EXPEDITION_PDF_IMPORT_PREFIX = "expedition-pdf-import/";
 var importPdfFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) => /\.pdf$/i.test(fileName), "Importez un fichier PDF au format .pdf.");
-var siloInput = z2.enum(SILOS);
+var siloInput = z2.string().trim().min(1, "Choisissez un silo.").max(16);
 var optionalDateInput = z2.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit \xEAtre au format AAAA-MM-JJ").optional().or(z2.literal("").transform(() => void 0));
 var siloArticleInput = z2.string().trim().min(1, "Indiquez l\u2019article.").max(64);
 var lotNumberInput = z2.string().trim().max(64).optional().transform((value) => value || void 0);
@@ -5201,7 +5512,7 @@ var siloEntryInput = z2.object({
   article: siloArticleInput,
   lotNumber: lotNumberInput,
   totalQuantity: z2.number().finite().optional(),
-  allocations: z2.array(z2.object({ silo: siloInput, quantity: siloQuantityInput })).max(SILOS.length)
+  allocations: z2.array(z2.object({ silo: siloInput, quantity: siloQuantityInput })).max(64)
 });
 var siloShipmentInput = z2.object({
   shipmentDate: optionalDateInput,
@@ -5211,6 +5522,11 @@ var siloShipmentInput = z2.object({
   silo: siloInput,
   shipmentType: z2.enum(SHIPMENT_TYPES)
 });
+var shipmentReportFilterInput = z2.object({
+  shipmentType: z2.enum(SHIPMENT_TYPES).optional(),
+  dateFrom: optionalDateInput,
+  dateTo: optionalDateInput
+});
 var registryFilterInput = z2.object({
   query: z2.string().trim().max(200).optional(),
   dateFrom: optionalDateInput,
@@ -5219,12 +5535,30 @@ var registryFilterInput = z2.object({
 var EXCEL_IMPORT_MAX_BYTES = 57e5;
 var importFileNameInput = z2.string().trim().min(1).max(255).refine((fileName) => /\.xlsx$/i.test(fileName), "Importez un fichier Excel au format .xlsx.");
 var importSourceInput = z2.string().startsWith("production-import/");
-async function importWorkbookBuffer(buffer) {
+async function fetchImportBuffer(storageKey, label) {
+  const sourceUrl = await storageGetSignedUrl(storageKey);
+  const response = await fetch(sourceUrl);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.error(`[ImportExcel] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
+    throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier ${label} t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: `Le fichier ${label} d\xE9passe la limite de 5,7 Mo.` });
+  return buffer;
+}
+async function importWorkbookBuffer(buffer, applyModifications) {
   const parsed = await parseImportedWorkbook(buffer);
   if (parsed.rows.length === 0) throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
-  const result = await importProductionRows(parsed.rows);
+  const result = await importProductionRows(parsed.rows, { applyModifications });
   await syncExcelFromRecords();
   return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+}
+async function previewWorkbookBuffer(buffer) {
+  const parsed = await parseImportedWorkbook(buffer);
+  if (parsed.rows.length === 0) throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n\u2019a \xE9t\xE9 trouv\xE9e dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
+  const preview = await previewProductionImport(parsed.rows);
+  return { ...preview, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
 function calculateRecord(input) {
   const realHours = Math.max(input.totalProductionHours - input.plannedStopsHours - input.unplannedStopsHours, 0);
@@ -5300,6 +5634,25 @@ var appRouter = router({
     archiveOperator: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       return archiveProductionOperator(input.id);
+    }),
+    listSilos: publicProcedure.query(async () => {
+      await initializeSilos();
+      return listActiveSilos();
+    }),
+    addSilo: publicProcedure.input(z2.object({ code: z2.string().trim().min(1, "Saisissez un silo.").max(16) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSilo(input.code);
+    }),
+    /** Renomme un silo : le nouveau code remplace l'ancien dans les entrées et expéditions déjà enregistrées (voir renameSilo). */
+    renameSilo: publicProcedure.input(z2.object({ id: z2.number().int().positive(), code: z2.string().trim().min(1, "Saisissez un silo.").max(16) })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await renameSilo(input.id, input.code);
+      if (!updated) throw new TRPCError2({ code: "NOT_FOUND", message: "Ce silo est introuvable." });
+      return updated;
+    }),
+    archiveSilo: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSilo(input.id);
     })
   }),
   dailyProgram: router({
@@ -5369,19 +5722,20 @@ var appRouter = router({
   silo: router({
     /** État courant des silos : matrice, occupation et stock par article. */
     state: publicProcedure.query(async () => {
-      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles] = await Promise.all([
+      const [{ allocations, shipments }, lotMovements, configuredArticles, movementArticles, siloCodes] = await Promise.all([
         loadSiloMovements(),
         loadLotMovements(),
         listActiveProductionArticles(),
-        listSiloMovementArticles()
+        listSiloMovementArticles(),
+        resolveSiloCodes()
       ]);
       const configuredCodes = configuredArticles.map((article) => article.code);
       const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
       const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots);
-      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], SILOS, articles);
-      const occupancy = computeSiloOccupancy(matrix, SILOS, articles);
+      const matrix = computeSiloMatrix(allocations, [...shipments, ...writeOffs], siloCodes, articles);
+      const occupancy = computeSiloOccupancy(matrix, siloCodes, articles);
       return {
-        silos: [...SILOS],
+        silos: siloCodes,
         articles,
         matrix,
         occupancy,
@@ -5405,11 +5759,33 @@ var appRouter = router({
       return deleteSiloProductionEntry(input.id);
     }),
     listShipments: publicProcedure.query(() => listSiloShipments()),
+    /**
+     * Sans N° Lot précisé, la quantité est répartie sur les lots actifs les
+     * plus anciens d'abord (FIFO) — une ligne d'expédition par lot réellement
+     * entamé plutôt qu'une seule ligne portant un lot arbitraire (voir
+     * allocateFifoShipment dans siloLots.ts) ; le classeur Silo_PF reflète
+     * alors correctement chaque lot touché sans traitement supplémentaire,
+     * puisqu'il liste simplement les lignes d'expédition telles quelles.
+     * Un N° Lot précisé explicitement (correction, cas particulier) garde le
+     * comportement d'une seule ligne.
+     */
     createShipment: publicProcedure.input(siloShipmentInput).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       await assertShipmentWithinStock(input.silo, input.article, input.quantity);
-      const { quantity, ...shipment } = input;
-      return createSiloShipment({ ...shipment, quantity: quantity.toFixed(2) });
+      const { quantity, lotNumber, ...shipment } = input;
+      if (lotNumber) {
+        const created2 = await createSiloShipment({ ...shipment, lotNumber, quantity: quantity.toFixed(2) });
+        return { shipments: [created2] };
+      }
+      const date = shipment.shipmentDate ?? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const lotMovements = await loadLotMovements();
+      const ledger = computeLotLedger(
+        lotMovements.allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
+        lotMovements.shipments.filter((movement) => !movement.shipmentDate || movement.shipmentDate <= date)
+      );
+      const chunks = allocateFifoShipment(ledger.lots, shipment.article, shipment.silo, quantity);
+      const created = await createSiloShipmentGroup(chunks.map((chunk) => ({ ...shipment, lotNumber: chunk.lotNumber ?? void 0, quantity: chunk.quantity.toFixed(2) })));
+      return { shipments: created };
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -5440,7 +5816,7 @@ var appRouter = router({
       }
       const buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
-      const parsed = await parseSiloWorkbook(buffer);
+      const parsed = await parseSiloWorkbook(buffer, await resolveSiloCodes());
       if (parsed.entries.length === 0 && parsed.shipments.length === 0) {
         throw new TRPCError2({ code: "BAD_REQUEST", message: `Aucun mouvement de silo n\u2019a \xE9t\xE9 trouv\xE9 dans le fichier. ${parsed.errors.slice(0, 3).join(" ")}`.trim() });
       }
@@ -5501,15 +5877,16 @@ var appRouter = router({
     }),
     /** Reconstruit le classeur Silo_PF complet, formules comprises. */
     exportExcel: publicProcedure.query(async () => {
-      const [entries, shipments, configuredArticles, movementArticles] = await Promise.all([
+      const [entries, shipments, configuredArticles, movementArticles, siloCodes] = await Promise.all([
         listSiloProductionEntries(),
         listSiloShipments(),
         listActiveProductionArticles(),
-        listSiloMovementArticles()
+        listSiloMovementArticles(),
+        resolveSiloCodes()
       ]);
       const configuredCodes = configuredArticles.map((article) => article.code);
       const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
-      const workbook = await buildSiloWorkbook(entries, shipments, articles);
+      const workbook = await buildSiloWorkbook(entries, shipments, articles, siloCodes);
       return {
         fileName: `Silo_PF_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64")
@@ -5533,11 +5910,32 @@ var appRouter = router({
     }),
     /** Export Excel de la traçabilité des lots (une ligne par lot). */
     exportLotLedger: publicProcedure.query(async () => {
-      const { allocations, shipments } = await loadLotMovements();
+      const [{ allocations, shipments }, siloCodes] = await Promise.all([loadLotMovements(), resolveSiloCodes()]);
       const ledger = computeLotLedger(allocations, shipments);
-      const workbook = await buildLotLedgerWorkbook(ledger);
+      const workbook = await buildLotLedgerWorkbook(ledger, siloCodes);
       return {
         fileName: `Tracabilite_Lots_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`,
+        fileBase64: workbook.toString("base64")
+      };
+    }),
+    /** Export Excel des expéditions filtrées par type (Vrac/Sac) et par période, comme depuis Ajouter une expédition. */
+    exportShipmentsReport: publicProcedure.input(shipmentReportFilterInput).query(async ({ input }) => {
+      const shipments = await listSiloShipments();
+      const filtered = shipments.filter((shipment) => !input.shipmentType || shipment.shipmentType === input.shipmentType).filter((shipment) => !input.dateFrom || (shipment.shipmentDate ?? "") >= input.dateFrom).filter((shipment) => !input.dateTo || (shipment.shipmentDate ?? "") <= input.dateTo);
+      const workbook = await buildShipmentsReportWorkbook(
+        filtered.map((shipment) => ({
+          shipmentDate: shipment.shipmentDate,
+          article: shipment.article,
+          lotNumber: shipment.lotNumber,
+          quantity: Number(shipment.quantity),
+          silo: shipment.silo,
+          shipmentType: shipment.shipmentType,
+          splitGroupId: shipment.splitGroupId
+        })),
+        input
+      );
+      return {
+        fileName: `Expeditions_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64")
       };
     })
@@ -5545,10 +5943,10 @@ var appRouter = router({
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
-    importExcel: publicProcedure.input(z2.object({ fileName: z2.string().trim().min(1).max(255), fileBase64: z2.string().min(1).max(8e6) })).mutation(async ({ ctx, input }) => {
+    importExcel: publicProcedure.input(z2.object({ fileName: z2.string().trim().min(1).max(255), fileBase64: z2.string().min(1).max(8e6), applyModifications: z2.boolean().optional() })).mutation(async ({ ctx, input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError2({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
       assertAdminSession(ctx);
-      return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"));
+      return importWorkbookBuffer(Buffer.from(input.fileBase64, "base64"), input.applyModifications ?? false);
     }),
     prepareExcelUpload: publicProcedure.input(z2.object({ fileName: importFileNameInput })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -5559,18 +5957,22 @@ var appRouter = router({
       const prepared = await storageCreatePresignedUpload(relKey);
       return { mode: "put", key: prepared.key, uploadUrl: prepared.uploadUrl };
     }),
-    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
+    /**
+     * Aperçu de l'import sans rien écrire : combien de lignes seraient
+     * ajoutées, combien correspondent à une modification d'une ligne
+     * existante (avec le détail des champs) et combien sont déjà identiques.
+     * Le registre demande la confirmation de l'utilisateur avant d'appeler
+     * importExcelFromStorage avec applyModifications s'il y a des lignes à
+     * modifier (voir Registry.tsx) — les lignes nouvelles, elles, s'ajoutent
+     * toujours sans confirmation supplémentaire.
+     */
+    previewExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      const sourceUrl = await storageGetSignedUrl(input.storageKey);
-      const response = await fetch(sourceUrl);
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        console.error(`[ImportExcel] \xC9chec de la r\xE9cup\xE9ration du fichier t\xE9l\xE9vers\xE9 (${response.status} ${response.statusText}) depuis ${sourceUrl}: ${body}`);
-        throw new TRPCError2({ code: "BAD_REQUEST", message: `Le fichier Excel t\xE9l\xE9vers\xE9 est indisponible (${response.status}). R\xE9essayez l\u2019import.` });
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.byteLength > EXCEL_IMPORT_MAX_BYTES) throw new TRPCError2({ code: "PAYLOAD_TOO_LARGE", message: "Le fichier Excel d\xE9passe la limite de 5,7 Mo." });
-      return importWorkbookBuffer(buffer);
+      return previewWorkbookBuffer(await fetchImportBuffer(input.storageKey, "Excel"));
+    }),
+    importExcelFromStorage: publicProcedure.input(z2.object({ storageKey: importSourceInput, applyModifications: z2.boolean().optional() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return importWorkbookBuffer(await fetchImportBuffer(input.storageKey, "Excel"), input.applyModifications ?? false);
     }),
     syncFile: publicProcedure.query(() => getSynchronizedExcelFile()),
     /** Export Excel du registre filtré (page Rapports) : même recherche/période que le Registre. */

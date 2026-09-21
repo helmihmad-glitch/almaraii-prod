@@ -19,7 +19,7 @@ describe("Rapports (centre d’export)", () => {
     expect(appShell).toContain('path: "/rapports", label: "Rapports"');
   });
 
-  it("regroupe les 6 rapports attendus, chacun avec son propre export", () => {
+  it("regroupe les 7 rapports attendus, chacun avec son propre export", () => {
     expect(reportsPage).toContain("trpc.useUtils().silo.exportExcel");
     expect(reportsPage).toContain("trpc.useUtils().silo.exportLotLedger");
     expect(reportsPage).toContain("trpc.production.syncFile.useQuery");
@@ -28,6 +28,10 @@ describe("Rapports (centre d’export)", () => {
     expect(reportsPage).toContain("generateDayPdf");
     expect(reportsPage).toContain("generateDailyProgramPdf");
     expect(reportsPage).toContain("trpc.dailyProgram.byDate.useQuery");
+    expect(reportsPage).toContain("Expéditions filtrées");
+    expect(reportsPage).toContain("trpc.useUtils().silo.exportShipmentsReport");
+    expect(routers).toContain("exportShipmentsReport: publicProcedure");
+    expect(routers).toContain("buildShipmentsReportWorkbook");
   });
 
   it("exporte le registre filtré en Excel (plus en CSV), avec le même filtrage recherche + période côté serveur", () => {
