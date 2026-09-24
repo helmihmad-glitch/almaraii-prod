@@ -6,7 +6,11 @@ import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import ListPagination from "@/components/ListPagination";
+import { usePagination } from "@/hooks/usePagination";
 import "./silo.css";
+
+const PAGE_SIZE = 10;
 
 type EntryDraft = { entryDate: string; article: string; lotNumber: string; totalQuantity: string; allocations: Record<string, string> };
 
@@ -54,6 +58,7 @@ export default function SiloProduction() {
     .filter((entry) => articleFilter === "all" || entry.article === articleFilter)
     .filter((entry) => !lotQuery.trim() || (entry.lotNumber ?? "").toLowerCase().includes(lotQuery.trim().toLowerCase())),
   [entries, siloFilter, articleFilter, lotQuery]);
+  const { page: entriesPage, setPage: setEntriesPage, pageCount: entriesPageCount, pageItems: pageEntries, pageSize: entriesPageSize, setPageSize: setEntriesPageSize } = usePagination(filteredEntries, PAGE_SIZE, `${siloFilter}|${articleFilter}|${lotQuery}`);
 
   const refresh = async () => {
     await Promise.all([utils.silo.listEntries.invalidate(), utils.silo.listShipments.invalidate(), utils.silo.state.invalidate()]);
@@ -237,7 +242,7 @@ export default function SiloProduction() {
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Répartition</th><th>Actions</th></tr></thead>
               <tbody>
-                {filteredEntries.map((entry) => (
+                {pageEntries.map((entry) => (
                   <tr key={entry.id}>
                     <td>{formatDate(entry.entryDate)}</td>
                     <td className="silo-strong-cell">{entry.article}</td>
@@ -250,6 +255,7 @@ export default function SiloProduction() {
               </tbody>
             </table>
           </div> : !entriesQuery.isLoading && <div className="silo-empty-cell">{entries.length === 0 ? "Aucune entrée de production enregistrée." : "Aucune entrée ne correspond à ces filtres."}</div>}
+          <ListPagination page={entriesPage} pageCount={entriesPageCount} onPageChange={setEntriesPage} totalCount={filteredEntries.length} itemLabel="entrée" pageSize={entriesPageSize} onPageSizeChange={setEntriesPageSize} />
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>

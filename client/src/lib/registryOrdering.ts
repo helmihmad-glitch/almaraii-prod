@@ -39,6 +39,37 @@ export function getPreviousCalendarDate(referenceDate = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Un mois type compte 26 jours ouvrés (tous les jours sauf le dimanche) — le repère utilisé par calculateProductionGuideProgress. */
+const STANDARD_WORKING_DAYS_PER_MONTH = 26;
+
+/**
+ * Repère théorique de rythme de production pour le mois affiché (période au
+ * format AAAA-MM) : la part du mois déjà écoulée en ne comptant que les jours
+ * ouvrés (dimanche excepté), rapportée à un mois type de 26 jours ouvrés —
+ * ex. le 24/09, 3 dimanches déjà passés (les 6, 13 et 20) donnent
+ * (24 - 3) / 26. Sert à comparer visuellement « où l'on devrait en être
+ * aujourd'hui » à la progression réelle du mois. Un mois déjà entièrement
+ * passé compte tous ses jours ; un mois futur n'en compte aucun.
+ */
+export function calculateProductionGuideProgress(periodValue: string, referenceDate = new Date()): number {
+  const [yearText, monthText] = periodValue.split("-");
+  const year = Number(yearText);
+  const monthIndex = Number(monthText) - 1;
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) return 0;
+
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const isCurrentMonth = referenceDate.getFullYear() === year && referenceDate.getMonth() === monthIndex;
+  const isPastMonth = year < referenceDate.getFullYear() || (year === referenceDate.getFullYear() && monthIndex < referenceDate.getMonth());
+  const elapsedDays = isCurrentMonth ? referenceDate.getDate() : isPastMonth ? daysInMonth : 0;
+
+  let sundaysElapsed = 0;
+  for (let day = 1; day <= elapsedDays; day += 1) {
+    if (new Date(year, monthIndex, day).getDay() === 0) sundaysElapsed += 1;
+  }
+  const workingDaysElapsed = Math.max(elapsedDays - sundaysElapsed, 0);
+  return workingDaysElapsed / STANDARD_WORKING_DAYS_PER_MONTH;
+}
+
 /** Additionne les heures réellement planifiées, les arrêts et les heures actives d’une période. */
 export function calculateHoursSummary(rows: MonthlyProductionRow[]) {
   const totalHours = rows.reduce((sum, row) => sum + row.hours, 0);

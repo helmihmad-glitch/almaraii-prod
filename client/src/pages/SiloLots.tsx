@@ -5,9 +5,12 @@ import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import ListPagination from "@/components/ListPagination";
+import { usePagination } from "@/hooks/usePagination";
 import type { LotConsumptionSource } from "../../../server/siloLots";
 import "./silo.css";
 
+const PAGE_SIZE = 10;
 const fmt = (value: number) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
@@ -67,6 +70,7 @@ export default function SiloLots() {
     .filter((lot) => !lotQuery.trim() || (lot.lotNumber ?? "").toLowerCase().includes(lotQuery.trim().toLowerCase()))
     .sort((a, b) => a.silo.localeCompare(b.silo) || (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b)),
   [lots, siloFilter, articleFilter, showDepleted, lotQuery]);
+  const { page: lotsPage, setPage: setLotsPage, pageCount: lotsPageCount, pageItems: pageLots, pageSize: lotsPageSize, setPageSize: setLotsPageSize } = usePagination(filteredLots, PAGE_SIZE, `${siloFilter}|${articleFilter}|${showDepleted}|${lotQuery}`);
 
   const activeCount = lots.filter((lot) => lot.status === "active").length;
   const totalRemaining = lots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
@@ -118,7 +122,7 @@ export default function SiloLots() {
               <table className="silo-list-table silo-lot-table">
                 <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th><th>Statut</th>{isAdmin && <th>Actions</th>}</tr></thead>
                 <tbody>
-                  {filteredLots.map((lot) => {
+                  {pageLots.map((lot) => {
                     const key = `${lot.entryId}-${lot.silo}`;
                     const expanded = expandedEntryId === lot.entryId;
                     return (
@@ -164,6 +168,7 @@ export default function SiloLots() {
               </table>
             </div>
           )}
+          <ListPagination page={lotsPage} pageCount={lotsPageCount} onPageChange={setLotsPage} totalCount={filteredLots.length} itemLabel="lot" pageSize={lotsPageSize} onPageSizeChange={setLotsPageSize} />
         </section>
            {unattributed.length > 0 && (
           <div className="silo-error-card silo-warning-card">

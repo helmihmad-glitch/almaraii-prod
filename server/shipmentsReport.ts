@@ -20,12 +20,12 @@ export type ShipmentReportRow = {
 export type ShipmentReportFilters = { shipmentType?: string; dateFrom?: string; dateTo?: string };
 
 const FIRST_COL = 2; // B
-const LAST_COL = FIRST_COL + 6; // H : Date, Article, N° Lot, Qté (T), Qté G(T), Silo, Expédition.
+const LAST_COL = FIRST_COL + 6; // H : Date, Article, N° Lot, Qté (T), Silo, Qté G(T), Expédition.
 const TITLE_ROW = 2;
 const FILTER_ROW = 3;
 const HEADER_ROW = 5;
 const FIRST_DATA_ROW = 6;
-const COLUMN_WIDTHS = [13, 11, 17, 11, 11, 9, 12];
+const COLUMN_WIDTHS = [13, 11, 17, 11, 9, 11, 12];
 const THIN_BORDER: Partial<ExcelJS.Borders> = {
   top: { style: "thin", color: { argb: "FFDADFD5" } },
   left: { style: "thin", color: { argb: "FFDADFD5" } },
@@ -65,8 +65,10 @@ export async function buildShipmentsReportWorkbook(rows: ShipmentReportRow[], fi
   filterCell.font = { italic: true, color: { argb: "FF4D7B40" } };
   filterCell.alignment = { horizontal: "left" };
 
+  // Silo (+4) avant Qté G(T) (+5) : Silo reste, comme N° Lot et Qté (T), une
+  // valeur propre à chaque ligne (voir plus bas), d'où sa place à côté d'elles.
   const headerRow = worksheet.getRow(HEADER_ROW);
-  ["Date", "Article", "N° Lot", "Qté (T)", "Qté G(T)", "Silo", "Expédition"].forEach((label, index) => {
+  ["Date", "Article", "N° Lot", "Qté (T)", "Silo", "Qté G(T)", "Expédition"].forEach((label, index) => {
     headerRow.getCell(FIRST_COL + index).value = label;
   });
   styleHeaderRow(headerRow, FIRST_COL, LAST_COL);
@@ -77,13 +79,22 @@ export async function buildShipmentsReportWorkbook(rows: ShipmentReportRow[], fi
     const quantityCell = excelRow.getCell(FIRST_COL + 3);
     quantityCell.value = row.quantity;
     quantityCell.numFmt = "0.00";
+    // Valeur par défaut, silo par silo : reprise telle quelle si l'expédition
+    // groupée touche plusieurs silos (voir silo.createSplitShipment côté
+    // serveur), écrasée par une cellule fusionnée sinon (voir plus bas).
+    const siloCell = excelRow.getCell(FIRST_COL + 4);
+    siloCell.value = row.silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
     for (let col = FIRST_COL; col <= LAST_COL; col += 1) excelRow.getCell(col).border = THIN_BORDER;
   });
 
-  // Date, Article, Qté G(T), Silo et Expédition fusionnés sur les lignes d'une
-  // même expédition répartie sur plusieurs lots (voir la note sur splitGroupId
+  // Date, Article, Qté G(T) et Expédition fusionnés sur les lignes d'une même
+  // expédition répartie sur plusieurs lots (voir la note sur splitGroupId
   // ci-dessus) ; N° Lot et Qté (T), propres à chaque lot, restent par ligne.
-  const groupColumns = [FIRST_COL, FIRST_COL + 1, FIRST_COL + 4, FIRST_COL + 5, FIRST_COL + 6];
+  // Silo n'est fusionné que si le groupe ne touche qu'un seul silo — une
+  // répartition manuelle sur plusieurs silos garde alors une valeur par ligne
+  // plutôt qu'une seule cellule qui ne montrerait que le premier silo touché.
+  const groupColumns = [FIRST_COL, FIRST_COL + 1, FIRST_COL + 5, FIRST_COL + 6];
   let groupStart = 0;
   while (groupStart < rows.length) {
     let groupEnd = groupStart;
@@ -91,7 +102,11 @@ export async function buildShipmentsReportWorkbook(rows: ShipmentReportRow[], fi
     const startRow = FIRST_DATA_ROW + groupStart;
     const endRow = FIRST_DATA_ROW + groupEnd;
     const group = rows.slice(groupStart, groupEnd + 1);
-    if (endRow > startRow) groupColumns.forEach((col) => worksheet.mergeCells(startRow, col, endRow, col));
+    const distinctSilos = Array.from(new Set(group.map((line) => line.silo)));
+    if (endRow > startRow) {
+      groupColumns.forEach((col) => worksheet.mergeCells(startRow, col, endRow, col));
+      if (distinctSilos.length === 1) worksheet.mergeCells(startRow, FIRST_COL + 4, endRow, FIRST_COL + 4);
+    }
 
     const dateCell = worksheet.getCell(startRow, FIRST_COL);
     if (group[0].shipmentDate) {
@@ -102,13 +117,15 @@ export async function buildShipmentsReportWorkbook(rows: ShipmentReportRow[], fi
     const articleCell = worksheet.getCell(startRow, FIRST_COL + 1);
     articleCell.value = group[0].article;
     articleCell.alignment = { vertical: "middle", horizontal: "center" };
-    const totalCell = worksheet.getCell(startRow, FIRST_COL + 4);
+    const totalCell = worksheet.getCell(startRow, FIRST_COL + 5);
     totalCell.value = group.reduce((sum, line) => sum + line.quantity, 0);
     totalCell.numFmt = "0.00";
     totalCell.alignment = { vertical: "middle", horizontal: "center" };
-    const siloCell = worksheet.getCell(startRow, FIRST_COL + 5);
-    siloCell.value = group[0].silo;
-    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (distinctSilos.length === 1) {
+      const siloCell = worksheet.getCell(startRow, FIRST_COL + 4);
+      siloCell.value = distinctSilos[0];
+      siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    }
     const typeCell = worksheet.getCell(startRow, FIRST_COL + 6);
     typeCell.value = group[0].shipmentType;
     typeCell.alignment = { vertical: "middle", horizontal: "center" };

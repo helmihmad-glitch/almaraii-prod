@@ -3443,7 +3443,7 @@ async function buildSiloWorkbook(entries, shipments, articles, silos2 = SILOS) {
   const shipment = workbook.addWorksheet(SHIPMENT_SHEET, { views: [{ state: "frozen", ySplit: 6 }] });
   const shipmentLastCol = PRODUCTION_DATE_COL + 6;
   writeTitle(shipment, 2, PRODUCTION_DATE_COL, shipmentLastCol, "  EXP\xC9DITIONS VRAC / SAC");
-  const shipmentLabels = ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Qt\xE9 G(T)", "Silo", "Exp\xE9dition"];
+  const shipmentLabels = ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Silo", "Qt\xE9 G(T)", "Exp\xE9dition"];
   [6].forEach((rowNumber) => {
     const row = shipment.getRow(rowNumber);
     shipmentLabels.forEach((label, index2) => {
@@ -3455,17 +3455,20 @@ async function buildSiloWorkbook(entries, shipments, articles, silos2 = SILOS) {
   shipment.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
   shipment.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
   shipment.getColumn(PRODUCTION_DATE_COL + 3).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 9;
+  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 9;
+  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 11;
   shipment.getColumn(PRODUCTION_DATE_COL + 6).width = 12;
   shipments.forEach((line, index2) => {
     const row = shipment.getRow(SHIPMENT_FIRST_ROW + index2);
     if (line.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = line.lotNumber;
     row.getCell(PRODUCTION_DATE_COL + 3).value = Number(line.quantity);
     row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
+    const siloCell = row.getCell(PRODUCTION_DATE_COL + 4);
+    siloCell.value = line.silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
   });
   const shipmentGroupKey2 = (line, index2) => line.splitGroupId ? `group:${line.splitGroupId}` : `single:${index2}`;
-  const shipmentGroupColumns = [PRODUCTION_DATE_COL, PRODUCTION_DATE_COL + 1, PRODUCTION_DATE_COL + 4, PRODUCTION_DATE_COL + 5, PRODUCTION_DATE_COL + 6];
+  const shipmentGroupColumns = [PRODUCTION_DATE_COL, PRODUCTION_DATE_COL + 1, PRODUCTION_DATE_COL + 5, PRODUCTION_DATE_COL + 6];
   let groupStart = 0;
   while (groupStart < shipments.length) {
     let groupEnd = groupStart;
@@ -3473,7 +3476,11 @@ async function buildSiloWorkbook(entries, shipments, articles, silos2 = SILOS) {
     const startRow = SHIPMENT_FIRST_ROW + groupStart;
     const endRow = SHIPMENT_FIRST_ROW + groupEnd;
     const group = shipments.slice(groupStart, groupEnd + 1);
-    if (endRow > startRow) shipmentGroupColumns.forEach((col) => shipment.mergeCells(startRow, col, endRow, col));
+    const distinctSilos = Array.from(new Set(group.map((line) => line.silo)));
+    if (endRow > startRow) {
+      shipmentGroupColumns.forEach((col) => shipment.mergeCells(startRow, col, endRow, col));
+      if (distinctSilos.length === 1) shipment.mergeCells(startRow, PRODUCTION_DATE_COL + 4, endRow, PRODUCTION_DATE_COL + 4);
+    }
     const dateCell = shipment.getCell(startRow, PRODUCTION_DATE_COL);
     if (group[0].shipmentDate) {
       dateCell.value = excelDate(group[0].shipmentDate);
@@ -3483,13 +3490,15 @@ async function buildSiloWorkbook(entries, shipments, articles, silos2 = SILOS) {
     const articleCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 1);
     articleCell.value = group[0].article;
     articleCell.alignment = { vertical: "middle", horizontal: "center" };
-    const totalCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 4);
+    if (distinctSilos.length === 1) {
+      const siloCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 4);
+      siloCell.value = distinctSilos[0];
+      siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    }
+    const totalCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 5);
     totalCell.value = group.reduce((sum, line) => sum + Number(line.quantity), 0);
     totalCell.numFmt = "0.00";
     totalCell.alignment = { vertical: "middle", horizontal: "center" };
-    const siloCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 5);
-    siloCell.value = group[0].silo;
-    siloCell.alignment = { vertical: "middle", horizontal: "center" };
     const typeCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 6);
     typeCell.value = group[0].shipmentType;
     typeCell.alignment = { vertical: "middle", horizontal: "center" };
@@ -5186,7 +5195,7 @@ var TITLE_ROW2 = 2;
 var FILTER_ROW2 = 3;
 var HEADER_ROW2 = 5;
 var FIRST_DATA_ROW2 = 6;
-var COLUMN_WIDTHS2 = [13, 11, 17, 11, 11, 9, 12];
+var COLUMN_WIDTHS2 = [13, 11, 17, 11, 9, 11, 12];
 var THIN_BORDER2 = {
   top: { style: "thin", color: { argb: "FFDADFD5" } },
   left: { style: "thin", color: { argb: "FFDADFD5" } },
@@ -5220,7 +5229,7 @@ async function buildShipmentsReportWorkbook(rows, filters) {
   filterCell.font = { italic: true, color: { argb: "FF4D7B40" } };
   filterCell.alignment = { horizontal: "left" };
   const headerRow = worksheet.getRow(HEADER_ROW2);
-  ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Qt\xE9 G(T)", "Silo", "Exp\xE9dition"].forEach((label, index2) => {
+  ["Date", "Article", "N\xB0 Lot", "Qt\xE9 (T)", "Silo", "Qt\xE9 G(T)", "Exp\xE9dition"].forEach((label, index2) => {
     headerRow.getCell(FIRST_COL2 + index2).value = label;
   });
   styleHeaderRow(headerRow, FIRST_COL2, LAST_COL2);
@@ -5230,9 +5239,12 @@ async function buildShipmentsReportWorkbook(rows, filters) {
     const quantityCell = excelRow.getCell(FIRST_COL2 + 3);
     quantityCell.value = row.quantity;
     quantityCell.numFmt = "0.00";
+    const siloCell = excelRow.getCell(FIRST_COL2 + 4);
+    siloCell.value = row.silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
     for (let col = FIRST_COL2; col <= LAST_COL2; col += 1) excelRow.getCell(col).border = THIN_BORDER2;
   });
-  const groupColumns = [FIRST_COL2, FIRST_COL2 + 1, FIRST_COL2 + 4, FIRST_COL2 + 5, FIRST_COL2 + 6];
+  const groupColumns = [FIRST_COL2, FIRST_COL2 + 1, FIRST_COL2 + 5, FIRST_COL2 + 6];
   let groupStart = 0;
   while (groupStart < rows.length) {
     let groupEnd = groupStart;
@@ -5240,7 +5252,11 @@ async function buildShipmentsReportWorkbook(rows, filters) {
     const startRow = FIRST_DATA_ROW2 + groupStart;
     const endRow = FIRST_DATA_ROW2 + groupEnd;
     const group = rows.slice(groupStart, groupEnd + 1);
-    if (endRow > startRow) groupColumns.forEach((col) => worksheet.mergeCells(startRow, col, endRow, col));
+    const distinctSilos = Array.from(new Set(group.map((line) => line.silo)));
+    if (endRow > startRow) {
+      groupColumns.forEach((col) => worksheet.mergeCells(startRow, col, endRow, col));
+      if (distinctSilos.length === 1) worksheet.mergeCells(startRow, FIRST_COL2 + 4, endRow, FIRST_COL2 + 4);
+    }
     const dateCell = worksheet.getCell(startRow, FIRST_COL2);
     if (group[0].shipmentDate) {
       dateCell.value = excelDate(group[0].shipmentDate);
@@ -5250,13 +5266,15 @@ async function buildShipmentsReportWorkbook(rows, filters) {
     const articleCell = worksheet.getCell(startRow, FIRST_COL2 + 1);
     articleCell.value = group[0].article;
     articleCell.alignment = { vertical: "middle", horizontal: "center" };
-    const totalCell = worksheet.getCell(startRow, FIRST_COL2 + 4);
+    const totalCell = worksheet.getCell(startRow, FIRST_COL2 + 5);
     totalCell.value = group.reduce((sum, line) => sum + line.quantity, 0);
     totalCell.numFmt = "0.00";
     totalCell.alignment = { vertical: "middle", horizontal: "center" };
-    const siloCell = worksheet.getCell(startRow, FIRST_COL2 + 5);
-    siloCell.value = group[0].silo;
-    siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    if (distinctSilos.length === 1) {
+      const siloCell = worksheet.getCell(startRow, FIRST_COL2 + 4);
+      siloCell.value = distinctSilos[0];
+      siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    }
     const typeCell = worksheet.getCell(startRow, FIRST_COL2 + 6);
     typeCell.value = group[0].shipmentType;
     typeCell.alignment = { vertical: "middle", horizontal: "center" };
@@ -5522,6 +5540,16 @@ var siloShipmentInput = z2.object({
   silo: siloInput,
   shipmentType: z2.enum(SHIPMENT_TYPES)
 });
+var siloShipmentSplitInput = z2.object({
+  shipmentDate: optionalDateInput,
+  article: siloArticleInput,
+  shipmentType: z2.enum(SHIPMENT_TYPES),
+  allocations: z2.array(z2.object({
+    silo: siloInput,
+    lotNumber: z2.string().trim().min(1, "Indiquez le n\xB0 de lot.").max(64),
+    quantity: z2.number().positive("La quantit\xE9 doit \xEAtre positive.")
+  })).min(2, "Ajoutez au moins deux r\xE9partitions, sinon utilisez la saisie simple.").max(10, "Trop de r\xE9partitions pour une seule exp\xE9dition.")
+});
 var shipmentReportFilterInput = z2.object({
   shipmentType: z2.enum(SHIPMENT_TYPES).optional(),
   dateFrom: optionalDateInput,
@@ -5785,6 +5813,16 @@ var appRouter = router({
       );
       const chunks = allocateFifoShipment(ledger.lots, shipment.article, shipment.silo, quantity);
       const created = await createSiloShipmentGroup(chunks.map((chunk) => ({ ...shipment, lotNumber: chunk.lotNumber ?? void 0, quantity: chunk.quantity.toFixed(2) })));
+      return { shipments: created };
+    }),
+    /** Voir siloShipmentSplitInput : une seule expédition, plusieurs silos, un n° de lot connu par ligne. */
+    createSplitShipment: publicProcedure.input(siloShipmentSplitInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { allocations, ...shipment } = input;
+      const quantityBySilo = /* @__PURE__ */ new Map();
+      allocations.forEach((allocation) => quantityBySilo.set(allocation.silo, (quantityBySilo.get(allocation.silo) ?? 0) + allocation.quantity));
+      await Promise.all(Array.from(quantityBySilo.entries()).map(([silo, quantity]) => assertShipmentWithinStock(silo, shipment.article, quantity)));
+      const created = await createSiloShipmentGroup(allocations.map((allocation) => ({ ...shipment, silo: allocation.silo, lotNumber: allocation.lotNumber, quantity: allocation.quantity.toFixed(2) })));
       return { shipments: created };
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {

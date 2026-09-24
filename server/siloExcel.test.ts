@@ -188,7 +188,7 @@ describe("classeur Silo_PF", () => {
     await workbook.xlsx.load(exported as unknown as ArrayBuffer);
     const sheet = workbook.getWorksheet("Expidition Vrac-Sac")!;
 
-    // Colonnes : C=Date, D=Article, E=N° Lot, F=Qté (T), G=Qté G(T), H=Silo, I=Expédition.
+    // Colonnes : C=Date, D=Article, E=N° Lot, F=Qté (T), G=Silo, H=Qté G(T), I=Expédition.
     // Date, Article, Qté G(T), Silo et Expédition fusionnés sur les 3 lignes du groupe DG3/SPF11...
     expect(sheet.getRow(7).getCell(3).value).toEqual(new Date("2026-09-20T00:00:00Z")); // excelDate ancre à minuit UTC, pas heure locale (voir la note sur excelDate).
     expect(sheet.getRow(8).getCell(3).isMerged).toBe(true);
@@ -196,12 +196,12 @@ describe("classeur Silo_PF", () => {
     expect(sheet.getRow(7).getCell(4).value).toBe("DG3");
     expect(sheet.getRow(8).getCell(4).isMerged).toBe(true);
     expect(sheet.getRow(9).getCell(4).isMerged).toBe(true);
-    expect(sheet.getRow(7).getCell(7).value).toBe(18); // Qté G(T) = 5 + 10 + 3, la quantité totale expédiée.
-    expect(sheet.getRow(8).getCell(7).isMerged).toBe(true);
-    expect(sheet.getRow(9).getCell(7).isMerged).toBe(true);
-    expect(sheet.getRow(7).getCell(8).value).toBe("SPF11");
+    expect(sheet.getRow(7).getCell(8).value).toBe(18); // Qté G(T) = 5 + 10 + 3, la quantité totale expédiée.
     expect(sheet.getRow(8).getCell(8).isMerged).toBe(true);
     expect(sheet.getRow(9).getCell(8).isMerged).toBe(true);
+    expect(sheet.getRow(7).getCell(7).value).toBe("SPF11");
+    expect(sheet.getRow(8).getCell(7).isMerged).toBe(true);
+    expect(sheet.getRow(9).getCell(7).isMerged).toBe(true);
     expect(sheet.getRow(7).getCell(9).value).toBe("Vrac");
     expect(sheet.getRow(8).getCell(9).isMerged).toBe(true);
     expect(sheet.getRow(9).getCell(9).isMerged).toBe(true);
@@ -211,7 +211,7 @@ describe("classeur Silo_PF", () => {
     // La quatrième ligne (silo et article différents) reste seule, non fusionnée, et sa Qté G(T) vaut sa propre quantité.
     expect(sheet.getRow(10).getCell(4).value).toBe("CG3");
     expect(sheet.getRow(10).getCell(4).isMerged).toBe(false);
-    expect(sheet.getRow(10).getCell(7).value).toBe(3);
+    expect(sheet.getRow(10).getCell(8).value).toBe(3);
 
     // La fusion ne fait pas perdre l'article ni le silo à la relecture : les 4 lignes restent bien 4 expéditions distinctes.
     const reparsed = await parseSiloWorkbook(exported);
@@ -221,6 +221,41 @@ describe("classeur Silo_PF", () => {
       { shipmentDate: "2026-09-20", article: "DG3", lotNumber: "2600676-0917", quantity: 10, silo: "SPF11", shipmentType: "Vrac" },
       { shipmentDate: "2026-09-20", article: "DG3", lotNumber: "2600677-0917", quantity: 3, silo: "SPF11", shipmentType: "Vrac" },
       { shipmentDate: "2026-09-20", article: "CG3", lotNumber: "2600666-0914", quantity: 3, silo: "SPF3", shipmentType: "Sac" },
+    ]);
+  });
+
+  it("garde un silo par ligne (non fusionné) quand une même expédition groupée touche plusieurs silos (répartition manuelle)", async () => {
+    // Voir silo.createSplitShipment côté serveur : 20 T de CG3 réparties
+    // manuellement sur SPF3 (10 T) et SPF5 (10 T), avec un splitGroupId partagé.
+    const exported = await buildSiloWorkbook(
+      [],
+      [
+        { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "20006649-0905", quantity: "10.00", silo: "SPF3", shipmentType: "Sac", splitGroupId: 201 },
+        { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "26006648-09004", quantity: "10.00", silo: "SPF5", shipmentType: "Sac", splitGroupId: 201 },
+      ],
+      ["CG3"],
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported as unknown as ArrayBuffer);
+    const sheet = workbook.getWorksheet("Expidition Vrac-Sac")!;
+
+    // Date, Article, Qté G(T) et Expédition restent fusionnés (mêmes valeurs pour tout le groupe)...
+    expect(sheet.getRow(8).getCell(3).isMerged).toBe(true);
+    expect(sheet.getRow(8).getCell(4).isMerged).toBe(true);
+    expect(sheet.getRow(8).getCell(8).isMerged).toBe(true);
+    expect(sheet.getRow(8).getCell(9).isMerged).toBe(true);
+    expect(sheet.getRow(7).getCell(8).value).toBe(20); // Qté G(T) = 10 + 10.
+    // ... mais Silo, lui, reste une valeur par ligne : fusionner n'afficherait que le premier silo touché.
+    expect(sheet.getRow(7).getCell(7).isMerged).toBe(false);
+    expect(sheet.getRow(8).getCell(7).isMerged).toBe(false);
+    expect([7, 8].map((row) => sheet.getRow(row).getCell(7).value)).toEqual(["SPF3", "SPF5"]);
+
+    const reparsed = await parseSiloWorkbook(exported);
+    expect(reparsed.errors).toEqual([]);
+    expect(reparsed.shipments).toEqual([
+      { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "20006649-0905", quantity: 10, silo: "SPF3", shipmentType: "Sac" },
+      { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "26006648-09004", quantity: 10, silo: "SPF5", shipmentType: "Sac" },
     ]);
   });
 
@@ -248,6 +283,6 @@ describe("classeur Silo_PF", () => {
     expect([7, 8, 9].some((row) => sheet.getRow(row).getCell(7).isMerged)).toBe(false);
     expect([7, 8, 9].some((row) => sheet.getRow(row).getCell(8).isMerged)).toBe(false);
     // Chaque ligne garde sa propre Qté G(T), égale à sa propre quantité — jamais la somme des trois.
-    expect([7, 8, 9].map((row) => sheet.getRow(row).getCell(7).value)).toEqual([17.24, 13.46, 8.02]);
+    expect([7, 8, 9].map((row) => sheet.getRow(row).getCell(8).value)).toEqual([17.24, 13.46, 8.02]);
   });
 });

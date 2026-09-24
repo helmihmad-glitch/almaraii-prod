@@ -358,7 +358,11 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
   const shipment = workbook.addWorksheet(SHIPMENT_SHEET, { views: [{ state: "frozen", ySplit: 6 }] });
   const shipmentLastCol = PRODUCTION_DATE_COL + 6;
   writeTitle(shipment, 2, PRODUCTION_DATE_COL, shipmentLastCol, "  EXPÉDITIONS VRAC / SAC");
-  const shipmentLabels = ["Date", "Article", "N° Lot", "Qté (T)", "Qté G(T)", "Silo", "Expédition"];
+  // Silo (+4) avant Qté G(T) (+5) : Silo reste, comme N° Lot et Qté (T), une
+  // valeur propre à chaque ligne (jamais fusionnée dès qu'une répartition
+  // touche plusieurs silos — voir plus bas), ce qui se lit mieux juste à côté
+  // d'elles plutôt qu'entre deux colonnes fusionnées.
+  const shipmentLabels = ["Date", "Article", "N° Lot", "Qté (T)", "Silo", "Qté G(T)", "Expédition"];
   [6].forEach((rowNumber) => {
     const row = shipment.getRow(rowNumber);
     shipmentLabels.forEach((label, index) => { row.getCell(PRODUCTION_DATE_COL + index).value = label; });
@@ -368,8 +372,8 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
   shipment.getColumn(PRODUCTION_DATE_COL + 1).width = 11;
   shipment.getColumn(PRODUCTION_DATE_COL + 2).width = 17;
   shipment.getColumn(PRODUCTION_DATE_COL + 3).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 11;
-  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 9;
+  shipment.getColumn(PRODUCTION_DATE_COL + 4).width = 9;
+  shipment.getColumn(PRODUCTION_DATE_COL + 5).width = 11;
   shipment.getColumn(PRODUCTION_DATE_COL + 6).width = 12;
 
   shipments.forEach((line, index) => {
@@ -377,6 +381,12 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
     if (line.lotNumber) row.getCell(PRODUCTION_DATE_COL + 2).value = line.lotNumber;
     row.getCell(PRODUCTION_DATE_COL + 3).value = Number(line.quantity);
     row.getCell(PRODUCTION_DATE_COL + 3).numFmt = "0.00";
+    // Valeur par défaut, silo par silo : reprise telle quelle si l'expédition
+    // groupée touche plusieurs silos (voir silo.createSplitShipment côté
+    // serveur), écrasée par une cellule fusionnée sinon (voir plus bas).
+    const siloCell = row.getCell(PRODUCTION_DATE_COL + 4);
+    siloCell.value = line.silo;
+    siloCell.alignment = { vertical: "middle", horizontal: "center" };
   });
 
   // Date, Article, Qté G(T), Silo et Expédition fusionnés sur les lignes d'une
@@ -391,7 +401,11 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
   // le même article, le même silo et le même type ne sont donc jamais
   // fusionnées comme si elles n'en formaient qu'une.
   const shipmentGroupKey = (line: ExportShipment, index: number) => (line.splitGroupId ? `group:${line.splitGroupId}` : `single:${index}`);
-  const shipmentGroupColumns = [PRODUCTION_DATE_COL, PRODUCTION_DATE_COL + 1, PRODUCTION_DATE_COL + 4, PRODUCTION_DATE_COL + 5, PRODUCTION_DATE_COL + 6];
+  // Silo (colonne +4) volontairement absente d'office : une répartition
+  // manuelle sur plusieurs silos (voir silo.createSplitShipment) garde alors
+  // une valeur par ligne plutôt qu'une seule cellule fusionnée qui ne
+  // montrerait que le premier silo touché — voir plus bas.
+  const shipmentGroupColumns = [PRODUCTION_DATE_COL, PRODUCTION_DATE_COL + 1, PRODUCTION_DATE_COL + 5, PRODUCTION_DATE_COL + 6];
   let groupStart = 0;
   while (groupStart < shipments.length) {
     let groupEnd = groupStart;
@@ -399,7 +413,11 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
     const startRow = SHIPMENT_FIRST_ROW + groupStart;
     const endRow = SHIPMENT_FIRST_ROW + groupEnd;
     const group = shipments.slice(groupStart, groupEnd + 1);
-    if (endRow > startRow) shipmentGroupColumns.forEach((col) => shipment.mergeCells(startRow, col, endRow, col));
+    const distinctSilos = Array.from(new Set(group.map((line) => line.silo)));
+    if (endRow > startRow) {
+      shipmentGroupColumns.forEach((col) => shipment.mergeCells(startRow, col, endRow, col));
+      if (distinctSilos.length === 1) shipment.mergeCells(startRow, PRODUCTION_DATE_COL + 4, endRow, PRODUCTION_DATE_COL + 4);
+    }
 
     const dateCell = shipment.getCell(startRow, PRODUCTION_DATE_COL);
     if (group[0].shipmentDate) {
@@ -410,13 +428,17 @@ export async function buildSiloWorkbook(entries: ExportEntry[], shipments: Expor
     const articleCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 1);
     articleCell.value = group[0].article;
     articleCell.alignment = { vertical: "middle", horizontal: "center" };
-    const totalCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 4);
+    // Une seule cellule fusionnée si le groupe ne touche qu'un seul silo ;
+    // sinon chaque ligne garde déjà son propre silo (voir la boucle ci-dessus).
+    if (distinctSilos.length === 1) {
+      const siloCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 4);
+      siloCell.value = distinctSilos[0];
+      siloCell.alignment = { vertical: "middle", horizontal: "center" };
+    }
+    const totalCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 5);
     totalCell.value = group.reduce((sum, line) => sum + Number(line.quantity), 0);
     totalCell.numFmt = "0.00";
     totalCell.alignment = { vertical: "middle", horizontal: "center" };
-    const siloCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 5);
-    siloCell.value = group[0].silo;
-    siloCell.alignment = { vertical: "middle", horizontal: "center" };
     const typeCell = shipment.getCell(startRow, PRODUCTION_DATE_COL + 6);
     typeCell.value = group[0].shipmentType;
     typeCell.alignment = { vertical: "middle", horizontal: "center" };

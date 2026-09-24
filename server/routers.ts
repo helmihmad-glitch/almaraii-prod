@@ -184,6 +184,24 @@ const siloShipmentInput = z.object({
   silo: siloInput,
   shipmentType: z.enum(SHIPMENT_TYPES),
 });
+/**
+ * Une même expédition (un seul « vrac »/camion) répartie manuellement sur
+ * plusieurs silos, chacun avec son propre n° de lot connu — à la différence
+ * de createShipment, qui ne répartit automatiquement (FIFO) que sur
+ * plusieurs LOTS d'un même silo. Le n° de lot est ici obligatoire sur
+ * chaque ligne : sans lot connu, la saisie à un seul silo (avec FIFO
+ * automatique) reste le bon outil.
+ */
+const siloShipmentSplitInput = z.object({
+  shipmentDate: optionalDateInput,
+  article: siloArticleInput,
+  shipmentType: z.enum(SHIPMENT_TYPES),
+  allocations: z.array(z.object({
+    silo: siloInput,
+    lotNumber: z.string().trim().min(1, "Indiquez le n° de lot.").max(64),
+    quantity: z.number().positive("La quantité doit être positive."),
+  })).min(2, "Ajoutez au moins deux répartitions, sinon utilisez la saisie simple.").max(10, "Trop de répartitions pour une seule expédition."),
+});
 
 const shipmentReportFilterInput = z.object({
   shipmentType: z.enum(SHIPMENT_TYPES).optional(),
@@ -474,6 +492,17 @@ export const appRouter = router({
       // plusieurs lots, jamais une autre qui partagerait par coïncidence la
       // même date, le même article, le même silo et le même type.
       const created = await createSiloShipmentGroup(chunks.map((chunk) => ({ ...shipment, lotNumber: chunk.lotNumber ?? undefined, quantity: chunk.quantity.toFixed(2) })));
+      return { shipments: created };
+    }),
+    /** Voir siloShipmentSplitInput : une seule expédition, plusieurs silos, un n° de lot connu par ligne. */
+    createSplitShipment: publicProcedure.input(siloShipmentSplitInput).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const { allocations, ...shipment } = input;
+      const quantityBySilo = new Map<string, number>();
+      allocations.forEach((allocation) => quantityBySilo.set(allocation.silo, (quantityBySilo.get(allocation.silo) ?? 0) + allocation.quantity));
+      await Promise.all(Array.from(quantityBySilo.entries()).map(([silo, quantity]) => assertShipmentWithinStock(silo, shipment.article, quantity)));
+
+      const created = await createSiloShipmentGroup(allocations.map((allocation) => ({ ...shipment, silo: allocation.silo, lotNumber: allocation.lotNumber, quantity: allocation.quantity.toFixed(2) })));
       return { shipments: created };
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {

@@ -29,15 +29,15 @@ describe("export Excel des expéditions filtrées par type et période (Rapports
     expect(filterText).toContain("1 ligne");
 
     const headerLabels = [2, 3, 4, 5, 6, 7, 8].map((col) => sheet.getCell(5, col).value);
-    expect(headerLabels).toEqual(["Date", "Article", "N° Lot", "Qté (T)", "Qté G(T)", "Silo", "Expédition"]);
+    expect(headerLabels).toEqual(["Date", "Article", "N° Lot", "Qté (T)", "Silo", "Qté G(T)", "Expédition"]);
 
     const dataRow = sheet.getRow(6);
     expect(dataRow.getCell(2).value).toBeInstanceOf(Date);
     expect(dataRow.getCell(3).value).toBe("CM1");
     expect(dataRow.getCell(4).value).toBe("2600645-0409");
     expect(dataRow.getCell(5).value).toBe(8);
-    expect(dataRow.getCell(6).value).toBe(8); // Qté G(T) = Qté (T) : expédition non répartie.
-    expect(dataRow.getCell(7).value).toBe("SPF1");
+    expect(dataRow.getCell(6).value).toBe("SPF1");
+    expect(dataRow.getCell(7).value).toBe(8); // Qté G(T) = Qté (T) : expédition non répartie.
     expect(dataRow.getCell(8).value).toBe("Vrac");
   });
 
@@ -50,12 +50,29 @@ describe("export Excel des expéditions filtrées par type et période (Rapports
     const buffer = await buildShipmentsReportWorkbook(rows, {});
     const sheet = await readWorkbook(buffer);
 
-    expect(sheet.getRow(6).getCell(6).value).toBe(18); // Qté G(T) = 5 + 10 + 3.
-    expect(sheet.getRow(7).getCell(6).isMerged).toBe(true);
-    expect(sheet.getRow(8).getCell(6).isMerged).toBe(true);
+    expect(sheet.getRow(6).getCell(7).value).toBe(18); // Qté G(T) = 5 + 10 + 3.
+    expect(sheet.getRow(7).getCell(7).isMerged).toBe(true);
+    expect(sheet.getRow(8).getCell(7).isMerged).toBe(true);
     // N° Lot et Qté (T) restent bien propres à chaque ligne.
     expect([6, 7, 8].map((row) => sheet.getRow(row).getCell(4).value)).toEqual(["2600675-0917", "2600676-0917", "2600677-0917"]);
     expect([6, 7, 8].map((row) => sheet.getRow(row).getCell(5).value)).toEqual([5, 10, 3]);
+  });
+
+  it("garde un silo par ligne (non fusionné) quand une même expédition groupée touche plusieurs silos (répartition manuelle)", async () => {
+    const rows: ShipmentReportRow[] = [
+      { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "20006649-0905", quantity: 10, silo: "SPF3", shipmentType: "Sac", splitGroupId: 201 },
+      { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "26006648-09004", quantity: 10, silo: "SPF5", shipmentType: "Sac", splitGroupId: 201 },
+    ];
+    const buffer = await buildShipmentsReportWorkbook(rows, {});
+    const sheet = await readWorkbook(buffer);
+
+    // Qté G(T) reste fusionnée (même total pour tout le groupe)...
+    expect(sheet.getRow(6).getCell(7).value).toBe(20);
+    expect(sheet.getRow(7).getCell(7).isMerged).toBe(true);
+    // ... mais Silo, lui, reste une valeur par ligne : fusionner n'afficherait que le premier silo touché.
+    expect(sheet.getRow(6).getCell(6).isMerged).toBe(false);
+    expect(sheet.getRow(7).getCell(6).isMerged).toBe(false);
+    expect([6, 7].map((row) => sheet.getRow(row).getCell(6).value)).toEqual(["SPF3", "SPF5"]);
   });
 
   it("ne fusionne jamais des expéditions saisies séparément, même si elles partagent tout par ailleurs (splitGroupId nul)", async () => {
@@ -66,10 +83,10 @@ describe("export Excel des expéditions filtrées par type et période (Rapports
     const buffer = await buildShipmentsReportWorkbook(rows, {});
     const sheet = await readWorkbook(buffer);
 
-    expect(sheet.getRow(6).getCell(6).isMerged).toBe(false);
-    expect(sheet.getRow(7).getCell(6).isMerged).toBe(false);
-    expect(sheet.getRow(6).getCell(6).value).toBe(17.24);
-    expect(sheet.getRow(7).getCell(6).value).toBe(13.46);
+    expect(sheet.getRow(6).getCell(7).isMerged).toBe(false);
+    expect(sheet.getRow(7).getCell(7).isMerged).toBe(false);
+    expect(sheet.getRow(6).getCell(7).value).toBe(17.24);
+    expect(sheet.getRow(7).getCell(7).value).toBe(13.46);
   });
 
   it("ajoute une ligne Total qui somme la vraie quantité (Qté T), pas la quantité groupée", async () => {

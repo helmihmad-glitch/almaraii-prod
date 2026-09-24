@@ -6,7 +6,11 @@ import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { trpc } from "@/lib/trpc";
 import { useSidebar } from "@/components/AppShell";
 import { BRAND_LOGO_URL } from "@/lib/brand";
+import ListPagination from "@/components/ListPagination";
+import { usePagination } from "@/hooks/usePagination";
 import "./registry-import-dialog.css";
+
+const PAGE_SIZE = 10;
 
 type RegistryRow = {
   id: number;
@@ -86,6 +90,7 @@ export default function Registry() {
       && (!dateTo || row.productionDate <= dateTo))
     .sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id), [allRows, query, dateFrom, dateTo]);
   const kpis = useMemo(() => buildKpis(rows), [rows]);
+  const { page, setPage, pageCount, pageItems: pageRows, pageSize, setPageSize } = usePagination(rows, PAGE_SIZE, `${query}|${dateFrom}|${dateTo}`);
 
   const uploadToImportStorage = async (file: File) => {
     const prepared = await prepareExcelUpload.mutateAsync({ fileName: file.name });
@@ -184,7 +189,8 @@ export default function Registry() {
         </div>
         <p className="registry-import-note"><Upload size={13} />Formats reconnus : DATE, ARTICLE, TEMPS TOTAL PROD. (h) ou TEMPS OUV. (h), ARRÊTS PLAN. (h), ARRÊTS NON PL. (h), PROD. (T), REBUTS (T), CADENCE STD et H. RÉELLES. Les feuilles mensuelles sont prises en charge.</p>
         <div className="registry-table-wrap">
-          {registryQuery.isLoading ? <div className="registry-empty">Chargement des lignes sauvegardées…</div> : rows.length ? <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th>Actions</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><div className="registry-row-actions"><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></div></td></tr>)}</tbody></table> : <div className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></div>}
+          {registryQuery.isLoading ? <div className="registry-empty">Chargement des lignes sauvegardées…</div> : rows.length ? <table className="registry-table"><thead><tr><th>Date</th><th>Article</th><th>Production</th><th>Rebuts</th><th>Disponibilité</th><th>Performance</th><th>TRS</th><th>Heures réelles</th><th>Commentaire</th><th>Actions</th></tr></thead><tbody>{pageRows.map((row) => <tr key={row.id}><td><span className="registry-date-cell"><CalendarDays size={14} />{prettyDate(row.productionDate)}</span></td><td><strong>{row.article}</strong></td><td>{fmt(asNumber(row.productionTons))} T</td><td>{fmt(asNumber(row.wasteTons))} T</td><td>{pct(asNumber(row.availability))}</td><td>{pct(asNumber(row.performance))}</td><td><strong>{pct(asNumber(row.trs))}</strong></td><td>{fmt(asNumber(row.realHours))} h</td><td className="registry-comment">{row.comment || <span>—</span>}</td><td><div className="registry-row-actions"><button className="registry-delete" onClick={() => requestDelete(row.id)} aria-label={`Supprimer ${row.article} du ${row.productionDate}`}><Trash2 size={15} /></button></div></td></tr>)}</tbody></table> : <div className="registry-empty"><Factory size={22} /><strong>Aucune ligne sauvegardée pour ce filtre.</strong><span>Utilisez « Saisir une production » ou « Importer Excel » pour alimenter le registre.</span></div>}
+          <ListPagination page={page} pageCount={pageCount} onPageChange={setPage} totalCount={rows.length} itemLabel="ligne" pageSize={pageSize} onPageSizeChange={setPageSize} />
         </div>
         <footer className="registry-foot"><span><Activity size={14} />Les lignes affichées sont sauvegardées de façon persistante.</span><span>{rows.length} résultat{rows.length > 1 ? "s" : ""}</span></footer>
       </section>

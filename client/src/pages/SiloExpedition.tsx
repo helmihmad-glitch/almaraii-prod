@@ -1,15 +1,22 @@
 import { Fragment, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, ChevronDown, Database, FileText, Menu, Pencil, Plus, Trash2, Truck, Upload } from "lucide-react";
+import { ArrowLeft, ChevronDown, Database, FileText, Menu, Pencil, Plus, Trash2, Truck, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { uploadPresigned as uploadToVercelBlob } from "@vercel/blob/client";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import ListPagination from "@/components/ListPagination";
+import { usePagination } from "@/hooks/usePagination";
 import { SHIPMENT_TYPES } from "@shared/silo";
 import "./silo.css";
 
+const PAGE_SIZE = 10;
+
 type ShipmentDraft = { shipmentDate: string; article: string; lotNumber: string; quantity: string; silo: string; shipmentType: string };
+/** Une ligne de la répartition manuelle multi-silos (voir silo.createSplitShipment) : silo et n° de lot déjà connus, à la différence du FIFO automatique de la saisie simple. */
+type SplitAllocationDraft = { silo: string; lotNumber: string; quantity: string };
+const MAX_SPLIT_ALLOCATIONS = 10;
 
 const today = () => new Date().toISOString().slice(0, 10);
 const emptyShipment = (): ShipmentDraft => ({ shipmentDate: today(), article: "", lotNumber: "", quantity: "", silo: "", shipmentType: SHIPMENT_TYPES[0] });
@@ -29,6 +36,10 @@ export default function SiloExpedition() {
   const utils = trpc.useUtils();
   const [shipmentDraft, setShipmentDraft] = useState<ShipmentDraft>(emptyShipment);
   const [editingShipmentId, setEditingShipmentId] = useState<number | null>(null);
+  // Répartition manuelle sur plusieurs silos (une même expédition, un n° de
+  // lot connu par ligne) : voir enterSplitMode. Vide/désactivée tant que le
+  // bouton (+) n'a pas été utilisé, et non proposée en modification.
+  const [splitAllocations, setSplitAllocations] = useState<SplitAllocationDraft[] | null>(null);
   const [pendingImport, setPendingImport] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -91,8 +102,21 @@ export default function SiloExpedition() {
     });
     return groups;
   }, [filteredShipments]);
+  const {
+    page: shipmentsPage, setPage: setShipmentsPage, pageCount: shipmentsPageCount, pageItems: pageShipmentGroups, pageSize: shipmentsPageSize, setPageSize: setShipmentsPageSize,
+  } = usePagination(
+    groupedShipments, PAGE_SIZE, `${shipmentSiloFilter}|${shipmentArticleFilter}|${shipmentLotQuery}|${shipmentTypeFilter}|${shipmentDateFrom}|${shipmentDateTo}`,
+  );
   const describeShipmentGroup = (group: (typeof filteredShipments)[number][]) =>
     group.map((item) => `${fmt(Number(item.quantity))} T sur ${item.lotNumber || "lot non identifié"}`).join(", ");
+  // Répartition manuelle multi-silos (voir silo.createSplitShipment) : la
+  // colonne Silo doit alors lister chaque silo touché, pas seulement le
+  // premier — à la différence d'une répartition FIFO classique sur plusieurs
+  // lots d'un même silo, où un seul nom suffit toujours.
+  const describeShipmentSilos = (group: (typeof filteredShipments)[number][]) => {
+    const distinctSilos = Array.from(new Set(group.map((item) => item.silo)));
+    return distinctSilos.join(", ");
+  };
 
   // Lots encore actifs pour l'article en cours de saisie : la base des suggestions
   // de N° Lot et de silo ci-dessous (elles s'affinent l'une l'autre).
@@ -122,9 +146,31 @@ export default function SiloExpedition() {
     return shipmentDraft.silo && !base.includes(shipmentDraft.silo) ? [shipmentDraft.silo, ...base] : base;
   }, [lotsForArticle, shipmentDraft.lotNumber, shipmentDraft.silo, silos]);
 
+  // Répartition manuelle : chaque ligne choisit son propre silo (voir
+  // siloOptionsForArticle, restreint aux silos où l'article est actif) puis
+  // son propre n° de lot parmi ceux réellement présents dans CE silo (voir
+  // splitLotSuggestions) — jamais la liste complète des silos ou des lots
+  // d'autres silos, qui n'aurait aucun sens pour cette ligne précise.
+  const siloOptionsForArticle = useMemo(() => {
+    const active = Array.from(new Set(lotsForArticle.map((lot) => lot.silo))).sort((a, b) => siloRank(a) - siloRank(b));
+    return active.length > 0 ? active : [...silos];
+  }, [lotsForArticle, silos]);
+  const splitLotSuggestions = (silo: string) => {
+    const candidates = silo ? lotsForArticle.filter((lot) => lot.silo === silo) : lotsForArticle;
+    const byLotNumber = new Map<string, string | null>();
+    candidates.forEach((lot) => { if (lot.lotNumber && !byLotNumber.has(lot.lotNumber)) byLotNumber.set(lot.lotNumber, lot.entryDate); });
+    return Array.from(byLotNumber.entries()).sort((a, b) => (a[1] ?? "").localeCompare(b[1] ?? "")).map(([lotNumber]) => lotNumber);
+  };
+  const updateSplitRowSilo = (index: number, silo: string) => {
+    // Un seul lot actif dans ce silo pour cet article : on le pré-remplit directement, comme pour la saisie simple (voir handleSiloChange).
+    const matchingLots = Array.from(new Set(lotsForArticle.filter((lot) => lot.silo === silo).map((lot) => lot.lotNumber).filter((lotNumber): lotNumber is string => Boolean(lotNumber))));
+    setSplitAllocations((previous) => previous?.map((row, rowIndex) => (rowIndex === index ? { ...row, silo, lotNumber: matchingLots.length === 1 ? matchingLots[0] : row.lotNumber } : row)) ?? previous);
+  };
+
   const handleArticleChange = (value: string) => {
     // Un autre article change entièrement le stock disponible : on repart d'un lot et d'un silo vierges.
     setShipmentDraft({ ...shipmentDraft, article: value, lotNumber: "", silo: "" });
+    if (splitAllocations) setSplitAllocations(splitAllocations.map((row) => ({ ...row, silo: "", lotNumber: "" })));
   };
 
   const handleLotChange = (value: string) => {
@@ -147,6 +193,31 @@ export default function SiloExpedition() {
     });
   };
 
+  const enterSplitMode = () => {
+    setSplitAllocations([
+      { silo: shipmentDraft.silo, lotNumber: shipmentDraft.lotNumber, quantity: shipmentDraft.quantity },
+      { silo: "", lotNumber: "", quantity: "" },
+    ]);
+  };
+  const exitSplitMode = () => {
+    const first = splitAllocations?.[0];
+    if (first) setShipmentDraft((previous) => ({ ...previous, silo: first.silo, lotNumber: first.lotNumber, quantity: first.quantity }));
+    setSplitAllocations(null);
+  };
+  const addSplitRow = () => {
+    if (!splitAllocations) return;
+    if (splitAllocations.length >= MAX_SPLIT_ALLOCATIONS) { toast.error(`Maximum ${MAX_SPLIT_ALLOCATIONS} répartitions pour une même expédition.`); return; }
+    setSplitAllocations([...splitAllocations, { silo: "", lotNumber: "", quantity: "" }]);
+  };
+  const removeSplitRow = (index: number) => {
+    if (!splitAllocations) return;
+    if (splitAllocations.length <= 2) { exitSplitMode(); return; }
+    setSplitAllocations(splitAllocations.filter((_, rowIndex) => rowIndex !== index));
+  };
+  const updateSplitRow = (index: number, patch: Partial<SplitAllocationDraft>) => {
+    setSplitAllocations((previous) => previous?.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)) ?? previous);
+  };
+
   const refresh = async () => {
     await Promise.all([utils.silo.listEntries.invalidate(), utils.silo.listShipments.invalidate(), utils.silo.state.invalidate()]);
   };
@@ -166,6 +237,16 @@ export default function SiloExpedition() {
       }
     },
     onError: onError("Impossible d’ajouter cette expédition."),
+  });
+  const createSplitShipment = trpc.silo.createSplitShipment.useMutation({
+    onSuccess: async (result) => {
+      await refresh();
+      setShipmentDraft(emptyShipment());
+      setSplitAllocations(null);
+      const detail = result.shipments.map((shipment) => `${fmt(Number(shipment.quantity))} T depuis ${shipment.silo} sur ${shipment.lotNumber || "lot non identifié"}`).join(", ");
+      toast.success(`Expédition répartie sur ${result.shipments.length} silos`, { description: detail });
+    },
+    onError: onError("Impossible d’ajouter cette expédition répartie."),
   });
   const updateShipment = trpc.silo.updateShipment.useMutation({ onSuccess: async () => { await refresh(); setEditingShipmentId(null); setShipmentDraft(emptyShipment()); toast.success("Expédition mise à jour"); }, onError: onError("Impossible de modifier cette expédition.") });
   const deleteShipment = trpc.silo.deleteShipment.useMutation({ onSuccess: async () => { await refresh(); toast.success("Expédition supprimée"); }, onError: onError("Impossible de supprimer cette expédition.") });
@@ -249,8 +330,42 @@ export default function SiloExpedition() {
     }
   };
 
+  const submitSplitShipment = () => {
+    if (!shipmentDraft.article.trim()) { toast.error("Indiquez l’article expédié."); return; }
+    if (!splitAllocations) return;
+
+    const parsedRows: { silo: string; lotNumber: string; quantity: number }[] = [];
+    for (const row of splitAllocations) {
+      if (!row.silo) { toast.error("Choisissez un silo pour chaque ligne répartie."); return; }
+      if (!row.lotNumber.trim()) { toast.error(`Indiquez le n° de lot pour la ligne ${row.silo}.`); return; }
+      const quantity = parseQuantity(row.quantity);
+      if (!quantity) { toast.error(`Indiquez une quantité valide pour ${row.silo}.`); return; }
+      parsedRows.push({ silo: row.silo, lotNumber: row.lotNumber.trim(), quantity });
+    }
+    if (parsedRows.length < 2) { toast.error("Ajoutez au moins deux répartitions, sinon utilisez la saisie simple."); return; }
+
+    // Vérification immédiate côté client, silo par silo (le serveur reste la source de vérité — voir assertShipmentWithinStock).
+    const quantityBySilo = new Map<string, number>();
+    parsedRows.forEach((row) => quantityBySilo.set(row.silo, (quantityBySilo.get(row.silo) ?? 0) + row.quantity));
+    for (const [silo, quantity] of Array.from(quantityBySilo.entries())) {
+      const available = stateQuery.data?.matrix?.[silo]?.[shipmentDraft.article] ?? 0;
+      if (quantity > available + 0.005) {
+        toast.error(`La quantité expédiée depuis ${silo} (${fmt(quantity)} T) dépasse le stock disponible de ${shipmentDraft.article} (${fmt(available)} T).`);
+        return;
+      }
+    }
+
+    createSplitShipment.mutate({
+      shipmentDate: shipmentDraft.shipmentDate || undefined,
+      article: shipmentDraft.article.trim(),
+      shipmentType: shipmentDraft.shipmentType as typeof SHIPMENT_TYPES[number],
+      allocations: parsedRows,
+    });
+  };
+
   const submitShipment = (event: React.FormEvent) => {
     event.preventDefault();
+    if (splitAllocations) { submitSplitShipment(); return; }
     if (!shipmentDraft.article.trim()) { toast.error("Indiquez l’article expédié."); return; }
     if (!shipmentDraft.silo) { toast.error("Choisissez le silo d’où part l’expédition."); return; }
     const quantity = parseQuantity(shipmentDraft.quantity);
@@ -278,6 +393,7 @@ export default function SiloExpedition() {
 
   const editShipment = (shipment: typeof shipments[number]) => {
     setEditingShipmentId(shipment.id);
+    setSplitAllocations(null);
     setShipmentDraft({
       shipmentDate: shipment.shipmentDate ?? "",
       article: shipment.article,
@@ -362,14 +478,37 @@ export default function SiloExpedition() {
             <div className="silo-fields">
               <label>Date<input type="date" value={shipmentDraft.shipmentDate} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentDate: event.target.value })} /></label>
               <label>Article<input list="silo-articles" value={shipmentDraft.article} onChange={(event) => handleArticleChange(event.target.value)} placeholder="CG3" required /></label>
-              <label>N° Lot<input list="silo-expedition-lots" value={shipmentDraft.lotNumber} onChange={(event) => handleLotChange(event.target.value)} placeholder="2600646-0905" /></label>
-              <label>Qté (T)<input value={shipmentDraft.quantity} onChange={(event) => setShipmentDraft({ ...shipmentDraft, quantity: event.target.value })} placeholder="25" inputMode="decimal" required /></label>
-              <label>Silo<select value={shipmentDraft.silo} onChange={(event) => handleSiloChange(event.target.value)} required><option value="" disabled>Choisir…</option>{siloSelectOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
+              {!splitAllocations && <>
+                <label>N° Lot<input list="silo-expedition-lots" value={shipmentDraft.lotNumber} onChange={(event) => handleLotChange(event.target.value)} placeholder="2600646-0905" /></label>
+                <label>Qté (T)<input value={shipmentDraft.quantity} onChange={(event) => setShipmentDraft({ ...shipmentDraft, quantity: event.target.value })} placeholder="25" inputMode="decimal" required /></label>
+                <label className="silo-field-with-split">Silo<span className="silo-field-with-split-row"><select value={shipmentDraft.silo} onChange={(event) => handleSiloChange(event.target.value)} required><option value="" disabled>Choisir…</option>{siloSelectOptions.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select>{!editingShipmentId && <button type="button" className="silo-split-toggle" onClick={enterSplitMode} title="Répartir cette expédition sur plusieurs silos" aria-label="Répartir cette expédition sur plusieurs silos"><Plus size={15} /></button>}</span></label>
+              </>}
               <label>Expédition<select value={shipmentDraft.shipmentType} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentType: event.target.value })}>{SHIPMENT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
             </div>
+
+            {splitAllocations && (
+              <fieldset className="silo-allocation-fields silo-split-fieldset">
+                <legend>Répartition sur plusieurs silos — un n° de lot par ligne, même expédition</legend>
+                <div className="silo-split-rows">
+                  {splitAllocations.map((row, index) => (
+                    <div className="silo-split-row" key={index}>
+                      <label>Silo<select value={row.silo} onChange={(event) => updateSplitRowSilo(index, event.target.value)} required><option value="" disabled>Choisir…</option>{siloOptionsForArticle.map((silo) => <option key={silo} value={silo}>{silo}</option>)}</select></label>
+                      <label>N° Lot<input list={`silo-split-lots-${index}`} value={row.lotNumber} onChange={(event) => updateSplitRow(index, { lotNumber: event.target.value })} placeholder={row.silo ? `Lot dans ${row.silo}` : "2600646-0905"} required /><datalist id={`silo-split-lots-${index}`}>{splitLotSuggestions(row.silo).map((lotNumber) => <option key={lotNumber} value={lotNumber} />)}</datalist></label>
+                      <label>Qté (T)<input value={row.quantity} onChange={(event) => updateSplitRow(index, { quantity: event.target.value })} placeholder="10" inputMode="decimal" required /></label>
+                      <button type="button" className="silo-split-remove-row" onClick={() => removeSplitRow(index)} aria-label="Retirer cette ligne"><X size={15} /></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="silo-split-fieldset-actions">
+                  <button type="button" className="silo-secondary" onClick={addSplitRow} disabled={splitAllocations.length >= MAX_SPLIT_ALLOCATIONS}><Plus size={14} />Ajouter un silo</button>
+                  <button type="button" className="silo-split-cancel" onClick={exitSplitMode}>Revenir à un seul silo</button>
+                </div>
+              </fieldset>
+            )}
+
             <div className="silo-form-actions">
               {editingShipmentId && <button type="button" className="silo-secondary" onClick={() => { setEditingShipmentId(null); setShipmentDraft(emptyShipment()); }}>Annuler</button>}
-              <button className="silo-primary" type="submit" disabled={createShipment.isPending || updateShipment.isPending}><Plus size={16} />{editingShipmentId ? "Mettre à jour l’expédition" : "Ajouter l’expédition"}</button>
+              <button className="silo-primary" type="submit" disabled={createShipment.isPending || updateShipment.isPending || createSplitShipment.isPending}><Plus size={16} />{editingShipmentId ? "Mettre à jour l’expédition" : splitAllocations ? "Ajouter l’expédition répartie" : "Ajouter l’expédition"}</button>
             </div>
           </form>
 
@@ -377,7 +516,7 @@ export default function SiloExpedition() {
             <table className="silo-list-table">
               <thead><tr><th>Date</th><th>Article</th><th>N° Lot</th><th>Qté (T)</th><th>Silo</th><th>Type</th><th>Actions</th></tr></thead>
               <tbody>
-                {groupedShipments.map((group) => {
+                {pageShipmentGroups.map((group) => {
                   const first = group[0];
                   if (group.length === 1) {
                     return (
@@ -398,6 +537,8 @@ export default function SiloExpedition() {
                   // retrouver le détail — et les actions — de chaque lot.
                   const total = group.reduce((sum, item) => sum + Number(item.quantity), 0);
                   const expanded = expandedShipmentGroupId === first.id;
+                  const groupSilos = describeShipmentSilos(group);
+                  const spansMultipleSilos = new Set(group.map((item) => item.silo)).size > 1;
                   return (
                     <Fragment key={`group-${first.id}`}>
                       <tr className="silo-shipment-group-row" onClick={() => setExpandedShipmentGroupId(expanded ? null : first.id)}>
@@ -405,7 +546,7 @@ export default function SiloExpedition() {
                         <td className="silo-strong-cell">{first.article}</td>
                         <td className="silo-shipment-summary"><ChevronDown size={14} style={{ transform: expanded ? "rotate(180deg)" : undefined }} /><span>{describeShipmentGroup(group)}</span></td>
                         <td className="silo-strong-cell">{fmt(total)}</td>
-                        <td>{first.silo}</td>
+                        <td>{groupSilos}</td>
                         <td><span className={`silo-type-tag ${first.shipmentType === "Vrac" ? "silo-type-vrac" : ""}`}>{first.shipmentType}</span></td>
                         <td className="silo-muted-cell">—</td>
                       </tr>
@@ -415,7 +556,7 @@ export default function SiloExpedition() {
                             <ul className="silo-shipment-detail-list">
                               {group.map((item) => (
                                 <li key={item.id}>
-                                  <span><strong>{item.lotNumber || "Lot non identifié"}</strong> — {fmt(Number(item.quantity))} T</span>
+                                  <span>{spansMultipleSilos && <span className="silo-shipment-detail-silo">{item.silo}</span>}<strong>{item.lotNumber || "Lot non identifié"}</strong> — {fmt(Number(item.quantity))} T</span>
                                   <span className="silo-row-actions">
                                     <button type="button" onClick={() => editShipment(item)} aria-label="Modifier l’expédition"><Pencil size={14} /></button>
                                     <button type="button" onClick={() => removeShipment(item.id)} aria-label="Supprimer l’expédition"><Trash2 size={14} /></button>
@@ -432,6 +573,7 @@ export default function SiloExpedition() {
               </tbody>
             </table>
           </div> : !shipmentsQuery.isLoading && <div className="silo-empty-cell">{shipments.length === 0 ? "Aucune expédition enregistrée." : "Aucune expédition ne correspond à ces filtres."}</div>}
+          <ListPagination page={shipmentsPage} pageCount={shipmentsPageCount} onPageChange={setShipmentsPage} totalCount={groupedShipments.length} itemLabel="expédition" pageSize={shipmentsPageSize} onPageSizeChange={setShipmentsPageSize} />
         </section>
 
         <datalist id="silo-articles">{articleOptions.map((code) => <option key={code} value={code} />)}</datalist>

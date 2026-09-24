@@ -111,6 +111,7 @@
 .silo-shipment-detail-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .silo-shipment-detail-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; color: #4f6054; }
 .silo-shipment-detail-list strong { color: #a24c37; font-weight: 700; }
+.silo-shipment-detail-silo { display: inline-block; margin-right: 8px; border-radius: 999px; padding: 2px 8px; background: #e8f2e4; color: #356a40; font-size: 9px; font-weight: 700; }
 .silo-form { display: grid; gap: 15px; margin-bottom: 20px; }
 .silo-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .silo-fields label, .silo-allocation-fields label { display: flex; flex-direction: column; gap: 6px; color: #65736e; font-size: 11px; font-weight: 600; }
@@ -122,6 +123,18 @@
 .silo-allocation-total, .silo-allocation-warning { margin: 12px 0 0; font-size: 11px; }
 .silo-allocation-total { color: #65736e; }
 .silo-allocation-warning { color: #a24c37; font-weight: 600; }
+.silo-field-with-split-row { display: flex; gap: 6px; align-items: stretch; }
+.silo-field-with-split-row select { flex: 1; min-width: 0; }
+.silo-split-toggle { display: grid; place-items: center; width: 38px; flex: 0 0 auto; border: 1px dashed #b9c4b3; border-radius: 7px; background: #fbfcf8; color: #4d7b40; cursor: pointer; }
+.silo-split-toggle:hover { border-color: var(--signal); color: var(--signal); background: #fffefa; }
+.silo-split-fieldset .silo-split-rows { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.silo-split-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.3fr) minmax(0,.8fr) auto; gap: 10px; align-items: end; }
+.silo-split-row select { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
+.silo-split-row select:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
+.silo-split-remove-row { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #dce3da; border-radius: 7px; background: #fffefa; color: #a45b42; cursor: pointer; }
+.silo-split-remove-row:hover { border-color: #a45b42; background: #fbeceb; }
+.silo-split-fieldset-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.silo-split-cancel { border: 0; background: transparent; color: #7c877e; font-size: 11px; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .silo-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .silo-primary, .silo-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 7px; padding: 9px 13px; font-size: 11px; font-weight: 700; }
 .silo-primary { border: 1px solid var(--signal); background: var(--signal); color: var(--ink); }
@@ -146,6 +159,8 @@
   .silo-filters select, .silo-filters input { width: 100%; min-width: 0; }
   .silo-fields { grid-template-columns: minmax(0, 1fr); }
   .silo-allocation-fields > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .silo-split-row { grid-template-columns: minmax(0, 1fr); }
+  .silo-split-remove-row { justify-self: end; }
 }
 .silo-hero-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .silo-file-actions { display: flex; flex-direction: column; gap: 8px; }
