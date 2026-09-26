@@ -19,6 +19,7 @@ import SiloProduction from "./pages/SiloProduction";
 import SiloExpedition from "./pages/SiloExpedition";
 import SiloLots from "./pages/SiloLots";
 import Reports from "./pages/Reports";
+import SmsSend from "./pages/SmsSend";
 
 /** Garde de route : redirige vers l’accueil tant que la session admin n’est pas confirmée (ne rend rien entre-temps pour éviter un flash de contenu protégé). */
 function AdminRoute({ children }: { children: ReactNode }) {
@@ -48,6 +49,7 @@ function Router() {
       <Route path="/silo-pf-expedition"><AdminRoute><SiloExpedition /></AdminRoute></Route>
       <Route path="/silo-pf-lots" component={SiloLots} />
       <Route path="/rapports"><AdminRoute><Reports /></AdminRoute></Route>
+      <Route path="/sms"><AdminRoute><SmsSend /></AdminRoute></Route>
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

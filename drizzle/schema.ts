@@ -64,6 +64,33 @@ export const productionOperators = pgTable("production_operators", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 }, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
 
+/** Contacts SMS (Réglages) : destinataires proposés sur la page Envoi SMS. Envoi via TextBee (voir server/smsSend.ts). */
+export const smsContacts = pgTable("sms_contacts", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  phone: varchar("phone", { length: 24 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [uniqueIndex("sms_contacts_phone_unique").on(table.phone)]);
+
+/**
+ * Groupes de contacts SMS (Réglages) : choisir un groupe sur la page Envoi
+ * SMS sélectionne d'un coup tous ses membres plutôt que de les cocher un par
+ * un. contactIds référence sms_contacts.id de façon informelle (pas de
+ * contrainte de clé étrangère) — un contact retiré individuellement (voir
+ * archiveSmsContact) reste listé ici mais n'apparaît plus dans les
+ * suggestions, exactement comme pour les listes d'articles/silos.
+ */
+export const smsGroups = pgTable("sms_groups", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  contactIds: integer("contactIds").array().notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+}, (table) => [uniqueIndex("sms_groups_name_unique").on(table.name)]);
+
 export const productionSettings = pgTable("production_settings", {
   id: integer("id").primaryKey(),
   /** Identifiants admin (rôle admin/visiteur) — sans ligne stockée, "admin" / "123456" fait office de valeur par défaut. La session admin qu'ils ouvrent est désormais la seule autorisation exigée pour saisir, modifier, supprimer ou importer (l'ancien mot de passe d'action séparé a été retiré). */
@@ -172,6 +199,10 @@ export type InsertProductionRecord = typeof productionRecords.$inferInsert;
 export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;
 export type ProductionArticle = typeof productionArticles.$inferSelect;
 export type ProductionOperator = typeof productionOperators.$inferSelect;
+export type SmsContact = typeof smsContacts.$inferSelect;
+export type InsertSmsContact = typeof smsContacts.$inferInsert;
+export type SmsGroup = typeof smsGroups.$inferSelect;
+export type InsertSmsGroup = typeof smsGroups.$inferInsert;
 export type ProductionSettings = typeof productionSettings.$inferSelect;
 export type DailyProgram = typeof dailyPrograms.$inferSelect;
 export type InsertDailyProgram = typeof dailyPrograms.$inferInsert;

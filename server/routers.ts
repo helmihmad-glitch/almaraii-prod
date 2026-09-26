@@ -6,8 +6,12 @@ import type { TrpcContext } from "./_core/context";
 import {
   addProductionArticle,
   addProductionOperator,
+  addSmsContact,
+  addSmsGroup,
   archiveProductionArticle,
   archiveProductionOperator,
+  archiveSmsContact,
+  archiveSmsGroup,
   createDailyProgram,
   createDailyProgramLine,
   createProductionRecord,
@@ -16,17 +20,22 @@ import {
   deleteProductionRecord,
   getDailyProgramByDate,
   getProductionSettings,
+  getSmsContactsByIds,
   importDailyProgramDay,
   initializeProductionArticles,
   listActiveProductionArticles,
   listActiveProductionOperators,
+  listActiveSmsContacts,
+  listActiveSmsGroups,
   listDailyPrograms,
   listProductionRecords,
   saveAdminCredentials,
   updateDailyProgram,
   updateDailyProgramLine,
   updateProductionRecord,
+  updateSmsGroup,
 } from "./db";
+import { sendSmsToMany } from "./smsSend";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
 import { importProductionRows, parseImportedWorkbook, previewProductionImport } from "./excelImport";
 import { parseDailyProgramWorkbook } from "./dailyProgramExcel";
@@ -346,6 +355,40 @@ export const appRouter = router({
     archiveSilo: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       return archiveSilo(input.id);
+    }),
+    listSmsContacts: publicProcedure.query(() => listActiveSmsContacts()),
+    addSmsContact: publicProcedure.input(z.object({
+      name: z.string().trim().min(1, "Saisissez un nom.").max(128),
+      phone: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Utilisez le format international, ex. +21612345678."),
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSmsContact(input.name, input.phone);
+    }),
+    archiveSmsContact: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSmsContact(input.id);
+    }),
+    listSmsGroups: publicProcedure.query(() => listActiveSmsGroups()),
+    addSmsGroup: publicProcedure.input(z.object({
+      name: z.string().trim().min(1, "Saisissez un nom de groupe.").max(128),
+      contactIds: z.array(z.number().int().positive()).min(1, "Ajoutez au moins un contact au groupe."),
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSmsGroup(input.name, input.contactIds);
+    }),
+    updateSmsGroup: publicProcedure.input(z.object({
+      id: z.number().int().positive(),
+      name: z.string().trim().min(1, "Saisissez un nom de groupe.").max(128),
+      contactIds: z.array(z.number().int().positive()).min(1, "Ajoutez au moins un contact au groupe."),
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await updateSmsGroup(input.id, input.name, input.contactIds);
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce groupe est introuvable." });
+      return updated;
+    }),
+    archiveSmsGroup: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSmsGroup(input.id);
     }),
   }),
   dailyProgram: router({
@@ -750,6 +793,24 @@ export const appRouter = router({
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;
+    }),
+  }),
+  sms: router({
+    /** Envoi via TextBee (voir server/smsSend.ts) : les numéros viennent des contacts enregistrés (settings.listSmsContacts), jamais d'une saisie libre côté client. */
+    send: publicProcedure.input(z.object({
+      contactIds: z.array(z.number().int().positive()).min(1, "Choisissez au moins un contact."),
+      message: z.string().trim().min(1, "Saisissez un message.").max(480),
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const contacts = await getSmsContactsByIds(input.contactIds);
+      if (contacts.length === 0) throw new TRPCError({ code: "NOT_FOUND", message: "Aucun contact valide sélectionné." });
+      const results = await sendSmsToMany(contacts.map((contact) => contact.phone), input.message);
+      const withNames = results.map((result, index) => ({ ...result, name: contacts[index].name }));
+      return {
+        sent: withNames.filter((result) => result.success).length,
+        failed: withNames.filter((result) => !result.success).length,
+        results: withNames,
+      };
     }),
   }),
 });

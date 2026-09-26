@@ -3,7 +3,7 @@
 // le bouton d’ouverture du rail sur mobile via `useSidebar()`.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { ArrowLeftRight, CalendarDays, ChevronDown, ClipboardList, FileSpreadsheet, LayoutDashboard, LogIn, LogOut, PackageSearch, Settings2, X, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, ChevronDown, ClipboardList, FileSpreadsheet, LayoutDashboard, LogIn, LogOut, MessageSquare, PackageSearch, Settings2, X, type LucideIcon } from "lucide-react";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { trpc } from "@/lib/trpc";
 
@@ -36,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { kind: "link", path: "/silo-pf-lots", label: "Traçabilité des lots", icon: PackageSearch },
   { kind: "link", path: "/registre", label: "Registre journalier", icon: ClipboardList },
   { kind: "link", path: "/rapports", label: "Rapports", icon: FileSpreadsheet },
+  { kind: "link", path: "/sms", label: "Envoi SMS", icon: MessageSquare },
 ];
 
 /** Groupe (par étiquette) dont un enfant correspond au chemin actuel. */

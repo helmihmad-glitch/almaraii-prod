@@ -48,6 +48,11 @@ describe("mutations réservées à la session admin (sans mot de passe par actio
     await expect(appRouter.createCaller(createContext(true)).settings.addSilo({ code: "GATE-SILO-A" })).resolves.toMatchObject({ code: "GATE-SILO-A" });
   });
 
+  it("settings.addSmsContact refuse un visiteur et accepte un admin", async () => {
+    await expect(appRouter.createCaller(createContext(false)).settings.addSmsContact({ name: "Gate SMS", phone: "+21655556666" })).rejects.toThrow(/administrateur/i);
+    await expect(appRouter.createCaller(createContext(true)).settings.addSmsContact({ name: "Gate SMS", phone: "+21655556666" })).resolves.toMatchObject({ name: "Gate SMS" });
+  });
+
   it("les requêtes de lecture restent publiques (visiteur inclus)", async () => {
     const caller = appRouter.createCaller(createContext(false));
     await expect(caller.production.list()).resolves.toBeDefined();

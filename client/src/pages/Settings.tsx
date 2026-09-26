@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, BookOpen, Check, KeyRound, Menu, Pencil, Plus, Settings2, ShieldCheck, Trash2, UserCog, Users, Warehouse, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, KeyRound, Menu, MessageSquare, Pencil, Plus, Settings2, ShieldCheck, Trash2, UserCog, Users, Warehouse, X } from "lucide-react";
 import { Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -12,11 +12,20 @@ export default function Settings() {
   const articlesQuery = trpc.settings.listArticles.useQuery();
   const operatorsQuery = trpc.settings.listOperators.useQuery();
   const silosQuery = trpc.settings.listSilos.useQuery();
+  const smsContactsQuery = trpc.settings.listSmsContacts.useQuery();
+  const smsGroupsQuery = trpc.settings.listSmsGroups.useQuery();
   const [articleCode, setArticleCode] = useState("");
   const [operatorName, setOperatorName] = useState("");
   const [siloCode, setSiloCode] = useState("");
   const [editingSiloId, setEditingSiloId] = useState<number | null>(null);
   const [editingSiloCode, setEditingSiloCode] = useState("");
+  const [smsContactName, setSmsContactName] = useState("");
+  const [smsContactPhone, setSmsContactPhone] = useState("");
+  const [smsGroupName, setSmsGroupName] = useState("");
+  const [smsGroupMemberIds, setSmsGroupMemberIds] = useState<number[]>([]);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState("");
+  const [editingGroupMemberIds, setEditingGroupMemberIds] = useState<number[]>([]);
   const meQuery = trpc.auth.me.useQuery();
   const [adminCurrentPassword, setAdminCurrentPassword] = useState("");
   const [adminUsername, setAdminUsername] = useState("");
@@ -60,6 +69,26 @@ export default function Settings() {
     onSuccess: async () => { await utils.settings.listSilos.invalidate(); toast.success("Silo retiré de la liste active"); },
     onError: (error) => toast.error(error.message || "Impossible de retirer ce silo."),
   });
+  const addSmsContact = trpc.settings.addSmsContact.useMutation({
+    onSuccess: async () => { await utils.settings.listSmsContacts.invalidate(); setSmsContactName(""); setSmsContactPhone(""); toast.success("Contact ajouté à la liste"); },
+    onError: (error) => toast.error(error.message || "Impossible d’ajouter ce contact."),
+  });
+  const archiveSmsContact = trpc.settings.archiveSmsContact.useMutation({
+    onSuccess: async () => { await utils.settings.listSmsContacts.invalidate(); toast.success("Contact retiré de la liste active"); },
+    onError: (error) => toast.error(error.message || "Impossible de retirer ce contact."),
+  });
+  const addSmsGroup = trpc.settings.addSmsGroup.useMutation({
+    onSuccess: async () => { await utils.settings.listSmsGroups.invalidate(); setSmsGroupName(""); setSmsGroupMemberIds([]); toast.success("Groupe créé"); },
+    onError: (error) => toast.error(error.message || "Impossible de créer ce groupe."),
+  });
+  const updateSmsGroup = trpc.settings.updateSmsGroup.useMutation({
+    onSuccess: async () => { await utils.settings.listSmsGroups.invalidate(); setEditingGroupId(null); toast.success("Groupe mis à jour"); },
+    onError: (error) => toast.error(error.message || "Impossible de modifier ce groupe."),
+  });
+  const archiveSmsGroup = trpc.settings.archiveSmsGroup.useMutation({
+    onSuccess: async () => { await utils.settings.listSmsGroups.invalidate(); toast.success("Groupe retiré de la liste active"); },
+    onError: (error) => toast.error(error.message || "Impossible de retirer ce groupe."),
+  });
   const changeAdminCredentials = trpc.auth.changeAdminCredentials.useMutation({
     onSuccess: () => { setAdminCurrentPassword(""); setAdminNewPassword(""); setAdminPasswordConfirmation(""); toast.success("Identifiants administrateur mis à jour"); },
     onError: (error) => toast.error(error.message || "Impossible de modifier les identifiants administrateur."),
@@ -83,6 +112,33 @@ export default function Settings() {
     const trimmed = editingSiloCode.trim().toUpperCase();
     if (!trimmed) return;
     renameSilo.mutate({ id, code: trimmed });
+  };
+  const submitSmsContact = (event: React.FormEvent) => {
+    event.preventDefault();
+    addSmsContact.mutate({ name: smsContactName.trim(), phone: smsContactPhone.trim() });
+  };
+  const removeSmsContact = (id: number, name: string) => {
+    if (window.confirm(`Retirer ${name} de la liste active ?`)) archiveSmsContact.mutate({ id });
+  };
+  const toggleSmsGroupMember = (id: number) => setSmsGroupMemberIds((previous) => (previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id]));
+  const submitSmsGroup = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (smsGroupMemberIds.length === 0) { toast.error("Choisissez au moins un contact pour ce groupe."); return; }
+    addSmsGroup.mutate({ name: smsGroupName.trim(), contactIds: smsGroupMemberIds });
+  };
+  const startEditSmsGroup = (group: { id: number; name: string; contactIds: number[] }) => {
+    setEditingGroupId(group.id);
+    setEditingGroupName(group.name);
+    setEditingGroupMemberIds(group.contactIds);
+  };
+  const toggleEditingSmsGroupMember = (id: number) => setEditingGroupMemberIds((previous) => (previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id]));
+  const submitEditSmsGroup = (event: React.FormEvent, id: number) => {
+    event.preventDefault();
+    if (editingGroupMemberIds.length === 0) { toast.error("Choisissez au moins un contact pour ce groupe."); return; }
+    updateSmsGroup.mutate({ id, name: editingGroupName.trim(), contactIds: editingGroupMemberIds });
+  };
+  const removeSmsGroup = (id: number, name: string) => {
+    if (window.confirm(`Retirer le groupe ${name} ?`)) archiveSmsGroup.mutate({ id });
   };
   const submitAdminCredentials = (event: React.FormEvent) => {
     event.preventDefault();
@@ -141,6 +197,65 @@ export default function Settings() {
                   )}
                 </div>
               )) : <span className="settings-empty">Aucun silo actif. Ajoutez le premier silo à proposer.</span>}
+            </div>
+          </article>
+
+          <article className="settings-card sms-contacts-card">
+            <div className="settings-card-heading"><div className="settings-icon"><MessageSquare size={19} /></div><div><span>Envoi SMS</span><h2>Contacts SMS</h2></div></div>
+            <p className="settings-copy">Les contacts ajoutés ici sont proposés sur la page Envoi SMS. Format international requis pour le numéro (ex. +21612345678).</p>
+            <form className="password-form" onSubmit={submitSmsContact}>
+              <label>Nom<input value={smsContactName} onChange={(event) => setSmsContactName(event.target.value)} placeholder="Ex. Yosri" maxLength={128} required /></label>
+              <label>Téléphone<input value={smsContactPhone} onChange={(event) => setSmsContactPhone(event.target.value)} placeholder="+21612345678" maxLength={24} required /></label>
+              <button type="submit" className="settings-primary" disabled={addSmsContact.isPending}><Plus size={16} />Ajouter</button>
+            </form>
+            <div className="article-list" aria-live="polite">{smsContactsQuery.isLoading ? <span className="settings-empty">Chargement des contacts…</span> : smsContactsQuery.data?.length ? smsContactsQuery.data.map((contact) => <div className="article-list-row" key={contact.id}><strong>{contact.name}<span className="sms-contact-phone">{contact.phone}</span></strong><button type="button" onClick={() => removeSmsContact(contact.id, contact.name)} disabled={archiveSmsContact.isPending} aria-label={`Retirer ${contact.name} de la liste`}><Trash2 size={15} />Retirer</button></div>) : <span className="settings-empty">Aucun contact actif. Ajoutez le premier destinataire des SMS.</span>}</div>
+          </article>
+
+          <article className="settings-card sms-groups-card">
+            <div className="settings-card-heading"><div className="settings-icon security"><Users size={19} /></div><div><span>Envoi SMS</span><h2>Groupes de contacts</h2></div></div>
+            <p className="settings-copy">Un groupe rassemble plusieurs contacts SMS : le choisir sur la page Envoi SMS sélectionne tous ses membres d’un coup.</p>
+            <form className="password-form" onSubmit={submitSmsGroup}>
+              <label>Nom du groupe<input value={smsGroupName} onChange={(event) => setSmsGroupName(event.target.value)} placeholder="Ex. Équipe maintenance" maxLength={128} required /></label>
+              <div className="sms-contact-picker" role="group" aria-label="Membres du groupe">
+                {smsContactsQuery.isLoading ? <span className="settings-empty">Chargement des contacts…</span> : smsContactsQuery.data?.length ? smsContactsQuery.data.map((contact) => (
+                  <label key={contact.id} className="sms-contact-option">
+                    <input type="checkbox" checked={smsGroupMemberIds.includes(contact.id)} onChange={() => toggleSmsGroupMember(contact.id)} />
+                    <span>{contact.name}</span>
+                  </label>
+                )) : <span className="settings-empty">Ajoutez d’abord des contacts SMS ci-dessus.</span>}
+              </div>
+              <button type="submit" className="settings-primary" disabled={addSmsGroup.isPending || !smsContactsQuery.data?.length}><Plus size={16} />Créer le groupe</button>
+            </form>
+            <div className="article-list" aria-live="polite">
+              {smsGroupsQuery.isLoading ? <span className="settings-empty">Chargement des groupes…</span> : smsGroupsQuery.data?.length ? smsGroupsQuery.data.map((group) => (
+                <div className="article-list-row sms-group-row" key={group.id}>
+                  {editingGroupId === group.id ? (
+                    <form className="sms-group-edit-form" onSubmit={(event) => submitEditSmsGroup(event, group.id)}>
+                      <input value={editingGroupName} onChange={(event) => setEditingGroupName(event.target.value)} maxLength={128} autoFocus required />
+                      <div className="sms-contact-picker">
+                        {(smsContactsQuery.data ?? []).map((contact) => (
+                          <label key={contact.id} className="sms-contact-option">
+                            <input type="checkbox" checked={editingGroupMemberIds.includes(contact.id)} onChange={() => toggleEditingSmsGroupMember(contact.id)} />
+                            <span>{contact.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="sms-group-edit-actions">
+                        <button type="submit" className="silo-rename-confirm" disabled={updateSmsGroup.isPending} aria-label="Valider les modifications"><Check size={15} />Enregistrer</button>
+                        <button type="button" className="silo-rename-cancel" onClick={() => setEditingGroupId(null)}>Annuler</button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <strong>{group.name}<span className="sms-contact-phone">{group.contactIds.map((id) => smsContactsQuery.data?.find((contact) => contact.id === id)?.name).filter(Boolean).join(", ") || "Aucun membre"}</span></strong>
+                      <span className="article-list-actions">
+                        <button type="button" onClick={() => startEditSmsGroup(group)} aria-label={`Modifier le groupe ${group.name}`}><Pencil size={15} />Modifier</button>
+                        <button type="button" onClick={() => removeSmsGroup(group.id, group.name)} disabled={archiveSmsGroup.isPending} aria-label={`Retirer le groupe ${group.name}`}><Trash2 size={15} />Retirer</button>
+                      </span>
+                    </>
+                  )}
+                </div>
+              )) : <span className="settings-empty">Aucun groupe actif. Créez-en un ci-dessus.</span>}
             </div>
           </article>
 

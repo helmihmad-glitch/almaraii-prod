@@ -68,7 +68,7 @@ var systemRouter = router({
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { neon } from "@neondatabase/serverless";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 
 // drizzle/schema.ts
@@ -127,6 +127,22 @@ var productionOperators = pgTable("production_operators", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull()
 }, (table) => [uniqueIndex("production_operators_name_unique").on(table.name)]);
+var smsContacts = pgTable("sms_contacts", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  phone: varchar("phone", { length: 24 }).notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
+}, (table) => [uniqueIndex("sms_contacts_phone_unique").on(table.phone)]);
+var smsGroups = pgTable("sms_groups", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 128 }).notNull(),
+  contactIds: integer("contactIds").array().notNull(),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull()
+}, (table) => [uniqueIndex("sms_groups_name_unique").on(table.name)]);
 var productionSettings = pgTable("production_settings", {
   id: integer("id").primaryKey(),
   /** Identifiants admin (rôle admin/visiteur) — sans ligne stockée, "admin" / "123456" fait office de valeur par défaut. La session admin qu'ils ouvrent est désormais la seule autorisation exigée pour saisir, modifier, supprimer ou importer (l'ancien mot de passe d'action séparé a été retiré). */
@@ -222,6 +238,8 @@ function loadFallbackStore() {
     return {
       articles: [],
       operators: [],
+      smsContacts: [],
+      smsGroups: [],
       records: [],
       settings: void 0,
       synchronizedFile: void 0,
@@ -229,6 +247,8 @@ function loadFallbackStore() {
       dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
+      nextSmsContactId: 1,
+      nextSmsGroupId: 1,
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1
@@ -240,6 +260,8 @@ function loadFallbackStore() {
     return {
       articles: parsed.articles ?? [],
       operators: parsed.operators ?? [],
+      smsContacts: parsed.smsContacts ?? [],
+      smsGroups: parsed.smsGroups ?? [],
       records: parsed.records ?? [],
       settings: parsed.settings,
       synchronizedFile: parsed.synchronizedFile,
@@ -247,6 +269,8 @@ function loadFallbackStore() {
       dailyProgramLines: parsed.dailyProgramLines ?? [],
       nextArticleId: parsed.nextArticleId ?? 1,
       nextOperatorId: parsed.nextOperatorId ?? 1,
+      nextSmsContactId: parsed.nextSmsContactId ?? 1,
+      nextSmsGroupId: parsed.nextSmsGroupId ?? 1,
       nextRecordId: parsed.nextRecordId ?? 1,
       nextDailyProgramId: parsed.nextDailyProgramId ?? 1,
       nextDailyProgramLineId: parsed.nextDailyProgramLineId ?? 1
@@ -255,6 +279,8 @@ function loadFallbackStore() {
     return {
       articles: [],
       operators: [],
+      smsContacts: [],
+      smsGroups: [],
       records: [],
       settings: void 0,
       synchronizedFile: void 0,
@@ -262,6 +288,8 @@ function loadFallbackStore() {
       dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
+      nextSmsContactId: 1,
+      nextSmsGroupId: 1,
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1
@@ -274,6 +302,8 @@ function persistFallbackStore() {
   const payload = JSON.stringify({
     articles: fallbackArticles,
     operators: fallbackOperators,
+    smsContacts: fallbackSmsContacts,
+    smsGroups: fallbackSmsGroups,
     records: fallbackRecords,
     settings: fallbackSettings,
     synchronizedFile: fallbackSynchronizedFile,
@@ -281,6 +311,8 @@ function persistFallbackStore() {
     dailyProgramLines: fallbackDailyProgramLines,
     nextArticleId: nextFallbackArticleId,
     nextOperatorId: nextFallbackOperatorId,
+    nextSmsContactId: nextFallbackSmsContactId,
+    nextSmsGroupId: nextFallbackSmsGroupId,
     nextRecordId: nextFallbackRecordId,
     nextDailyProgramId: nextFallbackDailyProgramId,
     nextDailyProgramLineId: nextFallbackDailyProgramLineId
@@ -298,6 +330,8 @@ function persistFallbackStore() {
 var persistedFallback = loadFallbackStore();
 var fallbackArticles = persistedFallback.articles;
 var fallbackOperators = persistedFallback.operators;
+var fallbackSmsContacts = persistedFallback.smsContacts;
+var fallbackSmsGroups = persistedFallback.smsGroups;
 var fallbackRecords = persistedFallback.records;
 var fallbackSettings = persistedFallback.settings;
 var fallbackSynchronizedFile = persistedFallback.synchronizedFile;
@@ -305,6 +339,8 @@ var fallbackDailyPrograms = persistedFallback.dailyPrograms;
 var fallbackDailyProgramLines = persistedFallback.dailyProgramLines;
 var nextFallbackArticleId = persistedFallback.nextArticleId;
 var nextFallbackOperatorId = persistedFallback.nextOperatorId;
+var nextFallbackSmsContactId = persistedFallback.nextSmsContactId;
+var nextFallbackSmsGroupId = persistedFallback.nextSmsGroupId;
 var nextFallbackRecordId = persistedFallback.nextRecordId;
 var nextFallbackDailyProgramId = persistedFallback.nextDailyProgramId;
 var nextFallbackDailyProgramLineId = persistedFallback.nextDailyProgramLineId;
@@ -651,6 +687,134 @@ async function archiveProductionOperator(id) {
   await db.update(productionOperators).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(productionOperators.id, id));
   return { success: true };
 }
+async function listActiveSmsContacts() {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsContacts.filter((contact) => contact.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return db.select().from(smsContacts).where(eq(smsContacts.isActive, true)).orderBy(asc(smsContacts.name));
+}
+async function addSmsContact(name, phone) {
+  const db = await getDb();
+  if (!db) {
+    const normalizedName2 = name.trim();
+    const normalizedPhone2 = phone.trim();
+    const existing = fallbackSmsContacts.find((contact3) => contact3.phone === normalizedPhone2);
+    if (existing) {
+      existing.name = normalizedName2;
+      existing.isActive = true;
+      existing.updatedAt = /* @__PURE__ */ new Date();
+      persistFallbackStore();
+      return existing;
+    }
+    const contact2 = {
+      id: nextFallbackSmsContactId++,
+      name: normalizedName2,
+      phone: normalizedPhone2,
+      isActive: true,
+      createdAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date()
+    };
+    fallbackSmsContacts.push(contact2);
+    persistFallbackStore();
+    return contact2;
+  }
+  const normalizedName = name.trim();
+  const normalizedPhone = phone.trim();
+  const [contact] = await db.insert(smsContacts).values({ name: normalizedName, phone: normalizedPhone, isActive: true }).onConflictDoUpdate({
+    target: smsContacts.phone,
+    set: { name: normalizedName, isActive: true, updatedAt: /* @__PURE__ */ new Date() }
+  }).returning();
+  return contact;
+}
+async function archiveSmsContact(id) {
+  const db = await getDb();
+  if (!db) {
+    const contact = fallbackSmsContacts.find((item) => item.id === id);
+    if (contact) {
+      contact.isActive = false;
+      contact.updatedAt = /* @__PURE__ */ new Date();
+      persistFallbackStore();
+    }
+    return { success: true };
+  }
+  await db.update(smsContacts).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(smsContacts.id, id));
+  return { success: true };
+}
+async function getSmsContactsByIds(ids) {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsContacts.filter((contact) => ids.includes(contact.id));
+  }
+  if (ids.length === 0) return [];
+  return db.select().from(smsContacts).where(inArray(smsContacts.id, ids));
+}
+async function listActiveSmsGroups() {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsGroups.filter((group) => group.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return db.select().from(smsGroups).where(eq(smsGroups.isActive, true)).orderBy(asc(smsGroups.name));
+}
+async function addSmsGroup(name, contactIds) {
+  const db = await getDb();
+  const normalizedName = name.trim();
+  if (!db) {
+    const existing = fallbackSmsGroups.find((group3) => group3.name === normalizedName);
+    if (existing) {
+      existing.contactIds = contactIds;
+      existing.isActive = true;
+      existing.updatedAt = /* @__PURE__ */ new Date();
+      persistFallbackStore();
+      return existing;
+    }
+    const group2 = {
+      id: nextFallbackSmsGroupId++,
+      name: normalizedName,
+      contactIds,
+      isActive: true,
+      createdAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date()
+    };
+    fallbackSmsGroups.push(group2);
+    persistFallbackStore();
+    return group2;
+  }
+  const [group] = await db.insert(smsGroups).values({ name: normalizedName, contactIds, isActive: true }).onConflictDoUpdate({
+    target: smsGroups.name,
+    set: { contactIds, isActive: true, updatedAt: /* @__PURE__ */ new Date() }
+  }).returning();
+  return group;
+}
+async function updateSmsGroup(id, name, contactIds) {
+  const db = await getDb();
+  const normalizedName = name.trim();
+  if (!db) {
+    const group2 = fallbackSmsGroups.find((item) => item.id === id);
+    if (!group2) return void 0;
+    group2.name = normalizedName;
+    group2.contactIds = contactIds;
+    group2.updatedAt = /* @__PURE__ */ new Date();
+    persistFallbackStore();
+    return group2;
+  }
+  const [group] = await db.update(smsGroups).set({ name: normalizedName, contactIds, updatedAt: /* @__PURE__ */ new Date() }).where(eq(smsGroups.id, id)).returning();
+  return group;
+}
+async function archiveSmsGroup(id) {
+  const db = await getDb();
+  if (!db) {
+    const group = fallbackSmsGroups.find((item) => item.id === id);
+    if (group) {
+      group.isActive = false;
+      group.updatedAt = /* @__PURE__ */ new Date();
+      persistFallbackStore();
+    }
+    return { success: true };
+  }
+  await db.update(smsGroups).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(smsGroups.id, id));
+  return { success: true };
+}
 async function getProductionSettings() {
   const db = await getDb();
   if (!db) return fallbackSettings;
@@ -696,6 +860,47 @@ async function saveAdminCredentials(username, digest) {
     set: { adminUsername: username, adminPasswordHash: digest.hash, adminPasswordSalt: digest.salt, updatedAt: /* @__PURE__ */ new Date() }
   });
   return getProductionSettings();
+}
+
+// server/smsSend.ts
+var TEXTBEE_SEND_ENDPOINT = "https://api.textbee.dev/api/v1/gateway/send-sms";
+function extractErrorMessage(rawBody) {
+  try {
+    const parsed = JSON.parse(rawBody);
+    return parsed?.data?.message || parsed?.message || parsed?.error || rawBody;
+  } catch {
+    return rawBody;
+  }
+}
+async function sendSms(phone, content) {
+  const apiKey = process.env.TEXTBEE_API_KEY;
+  if (!apiKey) return { phone, success: false, error: "TEXTBEE_API_KEY n\u2019est pas configur\xE9e sur le serveur." };
+  try {
+    const response = await fetch(TEXTBEE_SEND_ENDPOINT, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ recipients: [phone], message: content })
+    });
+    const rawBody = await response.text().catch(() => "");
+    if (!response.ok) {
+      return { phone, success: false, error: `TextBee a refus\xE9 l\u2019envoi (${response.status}) : ${extractErrorMessage(rawBody).slice(0, 200)}` };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch {
+      parsed = void 0;
+    }
+    if (parsed?.data?.success === false) {
+      return { phone, success: false, error: parsed.data.message || "Le t\xE9l\xE9phone relais TextBee n\u2019a pas pu transmettre ce SMS (hors ligne ?)." };
+    }
+    return { phone, success: true };
+  } catch (error) {
+    return { phone, success: false, error: error instanceof Error ? error.message : "Erreur r\xE9seau lors de l\u2019envoi." };
+  }
+}
+async function sendSmsToMany(phones, content) {
+  return Promise.all(phones.map((phone) => sendSms(phone, content)));
 }
 
 // server/excelSync.ts
@@ -4273,7 +4478,7 @@ function getAdminSessionCookieOptions(req) {
 // server/siloDb.ts
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import path2 from "node:path";
-import { and, asc as asc3, desc as desc3, eq as eq4, inArray } from "drizzle-orm";
+import { and, asc as asc3, desc as desc3, eq as eq4, inArray as inArray2 } from "drizzle-orm";
 var fallbackPath = path2.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
 var emptyStore = () => ({ entries: [], allocations: [], shipments: [], silos: [], nextId: 1 });
 function loadFallbackStore2() {
@@ -4421,7 +4626,7 @@ async function listSiloProductionEntries() {
   }
   const entries = await db.select().from(siloProductionEntries).orderBy(desc3(siloProductionEntries.entryDate), desc3(siloProductionEntries.id));
   if (entries.length === 0) return [];
-  const allocations = await db.select().from(siloProductionAllocations).where(inArray(siloProductionAllocations.entryId, entries.map((entry) => entry.id))).orderBy(asc3(siloProductionAllocations.id));
+  const allocations = await db.select().from(siloProductionAllocations).where(inArray2(siloProductionAllocations.entryId, entries.map((entry) => entry.id))).orderBy(asc3(siloProductionAllocations.id));
   return entries.map((entry) => ({
     ...entry,
     allocations: allocations.filter((allocation) => allocation.entryId === entry.id)
@@ -4558,7 +4763,7 @@ async function createSiloShipmentGroup(shipments) {
   }
   const createdRows = await db.insert(siloShipments).values(shipments).returning();
   const groupId = createdRows[0].id;
-  await db.update(siloShipments).set({ splitGroupId: groupId }).where(inArray(siloShipments.id, createdRows.map((row) => row.id)));
+  await db.update(siloShipments).set({ splitGroupId: groupId }).where(inArray2(siloShipments.id, createdRows.map((row) => row.id)));
   return createdRows.map((row) => ({ ...row, splitGroupId: groupId }));
 }
 async function updateSiloShipment(id, shipment) {
@@ -5681,6 +5886,40 @@ var appRouter = router({
     archiveSilo: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       return archiveSilo(input.id);
+    }),
+    listSmsContacts: publicProcedure.query(() => listActiveSmsContacts()),
+    addSmsContact: publicProcedure.input(z2.object({
+      name: z2.string().trim().min(1, "Saisissez un nom.").max(128),
+      phone: z2.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Utilisez le format international, ex. +21612345678.")
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSmsContact(input.name, input.phone);
+    }),
+    archiveSmsContact: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSmsContact(input.id);
+    }),
+    listSmsGroups: publicProcedure.query(() => listActiveSmsGroups()),
+    addSmsGroup: publicProcedure.input(z2.object({
+      name: z2.string().trim().min(1, "Saisissez un nom de groupe.").max(128),
+      contactIds: z2.array(z2.number().int().positive()).min(1, "Ajoutez au moins un contact au groupe.")
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return addSmsGroup(input.name, input.contactIds);
+    }),
+    updateSmsGroup: publicProcedure.input(z2.object({
+      id: z2.number().int().positive(),
+      name: z2.string().trim().min(1, "Saisissez un nom de groupe.").max(128),
+      contactIds: z2.array(z2.number().int().positive()).min(1, "Ajoutez au moins un contact au groupe.")
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const updated = await updateSmsGroup(input.id, input.name, input.contactIds);
+      if (!updated) throw new TRPCError2({ code: "NOT_FOUND", message: "Ce groupe est introuvable." });
+      return updated;
+    }),
+    archiveSmsGroup: publicProcedure.input(z2.object({ id: z2.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      return archiveSmsGroup(input.id);
     })
   }),
   dailyProgram: router({
@@ -6050,6 +6289,24 @@ var appRouter = router({
       const deleted = await deleteProductionRecord(input.id);
       await syncExcelFromRecords();
       return deleted;
+    })
+  }),
+  sms: router({
+    /** Envoi via TextBee (voir server/smsSend.ts) : les numéros viennent des contacts enregistrés (settings.listSmsContacts), jamais d'une saisie libre côté client. */
+    send: publicProcedure.input(z2.object({
+      contactIds: z2.array(z2.number().int().positive()).min(1, "Choisissez au moins un contact."),
+      message: z2.string().trim().min(1, "Saisissez un message.").max(480)
+    })).mutation(async ({ ctx, input }) => {
+      assertAdminSession(ctx);
+      const contacts = await getSmsContactsByIds(input.contactIds);
+      if (contacts.length === 0) throw new TRPCError2({ code: "NOT_FOUND", message: "Aucun contact valide s\xE9lectionn\xE9." });
+      const results = await sendSmsToMany(contacts.map((contact) => contact.phone), input.message);
+      const withNames = results.map((result, index2) => ({ ...result, name: contacts[index2].name }));
+      return {
+        sent: withNames.filter((result) => result.success).length,
+        failed: withNames.filter((result) => !result.success).length,
+        results: withNames
+      };
     })
   })
 });

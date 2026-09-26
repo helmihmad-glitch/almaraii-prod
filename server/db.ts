@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { neon } from "@neondatabase/serverless";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import {
   dailyProgramLines,
@@ -14,6 +14,8 @@ import {
   productionOperators,
   productionRecords,
   productionSettings,
+  smsContacts,
+  smsGroups,
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -32,6 +34,24 @@ type FallbackArticle = {
 type FallbackOperator = {
   id: number;
   name: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackSmsContact = {
+  id: number;
+  name: string;
+  phone: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type FallbackSmsGroup = {
+  id: number;
+  name: string;
+  contactIds: number[];
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -111,6 +131,8 @@ function loadFallbackStore() {
     return {
       articles: [],
       operators: [],
+      smsContacts: [],
+      smsGroups: [],
       records: [],
       settings: undefined,
       synchronizedFile: undefined,
@@ -118,6 +140,8 @@ function loadFallbackStore() {
       dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
+      nextSmsContactId: 1,
+      nextSmsGroupId: 1,
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1,
@@ -129,6 +153,8 @@ function loadFallbackStore() {
     const parsed = JSON.parse(raw) as {
       articles?: FallbackArticle[];
       operators?: FallbackOperator[];
+      smsContacts?: FallbackSmsContact[];
+      smsGroups?: FallbackSmsGroup[];
       records?: FallbackRecord[];
       settings?: FallbackProductionSettings | undefined;
       synchronizedFile?: FallbackSynchronizedFile | undefined;
@@ -136,6 +162,8 @@ function loadFallbackStore() {
       dailyProgramLines?: FallbackDailyProgramLine[];
       nextArticleId?: number;
       nextOperatorId?: number;
+      nextSmsContactId?: number;
+      nextSmsGroupId?: number;
       nextRecordId?: number;
       nextDailyProgramId?: number;
       nextDailyProgramLineId?: number;
@@ -144,6 +172,8 @@ function loadFallbackStore() {
     return {
       articles: parsed.articles ?? [],
       operators: parsed.operators ?? [],
+      smsContacts: parsed.smsContacts ?? [],
+      smsGroups: parsed.smsGroups ?? [],
       records: parsed.records ?? [],
       settings: parsed.settings,
       synchronizedFile: parsed.synchronizedFile,
@@ -151,6 +181,8 @@ function loadFallbackStore() {
       dailyProgramLines: parsed.dailyProgramLines ?? [],
       nextArticleId: parsed.nextArticleId ?? 1,
       nextOperatorId: parsed.nextOperatorId ?? 1,
+      nextSmsContactId: parsed.nextSmsContactId ?? 1,
+      nextSmsGroupId: parsed.nextSmsGroupId ?? 1,
       nextRecordId: parsed.nextRecordId ?? 1,
       nextDailyProgramId: parsed.nextDailyProgramId ?? 1,
       nextDailyProgramLineId: parsed.nextDailyProgramLineId ?? 1,
@@ -159,6 +191,8 @@ function loadFallbackStore() {
     return {
       articles: [],
       operators: [],
+      smsContacts: [],
+      smsGroups: [],
       records: [],
       settings: undefined,
       synchronizedFile: undefined,
@@ -166,6 +200,8 @@ function loadFallbackStore() {
       dailyProgramLines: [],
       nextArticleId: 1,
       nextOperatorId: 1,
+      nextSmsContactId: 1,
+      nextSmsGroupId: 1,
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1,
@@ -180,6 +216,8 @@ function persistFallbackStore() {
   const payload = JSON.stringify({
     articles: fallbackArticles,
     operators: fallbackOperators,
+    smsContacts: fallbackSmsContacts,
+    smsGroups: fallbackSmsGroups,
     records: fallbackRecords,
     settings: fallbackSettings,
     synchronizedFile: fallbackSynchronizedFile,
@@ -187,6 +225,8 @@ function persistFallbackStore() {
     dailyProgramLines: fallbackDailyProgramLines,
     nextArticleId: nextFallbackArticleId,
     nextOperatorId: nextFallbackOperatorId,
+    nextSmsContactId: nextFallbackSmsContactId,
+    nextSmsGroupId: nextFallbackSmsGroupId,
     nextRecordId: nextFallbackRecordId,
     nextDailyProgramId: nextFallbackDailyProgramId,
     nextDailyProgramLineId: nextFallbackDailyProgramLineId,
@@ -210,6 +250,8 @@ function persistFallbackStore() {
 const persistedFallback = loadFallbackStore();
 const fallbackArticles: FallbackArticle[] = persistedFallback.articles;
 const fallbackOperators: FallbackOperator[] = persistedFallback.operators;
+const fallbackSmsContacts: FallbackSmsContact[] = persistedFallback.smsContacts;
+const fallbackSmsGroups: FallbackSmsGroup[] = persistedFallback.smsGroups;
 const fallbackRecords: FallbackRecord[] = persistedFallback.records;
 let fallbackSettings: FallbackProductionSettings | undefined = persistedFallback.settings;
 let fallbackSynchronizedFile: FallbackSynchronizedFile | undefined = persistedFallback.synchronizedFile;
@@ -217,6 +259,8 @@ const fallbackDailyPrograms: FallbackDailyProgram[] = persistedFallback.dailyPro
 const fallbackDailyProgramLines: FallbackDailyProgramLine[] = persistedFallback.dailyProgramLines;
 let nextFallbackArticleId = persistedFallback.nextArticleId;
 let nextFallbackOperatorId = persistedFallback.nextOperatorId;
+let nextFallbackSmsContactId = persistedFallback.nextSmsContactId;
+let nextFallbackSmsGroupId = persistedFallback.nextSmsGroupId;
 let nextFallbackRecordId = persistedFallback.nextRecordId;
 let nextFallbackDailyProgramId = persistedFallback.nextDailyProgramId;
 let nextFallbackDailyProgramLineId = persistedFallback.nextDailyProgramLineId;
@@ -653,6 +697,150 @@ export async function archiveProductionOperator(id: number) {
   }
 
   await db.update(productionOperators).set({ isActive: false, updatedAt: new Date() }).where(eq(productionOperators.id, id));
+  return { success: true } as const;
+}
+
+export async function listActiveSmsContacts() {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsContacts.filter((contact) => contact.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return db.select().from(smsContacts).where(eq(smsContacts.isActive, true)).orderBy(asc(smsContacts.name));
+}
+
+export async function addSmsContact(name: string, phone: string) {
+  const db = await getDb();
+  if (!db) {
+    const normalizedName = name.trim();
+    const normalizedPhone = phone.trim();
+    const existing = fallbackSmsContacts.find((contact) => contact.phone === normalizedPhone);
+    if (existing) {
+      existing.name = normalizedName;
+      existing.isActive = true;
+      existing.updatedAt = new Date();
+      persistFallbackStore();
+      return existing;
+    }
+
+    const contact: FallbackSmsContact = {
+      id: nextFallbackSmsContactId++,
+      name: normalizedName,
+      phone: normalizedPhone,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackSmsContacts.push(contact);
+    persistFallbackStore();
+    return contact;
+  }
+
+  const normalizedName = name.trim();
+  const normalizedPhone = phone.trim();
+  const [contact] = await db.insert(smsContacts).values({ name: normalizedName, phone: normalizedPhone, isActive: true }).onConflictDoUpdate({
+    target: smsContacts.phone,
+    set: { name: normalizedName, isActive: true, updatedAt: new Date() },
+  }).returning();
+  return contact;
+}
+
+export async function archiveSmsContact(id: number) {
+  const db = await getDb();
+  if (!db) {
+    const contact = fallbackSmsContacts.find((item) => item.id === id);
+    if (contact) {
+      contact.isActive = false;
+      contact.updatedAt = new Date();
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
+
+  await db.update(smsContacts).set({ isActive: false, updatedAt: new Date() }).where(eq(smsContacts.id, id));
+  return { success: true } as const;
+}
+
+/** Résout les numéros à partir des id choisis sur la page Envoi SMS (voir sms.send) — jamais le numéro saisi côté client directement. */
+export async function getSmsContactsByIds(ids: number[]) {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsContacts.filter((contact) => ids.includes(contact.id));
+  }
+  if (ids.length === 0) return [];
+  return db.select().from(smsContacts).where(inArray(smsContacts.id, ids));
+}
+
+export async function listActiveSmsGroups() {
+  const db = await getDb();
+  if (!db) {
+    return fallbackSmsGroups.filter((group) => group.isActive).sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return db.select().from(smsGroups).where(eq(smsGroups.isActive, true)).orderBy(asc(smsGroups.name));
+}
+
+export async function addSmsGroup(name: string, contactIds: number[]) {
+  const db = await getDb();
+  const normalizedName = name.trim();
+  if (!db) {
+    const existing = fallbackSmsGroups.find((group) => group.name === normalizedName);
+    if (existing) {
+      existing.contactIds = contactIds;
+      existing.isActive = true;
+      existing.updatedAt = new Date();
+      persistFallbackStore();
+      return existing;
+    }
+
+    const group: FallbackSmsGroup = {
+      id: nextFallbackSmsGroupId++,
+      name: normalizedName,
+      contactIds,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    fallbackSmsGroups.push(group);
+    persistFallbackStore();
+    return group;
+  }
+
+  const [group] = await db.insert(smsGroups).values({ name: normalizedName, contactIds, isActive: true }).onConflictDoUpdate({
+    target: smsGroups.name,
+    set: { contactIds, isActive: true, updatedAt: new Date() },
+  }).returning();
+  return group;
+}
+
+export async function updateSmsGroup(id: number, name: string, contactIds: number[]) {
+  const db = await getDb();
+  const normalizedName = name.trim();
+  if (!db) {
+    const group = fallbackSmsGroups.find((item) => item.id === id);
+    if (!group) return undefined;
+    group.name = normalizedName;
+    group.contactIds = contactIds;
+    group.updatedAt = new Date();
+    persistFallbackStore();
+    return group;
+  }
+
+  const [group] = await db.update(smsGroups).set({ name: normalizedName, contactIds, updatedAt: new Date() }).where(eq(smsGroups.id, id)).returning();
+  return group;
+}
+
+export async function archiveSmsGroup(id: number) {
+  const db = await getDb();
+  if (!db) {
+    const group = fallbackSmsGroups.find((item) => item.id === id);
+    if (group) {
+      group.isActive = false;
+      group.updatedAt = new Date();
+      persistFallbackStore();
+    }
+    return { success: true } as const;
+  }
+
+  await db.update(smsGroups).set({ isActive: false, updatedAt: new Date() }).where(eq(smsGroups.id, id));
   return { success: true } as const;
 }
 
