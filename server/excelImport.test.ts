@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { createProductionRecord, listProductionRecords } from "./db";
+import { createProductionRecord, listProductionRecords, listRestDays, upsertRestDays } from "./db";
 import { importProductionRows, parseImportedWorkbook, previewProductionImport, productionRowFingerprint } from "./excelImport";
 
 async function buildWorkbook(values: unknown[]) {
@@ -48,6 +48,41 @@ describe("parseImportedWorkbook", () => {
 
     expect(parsed.rows).toEqual([]);
     expect(parsed.errors[0]).toContain("ne respectent pas les règles du registre");
+  });
+
+  it("ignore un second intitulé Date répété plus loin sur la ligne d'en-têtes (bloc d'analyse) et garde la colonne du registre", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Septembre_2026");
+    const header = ["DATE", "ARTICLE", "TEMPS TOTAL PROD. (h)", "ARRÊTS PLAN. (h)", "ARRÊTS NON PL. (h)", "PROD. (T)", "REBUTS (T)", "CADENCE STD"];
+    while (header.length < 44) header.push(null);
+    header.push("Date"); // bloc d'analyse annexe, sans rapport avec le registre
+    worksheet.addRow(header);
+    worksheet.addRow(["2026-09-01", "CM1", 10, 1, 0, 90, 0, 15]);
+
+    const parsed = await parseImportedWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows).toEqual([expect.objectContaining({ productionDate: "2026-09-01", article: "CM1" })]);
+  });
+
+  it("repère une ligne Article = Repos comme jour de repos tout en la gardant signalée dans les erreurs", async () => {
+    const buffer = await buildWorkbook(["05/08/2026", "Repos", null, null, null, null, null, null, ""]);
+
+    const parsed = await parseImportedWorkbook(buffer);
+
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.errors[0]).toContain("ne respectent pas les règles du registre");
+    expect(parsed.restDays).toEqual(["2026-08-05"]);
+  });
+
+  it("persiste les jours de repos détectés à l'import sans dupliquer une date déjà connue (voir Rapports)", async () => {
+    await upsertRestDays(["2026-08-05", "2026-08-12"]);
+    await upsertRestDays(["2026-08-12", "2026-08-19"]); // 12/08 déjà connu : ne doit pas créer de doublon
+
+    const restDays = await listRestDays();
+
+    expect(restDays.filter((day) => day.restDate === "2026-08-12")).toHaveLength(1);
+    expect(restDays.map((day) => day.restDate)).toEqual(expect.arrayContaining(["2026-08-05", "2026-08-12", "2026-08-19"]));
   });
 
   it("reconnaît des en-têtes placés après un titre et libellés Date de production et Produit", async () => {

@@ -64,6 +64,13 @@
       "when": 1790406848914,
       "tag": "0008_cynical_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790869650956,
+      "tag": "0009_sticky_ozymandias",
+      "breakpoints": true
     }
   ]
 }

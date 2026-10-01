@@ -14,6 +14,7 @@ import {
   productionOperators,
   productionRecords,
   productionSettings,
+  restDays,
   smsContacts,
   smsGroups,
   users,
@@ -118,6 +119,13 @@ type FallbackSynchronizedFile = {
   updatedAt: Date;
 };
 
+type FallbackRestDay = {
+  id: number;
+  restDate: string;
+  source: string;
+  createdAt: Date;
+};
+
 // Vitest (process.env.VITEST, positionné automatiquement par le test runner)
 // écrit dans son propre fichier : les tests ne doivent jamais partager ce
 // stockage avec le serveur de développement lancé à côté, sous peine de
@@ -138,6 +146,7 @@ function loadFallbackStore() {
       synchronizedFile: undefined,
       dailyPrograms: [],
       dailyProgramLines: [],
+      restDays: [],
       nextArticleId: 1,
       nextOperatorId: 1,
       nextSmsContactId: 1,
@@ -145,6 +154,7 @@ function loadFallbackStore() {
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1,
+      nextRestDayId: 1,
     };
   }
 
@@ -160,6 +170,7 @@ function loadFallbackStore() {
       synchronizedFile?: FallbackSynchronizedFile | undefined;
       dailyPrograms?: FallbackDailyProgram[];
       dailyProgramLines?: FallbackDailyProgramLine[];
+      restDays?: FallbackRestDay[];
       nextArticleId?: number;
       nextOperatorId?: number;
       nextSmsContactId?: number;
@@ -167,6 +178,7 @@ function loadFallbackStore() {
       nextRecordId?: number;
       nextDailyProgramId?: number;
       nextDailyProgramLineId?: number;
+      nextRestDayId?: number;
     };
 
     return {
@@ -179,6 +191,7 @@ function loadFallbackStore() {
       synchronizedFile: parsed.synchronizedFile,
       dailyPrograms: parsed.dailyPrograms ?? [],
       dailyProgramLines: parsed.dailyProgramLines ?? [],
+      restDays: parsed.restDays ?? [],
       nextArticleId: parsed.nextArticleId ?? 1,
       nextOperatorId: parsed.nextOperatorId ?? 1,
       nextSmsContactId: parsed.nextSmsContactId ?? 1,
@@ -186,6 +199,7 @@ function loadFallbackStore() {
       nextRecordId: parsed.nextRecordId ?? 1,
       nextDailyProgramId: parsed.nextDailyProgramId ?? 1,
       nextDailyProgramLineId: parsed.nextDailyProgramLineId ?? 1,
+      nextRestDayId: parsed.nextRestDayId ?? 1,
     };
   } catch {
     return {
@@ -198,6 +212,7 @@ function loadFallbackStore() {
       synchronizedFile: undefined,
       dailyPrograms: [],
       dailyProgramLines: [],
+      restDays: [],
       nextArticleId: 1,
       nextOperatorId: 1,
       nextSmsContactId: 1,
@@ -205,6 +220,7 @@ function loadFallbackStore() {
       nextRecordId: 1,
       nextDailyProgramId: 1,
       nextDailyProgramLineId: 1,
+      nextRestDayId: 1,
     };
   }
 }
@@ -223,6 +239,7 @@ function persistFallbackStore() {
     synchronizedFile: fallbackSynchronizedFile,
     dailyPrograms: fallbackDailyPrograms,
     dailyProgramLines: fallbackDailyProgramLines,
+    restDays: fallbackRestDays,
     nextArticleId: nextFallbackArticleId,
     nextOperatorId: nextFallbackOperatorId,
     nextSmsContactId: nextFallbackSmsContactId,
@@ -230,6 +247,7 @@ function persistFallbackStore() {
     nextRecordId: nextFallbackRecordId,
     nextDailyProgramId: nextFallbackDailyProgramId,
     nextDailyProgramLineId: nextFallbackDailyProgramLineId,
+    nextRestDayId: nextFallbackRestDayId,
   }, null, 2);
 
   // Ce stockage de secours n’existe que pour le développement local. Sur une
@@ -257,6 +275,7 @@ let fallbackSettings: FallbackProductionSettings | undefined = persistedFallback
 let fallbackSynchronizedFile: FallbackSynchronizedFile | undefined = persistedFallback.synchronizedFile;
 const fallbackDailyPrograms: FallbackDailyProgram[] = persistedFallback.dailyPrograms;
 const fallbackDailyProgramLines: FallbackDailyProgramLine[] = persistedFallback.dailyProgramLines;
+const fallbackRestDays: FallbackRestDay[] = persistedFallback.restDays;
 let nextFallbackArticleId = persistedFallback.nextArticleId;
 let nextFallbackOperatorId = persistedFallback.nextOperatorId;
 let nextFallbackSmsContactId = persistedFallback.nextSmsContactId;
@@ -264,6 +283,7 @@ let nextFallbackSmsGroupId = persistedFallback.nextSmsGroupId;
 let nextFallbackRecordId = persistedFallback.nextRecordId;
 let nextFallbackDailyProgramId = persistedFallback.nextDailyProgramId;
 let nextFallbackDailyProgramLineId = persistedFallback.nextDailyProgramLineId;
+let nextFallbackRestDayId = persistedFallback.nextRestDayId;
 
 /**
  * Vercel provisionne `DATABASE_URL` en connectant une base Postgres au projet
@@ -339,6 +359,31 @@ export async function listProductionRecords() {
     return [...fallbackRecords].sort((a, b) => b.productionDate.localeCompare(a.productionDate) || b.id - a.id);
   }
   return db.select().from(productionRecords).orderBy(desc(productionRecords.productionDate), desc(productionRecords.id));
+}
+
+/** Jours de repos repérés à l'import (voir server/excelImport.ts) — affichés dans Rapports. */
+export async function listRestDays() {
+  const db = await getDb();
+  if (!db) {
+    return [...fallbackRestDays].sort((a, b) => b.restDate.localeCompare(a.restDate));
+  }
+  return db.select().from(restDays).orderBy(desc(restDays.restDate));
+}
+
+/** Ajoute les nouvelles dates de repos sans dupliquer celles déjà connues (une seule entrée par date). */
+export async function upsertRestDays(dates: string[]) {
+  const uniqueDates = Array.from(new Set(dates));
+  if (uniqueDates.length === 0) return;
+  const db = await getDb();
+  if (!db) {
+    for (const restDate of uniqueDates) {
+      if (fallbackRestDays.some((day) => day.restDate === restDate)) continue;
+      fallbackRestDays.push({ id: nextFallbackRestDayId++, restDate, source: "excel-import", createdAt: new Date() });
+    }
+    persistFallbackStore();
+    return;
+  }
+  await db.insert(restDays).values(uniqueDates.map((restDate) => ({ restDate }))).onConflictDoNothing({ target: restDays.restDate });
 }
 
 export async function createProductionRecord(record: InsertProductionRecord) {

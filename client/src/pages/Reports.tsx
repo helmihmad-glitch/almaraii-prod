@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { ArrowLeft, Boxes, CalendarDays, Database, Download, FileSpreadsheet, FileText, Menu, PackageSearch, SlidersHorizontal, Truck } from "lucide-react";
+import { ArrowLeft, BedDouble, Boxes, CalendarDays, Database, Download, FileSpreadsheet, FileText, Menu, PackageSearch, SlidersHorizontal, Truck } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
@@ -90,6 +90,10 @@ export default function Reports() {
     if (!url) { toast.error("Le fichier Excel synchronisé est en cours de préparation."); return; }
     window.location.assign(url);
   };
+
+  // --- Jours de repos (repérés à l'import Excel, ligne Article = « Repos ") : affichage seul, pas d'export. ---
+  const restDaysQuery = trpc.production.listRestDays.useQuery();
+  const formatRestDay = (isoDate: string) => new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" });
 
   // --- Registre journalier filtré (classeur Excel) et rapport PDF par jour : mêmes lignes source. ---
   const registryQuery = trpc.production.list.useQuery();
@@ -191,6 +195,20 @@ export default function Reports() {
               <div className="settings-card-heading"><div className="settings-icon security"><Database size={19} /></div><div><span>Classeur automatique</span><h2>Registre synchronisé</h2></div></div>
               <p className="settings-copy">Le classeur Excel maintenu automatiquement à partir de toutes les lignes du registre.</p>
               <button type="button" className="settings-primary" onClick={downloadSynchronizedExcel} disabled={synchronizedFileQuery.isLoading}><Download size={16} />Télécharger le classeur</button>
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-heading"><div className="settings-icon"><BedDouble size={19} /></div><div><span>Repéré à l’import</span><h2>Jours de repos</h2></div></div>
+              <p className="settings-copy">Les jours marqués « Repos » dans un fichier importé, sans ligne de production ce jour-là.</p>
+              {restDaysQuery.isLoading ? (
+                <span className="settings-empty">Chargement…</span>
+              ) : restDaysQuery.data?.length ? (
+                <div className="sms-contact-picker" role="list" aria-label="Jours de repos">
+                  {restDaysQuery.data.map((day) => <span key={day.id} className="sms-group-chip" role="listitem">{formatRestDay(day.restDate)}</span>)}
+                </div>
+              ) : (
+                <span className="settings-empty">Aucun jour de repos importé pour l’instant.</span>
+              )}
             </article>
 
             <div className="settings-grid reports-grid-single">

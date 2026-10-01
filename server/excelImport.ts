@@ -17,7 +17,7 @@ export type ImportedProductionRow = {
   comment?: string;
 };
 
-type ParsedImport = { rows: ImportedProductionRow[]; errors: string[] };
+type ParsedImport = { rows: ImportedProductionRow[]; errors: string[]; restDays: string[] };
 
 type ProductionFingerprintInput = {
   productionDate: string;
@@ -156,17 +156,24 @@ export function productionRowFingerprint(row: ProductionFingerprintInput) {
 export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImport> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as never);
-  if (workbook.worksheets.length === 0) return { rows: [], errors: ["Le fichier Excel ne contient aucune feuille."] };
+  if (workbook.worksheets.length === 0) return { rows: [], errors: ["Le fichier Excel ne contient aucune feuille."], restDays: [] };
   const rows: ImportedProductionRow[] = [];
   const errors: string[] = [];
+  const restDaySet = new Set<string>();
   let foundRegistrySheet = false;
   for (const worksheet of workbook.worksheets) {
     const headerRow = findHeaderRow(worksheet);
     if (!headerRow) continue;
     foundRegistrySheet = true;
     const sheetYear = findSheetYear(worksheet);
+    // Première occurrence gagnante : certaines feuilles répètent un intitulé (ex. un
+    // second « Date » dans un bloc d'analyse plus loin sur la ligne) — la colonne du
+    // registre, toujours la plus à gauche, ne doit jamais être écrasée par un doublon.
     const headerIndexes = new Map<string, number>();
-    headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => headerIndexes.set(normalizeHeader(readCellText(cell)), columnNumber));
+    headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      const normalized = normalizeHeader(readCellText(cell));
+      if (!headerIndexes.has(normalized)) headerIndexes.set(normalized, columnNumber);
+    });
     const findColumn = (aliases: readonly string[]) => Array.from(headerIndexes.entries()).find(([header]) => matchesHeader(header, aliases))?.[1];
     const columns = Object.fromEntries(Object.entries(requiredHeaders).map(([key, aliases]) => [key, findColumn(aliases)])) as Record<keyof typeof requiredHeaders, number | undefined>;
     const realHoursColumn = findColumn(optionalHeaders.realHours);
@@ -184,6 +191,11 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
       const dateCell = row.getCell(columns.date!);
       if (!article && !readCellText(dateCell)) continue;
       const productionDate = toIsoDate(dateCell.value, readCellText(dateCell), sheetYear);
+      // Un jour marqué « Repos » reste signalé par les règles de validation ci-dessous
+      // (comportement voulu : l'utilisateur voit la ligne dans l'import), mais est
+      // capturé à part pour s'afficher comme jour de repos dans Rapports plutôt que
+      // de rester une simple erreur silencieuse.
+      if (article === "REPOS" && productionDate) restDaySet.add(productionDate);
       const asZeroWhenBlank = (column: number | undefined) => {
         if (!column) return 0;
         const cell = row.getCell(column);
@@ -213,8 +225,8 @@ export async function parseImportedWorkbook(buffer: Buffer): Promise<ParsedImpor
       rows.push({ rowNumber, id: Number.isInteger(idValue) && idValue > 0 ? idValue : undefined, productionDate, article, ...values, comment: commentColumn ? readCellText(row.getCell(commentColumn)) : undefined });
     }
   }
-  if (!foundRegistrySheet) return { rows: [], errors: ["Les en-têtes de date et d’article sont introuvables dans les cent premières lignes de toutes les feuilles du fichier."] };
-  return { rows, errors };
+  if (!foundRegistrySheet) return { rows: [], errors: ["Les en-têtes de date et d’article sont introuvables dans les cent premières lignes de toutes les feuilles du fichier."], restDays: [] };
+  return { rows, errors, restDays: Array.from(restDaySet) };
 }
 
 type ExistingProductionRecord = ProductionFingerprintInput & { id: number };

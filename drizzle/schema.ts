@@ -48,6 +48,19 @@ export const synchronizedExcelFiles = pgTable("synchronized_excel_files", {
   updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
+/**
+ * Jours de repos détectés lors d'un import Excel (ligne Article = « Repos »,
+ * sans donnée de production) — affichés dans Rapports, jamais comptés comme
+ * une ligne du registre (voir le repérage dans server/excelImport.ts et la
+ * persistance dans importWorkbookBuffer côté routeur).
+ */
+export const restDays = pgTable("rest_days", {
+  id: serial("id").primaryKey(),
+  restDate: varchar("restDate", { length: 10 }).notNull(),
+  source: varchar("source", { length: 16 }).notNull().default("excel-import"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => [uniqueIndex("rest_days_date_unique").on(table.restDate)]);
+
 export const productionArticles = pgTable("production_articles", {
   id: serial("id").primaryKey(),
   code: varchar("code", { length: 64 }).notNull(),
@@ -197,6 +210,8 @@ export type InsertUser = typeof users.$inferInsert;
 export type ProductionRecord = typeof productionRecords.$inferSelect;
 export type InsertProductionRecord = typeof productionRecords.$inferInsert;
 export type SynchronizedExcelFile = typeof synchronizedExcelFiles.$inferSelect;
+export type RestDay = typeof restDays.$inferSelect;
+export type InsertRestDay = typeof restDays.$inferInsert;
 export type ProductionArticle = typeof productionArticles.$inferSelect;
 export type ProductionOperator = typeof productionOperators.$inferSelect;
 export type SmsContact = typeof smsContacts.$inferSelect;

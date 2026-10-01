@@ -29,11 +29,13 @@ import {
   listActiveSmsGroups,
   listDailyPrograms,
   listProductionRecords,
+  listRestDays,
   saveAdminCredentials,
   updateDailyProgram,
   updateDailyProgramLine,
   updateProductionRecord,
   updateSmsGroup,
+  upsertRestDays,
 } from "./db";
 import { sendSmsToMany } from "./smsSend";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
@@ -247,6 +249,7 @@ async function importWorkbookBuffer(buffer: Buffer, applyModifications: boolean)
   const parsed = await parseImportedWorkbook(buffer);
   if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
   const result = await importProductionRows(parsed.rows, { applyModifications });
+  await upsertRestDays(parsed.restDays);
   await syncExcelFromRecords();
   return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
@@ -711,6 +714,8 @@ export const appRouter = router({
   }),
   production: router({
     list: publicProcedure.query(() => listProductionRecords()),
+    /** Jours de repos repérés lors d'un import Excel (ligne Article = « Repos ») — affichés dans Rapports. */
+    listRestDays: publicProcedure.query(() => listRestDays()),
     initialize: publicProcedure.mutation(() => initializeSynchronizedExcel()),
     importExcel: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(8_000_000), applyModifications: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
       if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
