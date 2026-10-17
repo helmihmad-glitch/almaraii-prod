@@ -10,6 +10,18 @@ describe("sélection de période de la page d’accueil", () => {
     expect(homePage).toContain("Choisir le mois et l’année");
   });
 
+  // Audit des calculs : les tuiles affichaient une tendance figée (« +4,2 pts »,
+  // « +2,1 pts ») quel que soit le mois, et le TRS global suivait les filtres du
+  // journal alors que Disponibilité, Performance et Rebuts portaient sur tout le mois.
+  it("calcule les tendances TRS et Disponibilité sur le mois précédent, et le TRS global sur tout le mois comme les autres tuiles", () => {
+    expect(homePage).not.toContain("+4,2 pts");
+    expect(homePage).not.toContain("+2,1 pts");
+    expect(homePage).toContain("previousMonthStats");
+    expect(homePage).toContain("monthTrend(monthlyStats.trs, previousMonthStats?.trs)");
+    expect(homePage).toContain("monthTrend(monthlyStats.availability, previousMonthStats?.availability)");
+    expect(homePage).toContain('value={hasMonthData ? pct(monthlyStats.trs) : "—"}');
+  });
+
   it("place la période observée dans la carte d’objectif mensuel", () => {
     const heroStart = homePage.indexOf('className="hero-panel"');
     const periodControl = homePage.indexOf('className="hero-period-control"');

@@ -10,18 +10,25 @@
 //          "", <la même différence>)
 //    → une case vide dès que le solde est nul ou négatif.
 //
-//  · Feuille « Silo_Article » :
-//      Article du silo = premier article (dans l’ordre des colonnes) dont la
-//        case de la ligne du silo n’est pas vide ;
-//      Qté du silo     = la valeur de cette case ;
-//      Stock _Article  = SUMIF sur ces lignes, c’est-à-dire la somme des seules
-//        quantités effectivement affichées par silo.
+//  · Feuille « Silo_Article » : le classeur ne retenait qu’un article par
+//    silo (le premier de la ligne) et ne comptait que lui dans « Stock
+//    _Article ». Un silo peut pourtant contenir deux articles à la fois (un
+//    reliquat de DG3 sous une nouvelle production de DG4, par exemple) : le
+//    stock de l’article suivant disparaissait alors des totaux. L’occupation
+//    liste donc ici tous les articles présents, et les totaux reprennent
+//    chaque case de la matrice.
 
 export type SiloAllocationInput = { article: string; silo: string; quantity: number };
 export type SiloShipmentInput = { article: string; silo: string; quantity: number };
 
 export type SiloMatrix = Record<string, Record<string, number | null>>;
-export type SiloOccupancy = { silo: string; article: string | null; quantity: number | null };
+export type SiloArticleQuantity = { article: string; quantity: number };
+/**
+ * `article` : l’article principal du silo (la plus grande quantité), `quantity` :
+ * le total du silo, tous articles confondus, et `articles` : le détail de chaque
+ * article présent (plusieurs dès qu’un silo est mixte).
+ */
+export type SiloOccupancy = { silo: string; article: string | null; quantity: number | null; articles: SiloArticleQuantity[] };
 export type ArticleStock = { article: string; quantity: number };
 
 /** Arrondi de présentation : évite les 25.479999999999997 hérités des flottants. */
@@ -65,33 +72,34 @@ export function computeSiloMatrix(
 }
 
 /**
- * Occupation de chaque silo : le premier article de la ligne ayant un solde
- * positif, comme le fait l’INDEX/MATCH de la feuille « Silo_Article ».
+ * Occupation de chaque silo : tous les articles au solde positif, du plus
+ * abondant au moins abondant (à quantité égale, dans l’ordre configuré).
  */
 export function computeSiloOccupancy(matrix: SiloMatrix, silos: readonly string[], articles: readonly string[]): SiloOccupancy[] {
   return silos.map((silo) => {
     const row = matrix[silo] ?? {};
-    const article = articles.find((candidate) => row[candidate] !== null && row[candidate] !== undefined) ?? null;
-    return { silo, article, quantity: article ? row[article] ?? null : null };
+    const present = articles
+      .map((article, index) => ({ article, quantity: row[article] ?? null, index }))
+      .filter((item): item is { article: string; quantity: number; index: number } => item.quantity !== null)
+      .sort((a, b) => b.quantity - a.quantity || a.index - b.index)
+      .map(({ article, quantity }) => ({ article, quantity }));
+    if (present.length === 0) return { silo, article: null, quantity: null, articles: [] };
+    return { silo, article: present[0].article, quantity: roundQuantity(present.reduce((total, item) => total + item.quantity, 0)), articles: present };
   });
 }
 
-/**
- * Stock par article : somme des quantités affichées par silo, à l’identique du
- * SUMIF de la colonne « Stock _Article ». Un article présent dans un silo déjà
- * attribué à un autre article n’est donc pas compté, exactement comme dans le
- * classeur.
- */
+/** Stock par article : chaque silo où l’article est présent compte, y compris un silo partagé avec un autre article. */
 export function computeArticleStock(occupancy: SiloOccupancy[], articles: readonly string[]): ArticleStock[] {
   return articles.map((article) => ({
     article,
-    quantity: roundQuantity(occupancy
-      .filter((row) => row.article === article)
-      .reduce((total, row) => total + (row.quantity ?? 0), 0)),
+    quantity: roundQuantity(occupancy.reduce(
+      (total, row) => total + row.articles.filter((item) => item.article === article).reduce((sum, item) => sum + item.quantity, 0),
+      0,
+    )),
   }));
 }
 
-/** Total général du produit fini stocké, tous silos confondus. */
+/** Total général du produit fini stocké, tous silos et tous articles confondus. */
 export function computeTotalStock(occupancy: SiloOccupancy[]) {
   return roundQuantity(occupancy.reduce((total, row) => total + (row.quantity ?? 0), 0));
 }

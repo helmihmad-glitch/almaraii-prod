@@ -31,6 +31,7 @@ import {
   listProductionRecords,
   listRestDays,
   saveAdminCredentials,
+  SmsGroupNameTakenError,
   updateDailyProgram,
   updateDailyProgramLine,
   updateProductionRecord,
@@ -39,7 +40,7 @@ import {
 } from "./db";
 import { sendSmsToMany } from "./smsSend";
 import { getSynchronizedExcelFile, initializeSynchronizedExcel, syncExcelFromRecords } from "./excelSync";
-import { importProductionRows, parseImportedWorkbook, previewProductionImport } from "./excelImport";
+import { importProductionRows, parseImportedWorkbook, previewProductionImport, type ProductionImportPreview } from "./excelImport";
 import { parseDailyProgramWorkbook } from "./dailyProgramExcel";
 import { createActionPasswordDigest, verifyActionPasswordDigest } from "./settingsSecurity";
 import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_DURATION_MS, getAdminSessionCookieOptions, signAdminSession } from "./_core/adminSession";
@@ -63,11 +64,23 @@ import {
   renameSilo,
   replaceSiloMovements,
   setLotManualDepletion,
+  SiloCodeTakenError,
   updateSiloProductionEntry,
   updateSiloShipment,
 } from "./siloDb";
 import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
-import { allocateFifoShipment, buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
+import {
+  allocateFifoShipment,
+  buildLotLedgerWorkbook,
+  checkLotClaim,
+  computeLotFreeQuantities,
+  computeLotLedger,
+  computeLotLedgerAsOf,
+  computeShippableQuantity,
+  findContradictedLotClaim,
+  manualDepletionWriteOffs,
+  openLotQuantity,
+} from "./siloLots";
 import { buildFilteredRegistryWorkbook, type FilteredRegistryRow } from "./registryExcel";
 import { buildShipmentsReportWorkbook } from "./shipmentsReport";
 import { extractExpeditionPdfText, importExpeditionShipments, parseExpeditionPdfText } from "./expeditionPdfImport";
@@ -76,7 +89,8 @@ import { SHIPMENT_TYPES } from "../shared/silo";
 
 export const recordInput = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ"),
-  article: z.string().trim().min(1).max(64),
+  // Codes article en majuscules, comme l'import Excel et la liste des articles : « dg3 » et « DG3 » ne font qu'un.
+  article: z.string().trim().min(1).max(64).transform((value) => value.toUpperCase()),
   totalProductionHours: z.number().positive(),
   plannedStopsHours: z.number().min(0),
   unplannedStopsHours: z.number().min(0),
@@ -100,22 +114,87 @@ function assertAdminSession(ctx: Pick<TrpcContext, "isAdmin">) {
   }
 }
 
-/** Bloque une expédition (création ou modification) qui dépasserait le stock réellement disponible dans le silo. */
-async function assertShipmentWithinStock(silo: string, article: string, quantity: number, excludeShipmentId?: number) {
-  const [{ allocations }, shipmentRows, lotMovements] = await Promise.all([loadSiloMovements(), listSiloShipments(), loadLotMovements()]);
-  const shipments = shipmentRows.map((shipment) => ({ id: shipment.id, article: shipment.article, silo: shipment.silo, quantity: Number(shipment.quantity) }));
-  // Un lot fermé manuellement (voir manualDepletionWriteOffs) ne doit plus
-  // être proposé comme stock disponible pour une nouvelle expédition — un id
-  // hors de portée des vraies expéditions, donc jamais retiré par excludeShipmentId.
-  const writeOffs = manualDepletionWriteOffs(computeLotLedger(lotMovements.allocations, lotMovements.shipments).lots)
+type LotMovements = Awaited<ReturnType<typeof loadLotMovements>>;
+/** Une ligne d'expédition à vérifier : son silo, sa quantité et, le cas échéant, le lot qu'elle désigne. */
+type ShipmentLine = { silo: string; quantity: number; lotNumber?: string };
+
+const atShipmentDate = (date: string | null) => (date ? `au ${date.split("-").reverse().join("/")}` : "à ce jour");
+const stockError = (message: string) => new TRPCError({ code: "BAD_REQUEST", message });
+
+/**
+ * Bloque une expédition (création ou modification) que le stock ne peut pas
+ * couvrir, silo par silo :
+ *  - le stock courant de l'état des silos (lots fermés manuellement exclus) ;
+ *  - le stock que les lots pouvaient fournir à la date de l'expédition sans
+ *    priver une sortie déjà enregistrée ensuite (voir computeShippableQuantity) —
+ *    une expédition antidatée ne peut pas puiser dans une production entrée après elle ;
+ *  - avec `checkLots`, pour chaque lot désigné, ce que ce lot contenait
+ *    réellement ce jour-là dans ce silo (voir checkLotClaim).
+ * `movements` ne doit plus contenir l'expédition en cours de modification.
+ */
+function assertShipmentWithinStock(movements: LotMovements, article: string, date: string | null, lines: ShipmentLine[], options: { checkLots: boolean }) {
+  const quantityBySilo = new Map<string, number>();
+  lines.forEach((line) => quantityBySilo.set(line.silo, (quantityBySilo.get(line.silo) ?? 0) + line.quantity));
+
+  // Un lot fermé manuellement (voir manualDepletionWriteOffs) n'est plus du stock disponible.
+  const writeOffs = manualDepletionWriteOffs(computeLotLedger(movements.allocations, movements.shipments).lots)
     .map((row, index) => ({ id: -1 - index, ...row }));
-  const available = computeShipmentAvailability(allocations, [...shipments, ...writeOffs], silo, article, excludeShipmentId);
-  if (quantity > available + 0.005) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `La quantité expédiée (${quantity.toFixed(2)} T) dépasse le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`,
-    });
+  const aggregateShipments = [...movements.shipments.map((shipment) => ({ id: shipment.shipmentId, article: shipment.article, silo: shipment.silo, quantity: shipment.quantity })), ...writeOffs];
+
+  for (const [silo, quantity] of Array.from(quantityBySilo.entries())) {
+    const available = computeShipmentAvailability(movements.allocations, aggregateShipments, silo, article);
+    if (quantity > available + 0.005) {
+      throw stockError(`La quantité expédiée (${quantity.toFixed(2)} T) dépasse le stock disponible de ${article} dans ${silo} (${Math.max(available, 0).toFixed(2)} T).`);
+    }
+    const shippable = computeShippableQuantity(movements.allocations, movements.shipments, article, silo, date);
+    if (quantity > shippable + 0.005) {
+      throw stockError(`La quantité expédiée (${quantity.toFixed(2)} T) dépasse le stock disponible de ${article} dans ${silo} ${atShipmentDate(date)} (${shippable.toFixed(2)} T) : la production entrée à cette date ne suffit pas, ou une expédition enregistrée ensuite utilise déjà le reste. Vérifiez la date de l’expédition et celle de la production.`);
+    }
   }
+
+  if (!options.checkLots) return;
+  const claims = new Map<string, { silo: string; lotNumber: string; quantity: number }>();
+  for (const line of lines) {
+    if (!line.lotNumber) continue;
+    const key = `${line.silo}::${line.lotNumber}`;
+    const claim = claims.get(key) ?? { silo: line.silo, lotNumber: line.lotNumber, quantity: 0 };
+    claim.quantity += line.quantity;
+    claims.set(key, claim);
+  }
+  for (const claim of Array.from(claims.values())) {
+    const check = checkLotClaim(movements.allocations, movements.shipments, { article, ...claim, date });
+    const lot = `Le lot ${claim.lotNumber}`;
+    if (check.status === "other-silo") throw stockError(`${lot} de ${article} ne se trouve pas dans ${claim.silo} (${check.silos.length > 1 ? "silos" : "silo"} : ${check.silos.join(", ")}).`);
+    if (check.status === "closed") throw stockError(`${lot} de ${article} est fermé dans ${claim.silo} (traçabilité des lots) : rouvrez-le avant de lui imputer une expédition.`);
+    if (check.status === "not-yet-produced") {
+      throw stockError(check.entryDate
+        ? `${lot} n’était pas encore entré dans ${claim.silo} ${atShipmentDate(date)} : sa production est datée du ${check.entryDate.split("-").reverse().join("/")}.`
+        : `${lot} n’a pas de date de production dans ${claim.silo} : renseignez-la avant de lui imputer une expédition datée.`);
+    }
+    if (check.status === "insufficient") {
+      throw stockError(check.reservedLater
+        ? `${lot} ne peut plus céder que ${check.available.toFixed(2)} T de ${article} dans ${claim.silo} ${atShipmentDate(date)} : le reste est déjà imputé à des expéditions enregistrées plus tard. Impossible de lui imputer ${claim.quantity.toFixed(2)} T.`
+        : `${lot} ne contenait plus que ${check.available.toFixed(2)} T de ${article} dans ${claim.silo} ${atShipmentDate(date)} : impossible de lui imputer ${claim.quantity.toFixed(2)} T.`);
+    }
+  }
+}
+
+/**
+ * Dernier contrôle avant d'enregistrer des lignes d'expédition (telles
+ * qu'elles seront stockées, lot compris) : aucune sortie déjà enregistrée ne
+ * doit perdre une partie du lot qu'elle désigne (voir findContradictedLotClaim).
+ */
+function assertNoLotClaimContradicted(movements: LotMovements, article: string, date: string | null, rows: { silo: string; lotNumber: string | null | undefined; quantity: number }[]) {
+  const contradicted = findContradictedLotClaim(movements.allocations, movements.shipments, rows.map((row) => ({ article, silo: row.silo, lotNumber: row.lotNumber ?? null, quantity: row.quantity })), date);
+  if (contradicted) {
+    const when = contradicted.date ? `le ${contradicted.date.split("-").reverse().join("/")}` : "sans date";
+    throw stockError(`Le lot ${contradicted.lotNumber} de ${article} dans ${contradicted.silo} est déjà imputé à une sortie enregistrée ${when} : cette expédition lui en retirerait une partie. Désignez un autre lot ou vérifiez les dates.`);
+  }
+}
+
+/** Mouvements des lots sans l'expédition en cours de modification, qui ne doit pas compter contre elle-même. */
+function withoutShipment(movements: LotMovements, shipmentId: number): LotMovements {
+  return { allocations: movements.allocations, shipments: movements.shipments.filter((shipment) => shipment.shipmentId !== shipmentId) };
 }
 
 /**
@@ -175,11 +254,18 @@ const importPdfFileNameInput = z.string().trim().min(1).max(255).refine((fileNam
 // depuis les Réglages plutôt que fixée à la compilation.
 const siloInput = z.string().trim().min(1, "Choisissez un silo.").max(16);
 const optionalDateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La date doit être au format AAAA-MM-JJ").optional().or(z.literal("").transform(() => undefined));
-const siloArticleInput = z.string().trim().min(1, "Indiquez l’article.").max(64);
+// Codes article en majuscules, comme la liste des articles : « dg3 » et « DG3 » ne doivent pas tenir deux stocks séparés.
+const siloArticleInput = z.string().trim().min(1, "Indiquez l’article.").max(64).transform((value) => value.toUpperCase());
 const lotNumberInput = z.string().trim().max(64).optional().transform((value) => value || undefined);
-// Les quantités peuvent être négatives : le classeur d’origine utilise des
-// lignes de correction pour rééquilibrer un silo (par exemple -40 T).
+// Les quantités d'une entrée de production peuvent être négatives : le classeur
+// d’origine utilise des lignes de correction pour rééquilibrer un silo (par exemple -40 T).
 const siloQuantityInput = z.number().finite();
+// Une expédition, elle, ne peut que sortir du stock : une quantité négative le
+// gonflerait. Arrondie au centième (comme elle sera enregistrée) avant d'être
+// vérifiée, pour qu'une saisie de 0,004 T ne devienne pas une ligne de 0,00 T.
+const shipmentQuantityInput = z.number().finite()
+  .transform((value) => Math.round(value * 100) / 100)
+  .pipe(z.number().positive("La quantité doit être positive (au moins 0,01 T)."));
 const siloEntryInput = z.object({
   entryDate: optionalDateInput,
   article: siloArticleInput,
@@ -191,7 +277,7 @@ const siloShipmentInput = z.object({
   shipmentDate: optionalDateInput,
   article: siloArticleInput,
   lotNumber: lotNumberInput,
-  quantity: siloQuantityInput,
+  quantity: shipmentQuantityInput,
   silo: siloInput,
   shipmentType: z.enum(SHIPMENT_TYPES),
 });
@@ -210,7 +296,7 @@ const siloShipmentSplitInput = z.object({
   allocations: z.array(z.object({
     silo: siloInput,
     lotNumber: z.string().trim().min(1, "Indiquez le n° de lot.").max(64),
-    quantity: z.number().positive("La quantité doit être positive."),
+    quantity: shipmentQuantityInput,
   })).min(2, "Ajoutez au moins deux répartitions, sinon utilisez la saisie simple.").max(10, "Trop de répartitions pour une seule expédition."),
 });
 
@@ -245,21 +331,34 @@ async function fetchImportBuffer(storageKey: string, label: string): Promise<Buf
   return buffer;
 }
 
+/** Un fichier sans aucune ligne de production ni aucun jour de repos n'a rien à importer. */
+function assertImportableWorkbook(parsed: Awaited<ReturnType<typeof parseImportedWorkbook>>) {
+  if (parsed.rows.length === 0 && parsed.restDays.length === 0) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
+  }
+}
+
 async function importWorkbookBuffer(buffer: Buffer, applyModifications: boolean) {
   const parsed = await parseImportedWorkbook(buffer);
-  if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
-  const result = await importProductionRows(parsed.rows, { applyModifications });
+  assertImportableWorkbook(parsed);
+  // Un fichier qui ne couvre que des jours de repos (Article = « Repos ») est
+  // valable : ses jours de repos s'enregistrent même sans ligne de production.
+  const result = parsed.rows.length
+    ? await importProductionRows(parsed.rows, { applyModifications })
+    : { created: 0, updated: 0, skipped: 0, pendingModifications: 0, total: 0 };
   await upsertRestDays(parsed.restDays);
-  await syncExcelFromRecords();
-  return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+  if (parsed.rows.length) await syncExcelFromRecords();
+  return { ...result, restDays: parsed.restDays.length, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
 
 /** Aperçu (sans écrire) d'un import Excel du registre — voir previewProductionImport. */
 async function previewWorkbookBuffer(buffer: Buffer) {
   const parsed = await parseImportedWorkbook(buffer);
-  if (parsed.rows.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: `Aucune ligne de production valide n’a été trouvée dans le fichier. ${parsed.errors.slice(0, 5).join(" ")}`.trim() });
-  const preview = await previewProductionImport(parsed.rows);
-  return { ...preview, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
+  assertImportableWorkbook(parsed);
+  const preview: ProductionImportPreview = parsed.rows.length
+    ? await previewProductionImport(parsed.rows)
+    : { toCreate: 0, toUpdate: [], unchanged: 0 };
+  return { ...preview, restDays: parsed.restDays.length, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
 
 export function calculateRecord(input: z.infer<typeof recordInput>) {
@@ -351,9 +450,19 @@ export const appRouter = router({
     /** Renomme un silo : le nouveau code remplace l'ancien dans les entrées et expéditions déjà enregistrées (voir renameSilo). */
     renameSilo: publicProcedure.input(z.object({ id: z.number().int().positive(), code: z.string().trim().min(1, "Saisissez un silo.").max(16) })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      const updated = await renameSilo(input.id, input.code);
-      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce silo est introuvable." });
-      return updated;
+      try {
+        const updated = await renameSilo(input.id, input.code);
+        if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce silo est introuvable." });
+        return updated;
+      } catch (error) {
+        if (!(error instanceof SiloCodeTakenError)) throw error;
+        const messages = {
+          active: `Le code ${error.siloCode} est déjà utilisé par un autre silo.`,
+          archived: `Le code ${error.siloCode} appartient à un silo retiré, dont l’historique reste enregistré sous ce code : choisissez un autre code, ou réactivez ce silo avec « Ajouter un silo ».`,
+          history: `Des entrées ou des expéditions sont déjà enregistrées sous le code ${error.siloCode} : le renommer ainsi mélangerait les deux historiques. Choisissez un autre code, ou ajoutez ${error.siloCode} comme silo avec « Ajouter un silo ».`,
+        };
+        throw new TRPCError({ code: "CONFLICT", message: messages[error.takenBy] });
+      }
     }),
     archiveSilo: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -385,9 +494,19 @@ export const appRouter = router({
       contactIds: z.array(z.number().int().positive()).min(1, "Ajoutez au moins un contact au groupe."),
     })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      const updated = await updateSmsGroup(input.id, input.name, input.contactIds);
-      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce groupe est introuvable." });
-      return updated;
+      try {
+        const updated = await updateSmsGroup(input.id, input.name, input.contactIds);
+        if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Ce groupe est introuvable." });
+        return updated;
+      } catch (error) {
+        if (!(error instanceof SmsGroupNameTakenError)) throw error;
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: error.archived
+            ? `Un groupe retiré porte déjà le nom « ${error.groupName} » : recréez-le avec « Ajouter un groupe » pour le réactiver, ou choisissez un autre nom.`
+            : `Un groupe porte déjà le nom « ${error.groupName} ».`,
+        });
+      }
     }),
     archiveSmsGroup: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -500,7 +619,16 @@ export const appRouter = router({
     updateEntry: publicProcedure.input(siloEntryInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       const { id, allocations, totalQuantity, ...entry } = input;
-      return updateSiloProductionEntry(id, { ...entry, totalQuantity: totalQuantity === undefined ? null : totalQuantity.toFixed(2) }, allocations);
+      // null explicites : une date ou un n° de lot effacé doit l'être aussi en
+      // base (une valeur undefined serait simplement ignorée par la mise à jour).
+      const updated = await updateSiloProductionEntry(id, {
+        ...entry,
+        entryDate: entry.entryDate ?? null,
+        lotNumber: entry.lotNumber ?? null,
+        totalQuantity: totalQuantity === undefined ? null : totalQuantity.toFixed(2),
+      }, allocations);
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND", message: "Cette entrée de production est introuvable." });
+      return updated;
     }),
     deleteEntry: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -515,24 +643,33 @@ export const appRouter = router({
      * alors correctement chaque lot touché sans traitement supplémentaire,
      * puisqu'il liste simplement les lignes d'expédition telles quelles.
      * Un N° Lot précisé explicitement (correction, cas particulier) garde le
-     * comportement d'une seule ligne.
+     * comportement d'une seule ligne, à condition que ce lot contienne bien
+     * cette quantité à cette date (voir assertShipmentWithinStock).
      */
     createShipment: publicProcedure.input(siloShipmentInput).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      await assertShipmentWithinStock(input.silo, input.article, input.quantity);
       const { quantity, lotNumber, ...shipment } = input;
+      const date = shipment.shipmentDate ?? null;
+      const movements = await loadLotMovements();
+      assertShipmentWithinStock(movements, shipment.article, date, [{ silo: shipment.silo, quantity, lotNumber }], { checkLots: Boolean(lotNumber) });
       if (lotNumber) {
+        assertNoLotClaimContradicted(movements, shipment.article, date, [{ silo: shipment.silo, lotNumber, quantity }]);
         const created = await createSiloShipment({ ...shipment, lotNumber, quantity: quantity.toFixed(2) });
         return { shipments: [created] };
       }
 
-      const date = shipment.shipmentDate ?? new Date().toISOString().slice(0, 10);
-      const lotMovements = await loadLotMovements();
-      const ledger = computeLotLedger(
-        lotMovements.allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
-        lotMovements.shipments.filter((movement) => !movement.shipmentDate || movement.shipmentDate <= date),
-      );
-      const chunks = allocateFifoShipment(ledger.lots, shipment.article, shipment.silo, quantity);
+      // Répartition FIFO sur les lots tels qu'ils étaient à la date de
+      // l'expédition, dans le même ordre chronologique que le grand livre, sans
+      // toucher à la part d'un lot qu'une expédition enregistrée plus tard
+      // désigne déjà (cas d'une saisie antidatée, voir computeLotFreeQuantities).
+      const ledger = computeLotLedgerAsOf(movements.allocations, movements.shipments, date);
+      const caps = computeLotFreeQuantities(movements.allocations, movements.shipments, shipment.article, shipment.silo, date);
+      const openQuantity = openLotQuantity(ledger.lots, shipment.article, shipment.silo, caps);
+      if (quantity > openQuantity + 0.005) {
+        throw stockError(`Les lots de ${shipment.article} disponibles dans ${shipment.silo} ${atShipmentDate(date)} ne couvrent que ${openQuantity.toFixed(2)} T : un lot fermé manuellement n’est plus expédiable, et la part d’un lot déjà imputée à une expédition enregistrée plus tard lui reste réservée.`);
+      }
+      const chunks = allocateFifoShipment(ledger.lots, shipment.article, shipment.silo, quantity, caps);
+      assertNoLotClaimContradicted(movements, shipment.article, date, chunks.map((chunk) => ({ silo: shipment.silo, ...chunk })));
       // Reliées par un splitGroupId partagé (voir createSiloShipmentGroup) :
       // seule cette saisie précise s'affiche comme une expédition répartie sur
       // plusieurs lots, jamais une autre qui partagerait par coïncidence la
@@ -544,18 +681,35 @@ export const appRouter = router({
     createSplitShipment: publicProcedure.input(siloShipmentSplitInput).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
       const { allocations, ...shipment } = input;
-      const quantityBySilo = new Map<string, number>();
-      allocations.forEach((allocation) => quantityBySilo.set(allocation.silo, (quantityBySilo.get(allocation.silo) ?? 0) + allocation.quantity));
-      await Promise.all(Array.from(quantityBySilo.entries()).map(([silo, quantity]) => assertShipmentWithinStock(silo, shipment.article, quantity)));
+      const movements = await loadLotMovements();
+      const date = shipment.shipmentDate ?? null;
+      assertShipmentWithinStock(movements, shipment.article, date, allocations, { checkLots: true });
+      assertNoLotClaimContradicted(movements, shipment.article, date, allocations);
 
       const created = await createSiloShipmentGroup(allocations.map((allocation) => ({ ...shipment, silo: allocation.silo, lotNumber: allocation.lotNumber, quantity: allocation.quantity.toFixed(2) })));
       return { shipments: created };
     }),
     updateShipment: publicProcedure.input(siloShipmentInput.safeExtend({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
-      await assertShipmentWithinStock(input.silo, input.article, input.quantity, input.id);
       const { id, quantity, ...shipment } = input;
-      return updateSiloShipment(id, { ...shipment, quantity: quantity.toFixed(2) });
+      const movements = await loadLotMovements();
+      const current = movements.shipments.find((row) => row.shipmentId === id);
+      if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Cette expédition est introuvable." });
+      const date = shipment.shipmentDate ?? null;
+      const lotNumber = shipment.lotNumber ?? null;
+      // Ne revérifie le stock que si la modification peut l'entamer davantage
+      // (silo, article, date, lot, ou une quantité en hausse) : corriger le type
+      // ou réduire la quantité d'une ancienne ligne reste toujours possible.
+      const touchesStock = shipment.silo !== current.silo || shipment.article !== current.article || date !== current.shipmentDate
+        || lotNumber !== (current.lotNumber ?? null) || quantity > current.quantity + 0.005;
+      if (touchesStock) {
+        const others = withoutShipment(movements, id);
+        assertShipmentWithinStock(others, shipment.article, date, [{ silo: shipment.silo, quantity, lotNumber: lotNumber ?? undefined }], { checkLots: true });
+        assertNoLotClaimContradicted(others, shipment.article, date, [{ silo: shipment.silo, lotNumber, quantity }]);
+      }
+      // null explicites : une date ou un n° de lot effacé doit l'être aussi en
+      // base (une valeur undefined serait simplement ignorée par la mise à jour).
+      return updateSiloShipment(id, { ...shipment, shipmentDate: date, lotNumber, quantity: quantity.toFixed(2) });
     }),
     deleteShipment: publicProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       assertAdminSession(ctx);
@@ -644,18 +798,14 @@ export const appRouter = router({
       const result = await importExpeditionShipments(parsed.shipments);
       return { ...result, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
     }),
-    /** Reconstruit le classeur Silo_PF complet, formules comprises. */
+    /** Reconstruit le classeur Silo_PF de flux : entrées de production et expéditions (voir buildSiloWorkbook). */
     exportExcel: publicProcedure.query(async () => {
-      const [entries, shipments, configuredArticles, movementArticles, siloCodes] = await Promise.all([
+      const [entries, shipments, siloCodes] = await Promise.all([
         listSiloProductionEntries(),
         listSiloShipments(),
-        listActiveProductionArticles(),
-        listSiloMovementArticles(),
         resolveSiloCodes(),
       ]);
-      const configuredCodes = configuredArticles.map((article) => article.code);
-      const articles = [...configuredCodes, ...movementArticles.filter((article) => !configuredCodes.includes(article))];
-      const workbook = await buildSiloWorkbook(entries, shipments, articles, siloCodes);
+      const workbook = await buildSiloWorkbook(entries, shipments, siloCodes);
       return {
         fileName: `Silo_PF_${new Date().toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64"),

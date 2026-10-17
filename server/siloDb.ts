@@ -1,16 +1,55 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import type { BatchItem } from "drizzle-orm/batch";
 import {
   InsertSiloProductionEntry,
   InsertSiloShipment,
+  SiloProductionEntry,
   silos,
   siloProductionAllocations,
   siloProductionEntries,
   siloShipments,
 } from "../drizzle/schema";
-import { getDb } from "./db";
+import { getDb, isUniqueViolation } from "./db";
 import { SILOS } from "../shared/silo";
+
+type Database = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+/**
+ * Requêtes envoyées ensemble par db.batch : le pilote HTTP de Neon les
+ * exécute dans une seule transaction (il n'offre pas de db.transaction
+ * interactive) — tout ou rien, jamais une écriture à moitié appliquée.
+ */
+type QueryBatch = [BatchItem<"pg">, ...BatchItem<"pg">[]];
+
+/**
+ * Réserve des identifiants avant l'insertion, pour écrire dans le même lot
+ * (voir QueryBatch) des lignes qui y font référence — une entrée et sa
+ * répartition par silo, ou les lignes d'une expédition groupée.
+ */
+async function reserveIds(db: Database, table: "silo_production_entries" | "silo_shipments", count: number): Promise<number[]> {
+  if (count === 0) return [];
+  const result = await db.execute<{ id: number }>(sql`select nextval(pg_get_serial_sequence(${table}, 'id'))::int as id from generate_series(1, ${count})`);
+  return result.rows.map((row) => Number(row.id));
+}
+
+/** Découpe une insertion volumineuse pour rester sous la limite de paramètres d'une requête Postgres. */
+function chunked<T>(rows: T[], size = 1000): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < rows.length; start += size) chunks.push(rows.slice(start, start + size));
+  return chunks;
+}
+
+/**
+ * Ce code est déjà pris — voir renameSilo : par un autre silo actif, par un
+ * silo retiré, ou par un historique de mouvements (entrées ou expéditions)
+ * enregistré sous ce code sans silo configuré.
+ */
+export class SiloCodeTakenError extends Error {
+  constructor(readonly siloCode: string, readonly takenBy: "active" | "archived" | "history") {
+    super(`Le code ${siloCode} est déjà utilisé.`);
+  }
+}
 
 export type SiloAllocationDraft = { silo: string; quantity: number };
 type FallbackEntry = { id: number; entryDate: string | null; article: string; lotNumber: string | null; totalQuantity: string | null; createdAt: Date; updatedAt: Date };
@@ -26,17 +65,20 @@ type FallbackSilo = { id: number; code: string; isActive: boolean; sortOrder: nu
 const fallbackPath = path.resolve(process.cwd(), process.env.VITEST ? ".local-silo-store.test.json" : ".local-silo-store.json");
 const emptyStore = () => ({ entries: [] as FallbackEntry[], allocations: [] as FallbackAllocation[], shipments: [] as FallbackShipment[], silos: [] as FallbackSilo[], nextId: 1 });
 
+/** Codes article en majuscules, comme la saisie et la migration 0010_normalize_article_codes côté Postgres. */
+const normalizeArticleCode = (article: string) => article.trim().toUpperCase();
+
 function loadFallbackStore() {
   if (!existsSync(fallbackPath)) return emptyStore();
   try {
     const parsed = JSON.parse(readFileSync(fallbackPath, "utf8")) as ReturnType<typeof emptyStore>;
     return {
-      entries: parsed.entries ?? [],
+      entries: (parsed.entries ?? []).map((entry) => ({ ...entry, article: normalizeArticleCode(entry.article) })),
       // manuallyDepleted : absent des fichiers de secours écrits avant cette
       // fonctionnalité, donc à défaut "actif" (false) plutôt qu'une erreur.
       allocations: (parsed.allocations ?? []).map((allocation) => ({ ...allocation, manuallyDepleted: allocation.manuallyDepleted ?? false })),
       // splitGroupId : absent des fichiers de secours écrits avant cette fonctionnalité, donc à défaut "saisie seule" (null).
-      shipments: (parsed.shipments ?? []).map((shipment) => ({ ...shipment, splitGroupId: shipment.splitGroupId ?? null })),
+      shipments: (parsed.shipments ?? []).map((shipment) => ({ ...shipment, article: normalizeArticleCode(shipment.article), splitGroupId: shipment.splitGroupId ?? null })),
       // silos : absent des fichiers de secours écrits avant cette fonctionnalité (voir initializeSilos, qui les sème au premier accès).
       silos: parsed.silos ?? [],
       nextId: parsed.nextId ?? 1,
@@ -124,7 +166,10 @@ export async function addSilo(code: string) {
  * Renomme un silo : le nouveau code remplace l'ancien partout où il est déjà
  * utilisé (entrées de production et expéditions déjà enregistrées), pour
  * qu'aucune donnée existante ne se retrouve orpheline d'un code qui n'existe
- * plus dans la liste configurée.
+ * plus dans la liste configurée. Un code déjà porté par un autre silo (même
+ * retiré) ou par des mouvements déjà enregistrés est refusé
+ * (SiloCodeTakenError) : les deux historiques se fondraient sinon, sans retour
+ * possible, sous un même code.
  */
 export async function renameSilo(id: number, newCode: string) {
   const normalizedCode = newCode.trim().toUpperCase();
@@ -134,6 +179,11 @@ export async function renameSilo(id: number, newCode: string) {
     if (!existing) return undefined;
     const oldCode = existing.code;
     if (oldCode === normalizedCode) return existing;
+    const taken = store.silos.find((silo) => silo.id !== id && silo.code === normalizedCode);
+    if (taken) throw new SiloCodeTakenError(normalizedCode, taken.isActive ? "active" : "archived");
+    if (store.allocations.some((allocation) => allocation.silo === normalizedCode) || store.shipments.some((shipment) => shipment.silo === normalizedCode)) {
+      throw new SiloCodeTakenError(normalizedCode, "history");
+    }
     existing.code = normalizedCode;
     existing.updatedAt = now();
     store.allocations.forEach((allocation) => { if (allocation.silo === oldCode) { allocation.silo = normalizedCode; allocation.updatedAt = now(); } });
@@ -145,10 +195,25 @@ export async function renameSilo(id: number, newCode: string) {
   const [existing] = await db.select().from(silos).where(eq(silos.id, id)).limit(1);
   if (!existing) return undefined;
   if (existing.code === normalizedCode) return existing;
-  const [updated] = await db.update(silos).set({ code: normalizedCode, updatedAt: new Date() }).where(eq(silos.id, id)).returning();
-  await db.update(siloProductionAllocations).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloProductionAllocations.silo, existing.code));
-  await db.update(siloShipments).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloShipments.silo, existing.code));
-  return updated;
+  const [taken] = await db.select({ isActive: silos.isActive }).from(silos).where(and(eq(silos.code, normalizedCode), ne(silos.id, id))).limit(1);
+  if (taken) throw new SiloCodeTakenError(normalizedCode, taken.isActive ? "active" : "archived");
+  const [[allocationUsingCode], [shipmentUsingCode]] = await Promise.all([
+    db.select({ id: siloProductionAllocations.id }).from(siloProductionAllocations).where(eq(siloProductionAllocations.silo, normalizedCode)).limit(1),
+    db.select({ id: siloShipments.id }).from(siloShipments).where(eq(siloShipments.silo, normalizedCode)).limit(1),
+  ]);
+  if (allocationUsingCode || shipmentUsingCode) throw new SiloCodeTakenError(normalizedCode, "history");
+  try {
+    const [updatedRows] = await db.batch([
+      db.update(silos).set({ code: normalizedCode, updatedAt: new Date() }).where(eq(silos.id, id)).returning(),
+      db.update(siloProductionAllocations).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloProductionAllocations.silo, existing.code)),
+      db.update(siloShipments).set({ silo: normalizedCode, updatedAt: new Date() }).where(eq(siloShipments.silo, existing.code)),
+    ]);
+    return updatedRows[0];
+  } catch (error) {
+    // Un autre renommage simultané a pris ce code entre la vérification et l'écriture.
+    if (isUniqueViolation(error)) throw new SiloCodeTakenError(normalizedCode, "active");
+    throw error;
+  }
 }
 
 /** Retire un silo de la liste active (jamais supprimé : l'historique déjà enregistré sous ce code reste intact). */
@@ -220,9 +285,14 @@ export async function createSiloProductionEntry(entry: Omit<InsertSiloProduction
     return created;
   }
 
-  const [created] = await db.insert(siloProductionEntries).values(entry).returning();
-  await replaceAllocations(created.id, allocations);
-  return created;
+  // L'entrée et sa répartition par silo sont écrites ensemble : jamais une entrée enregistrée sans son stock.
+  const [entryId] = await reserveIds(db, "silo_production_entries", 1);
+  const rows = allocationRows(entryId, allocations, new Map());
+  const [createdRows] = await db.batch([
+    db.insert(siloProductionEntries).values({ ...entry, id: entryId }).returning(),
+    ...(rows.length ? [db.insert(siloProductionAllocations).values(rows)] : []),
+  ] as QueryBatch);
+  return (createdRows as SiloProductionEntry[])[0];
 }
 
 export async function updateSiloProductionEntry(id: number, entry: Partial<InsertSiloProductionEntry>, allocations: SiloAllocationDraft[]) {
@@ -240,12 +310,22 @@ export async function updateSiloProductionEntry(id: number, entry: Partial<Inser
     return existing;
   }
 
-  const [updated] = await db.update(siloProductionEntries)
-    .set({ ...entry, updatedAt: new Date() })
-    .where(eq(siloProductionEntries.id, id))
-    .returning();
-  await replaceAllocations(id, allocations);
-  return updated;
+  const [current] = await db.select({ id: siloProductionEntries.id }).from(siloProductionEntries).where(eq(siloProductionEntries.id, id)).limit(1);
+  if (!current) return undefined;
+  // Voir le commentaire équivalent dans writeFallbackAllocations : on reprend
+  // le statut "épuisé manuellement" des silos qui restent après le remplacement.
+  const existing = await db.select({ silo: siloProductionAllocations.silo, manuallyDepleted: siloProductionAllocations.manuallyDepleted })
+    .from(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, id));
+  const rows = allocationRows(id, allocations, new Map(existing.map((row) => [row.silo, row.manuallyDepleted])));
+  // Mise à jour, suppression de l'ancienne répartition et insertion de la
+  // nouvelle dans une seule transaction : une coupure entre deux requêtes ne
+  // peut plus laisser l'entrée sans aucune répartition (stock disparu).
+  const [updatedRows] = await db.batch([
+    db.update(siloProductionEntries).set({ ...entry, updatedAt: new Date() }).where(eq(siloProductionEntries.id, id)).returning(),
+    db.delete(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, id)),
+    ...(rows.length ? [db.insert(siloProductionAllocations).values(rows)] : []),
+  ] as QueryBatch);
+  return (updatedRows as SiloProductionEntry[])[0];
 }
 
 export async function deleteSiloProductionEntry(id: number) {
@@ -257,8 +337,10 @@ export async function deleteSiloProductionEntry(id: number) {
     return { success: true } as const;
   }
 
-  await db.delete(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, id));
-  await db.delete(siloProductionEntries).where(eq(siloProductionEntries.id, id));
+  await db.batch([
+    db.delete(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, id)),
+    db.delete(siloProductionEntries).where(eq(siloProductionEntries.id, id)),
+  ]);
   return { success: true } as const;
 }
 
@@ -273,23 +355,14 @@ function writeFallbackAllocations(entryId: number, allocations: SiloAllocationDr
   });
 }
 
-async function replaceAllocations(entryId: number, allocations: SiloAllocationDraft[]) {
-  const db = await getDb();
-  if (!db) return;
-  // Voir le commentaire équivalent dans writeFallbackAllocations : on reprend
-  // le statut "épuisé manuellement" des silos qui restent après le remplacement.
-  const existing = await db.select({ silo: siloProductionAllocations.silo, manuallyDepleted: siloProductionAllocations.manuallyDepleted })
-    .from(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, entryId));
-  const previouslyDepleted = new Map(existing.map((row) => [row.silo, row.manuallyDepleted]));
-  await db.delete(siloProductionAllocations).where(eq(siloProductionAllocations.entryId, entryId));
-  const rows = allocations.filter((allocation) => allocation.quantity !== 0);
-  if (rows.length === 0) return;
-  await db.insert(siloProductionAllocations).values(rows.map((allocation) => ({
+/** Lignes de répartition à insérer pour une entrée (les silos à zéro n'en produisent aucune). */
+function allocationRows(entryId: number, allocations: SiloAllocationDraft[], previouslyDepleted: Map<string, boolean>) {
+  return allocations.filter((allocation) => allocation.quantity !== 0).map((allocation) => ({
     entryId,
     silo: allocation.silo,
     quantity: allocation.quantity.toFixed(2),
     manuallyDepleted: previouslyDepleted.get(allocation.silo) ?? false,
-  })));
+  }));
 }
 
 export async function listSiloShipments() {
@@ -361,10 +434,11 @@ export async function createSiloShipmentGroup(shipments: Omit<InsertSiloShipment
     return created;
   }
 
-  const createdRows = await db.insert(siloShipments).values(shipments).returning();
-  const groupId = createdRows[0].id;
-  await db.update(siloShipments).set({ splitGroupId: groupId }).where(inArray(siloShipments.id, createdRows.map((row) => row.id)));
-  return createdRows.map((row) => ({ ...row, splitGroupId: groupId }));
+  // Identifiants réservés d'avance : les lignes portent leur splitGroupId dès
+  // leur insertion, en une seule requête, plutôt que par une mise à jour
+  // séparée qui pourrait ne jamais s'appliquer.
+  const ids = await reserveIds(db, "silo_shipments", shipments.length);
+  return db.insert(siloShipments).values(shipments.map((shipment, index) => ({ ...shipment, id: ids[index], splitGroupId: ids[0] }))).returning();
 }
 
 export async function updateSiloShipment(id: number, shipment: Partial<InsertSiloShipment>) {
@@ -446,15 +520,20 @@ export async function replaceSiloMovements(entries: { entry: Omit<InsertSiloProd
     return { entries: entries.length, shipments: shipments.length };
   }
 
-  await db.delete(siloProductionAllocations);
-  await db.delete(siloProductionEntries);
-  await db.delete(siloShipments);
-
-  for (const { entry, allocations } of entries) {
-    const [created] = await db.insert(siloProductionEntries).values(entry).returning();
-    await replaceAllocations(created.id, allocations);
-  }
-  if (shipments.length > 0) await db.insert(siloShipments).values(shipments);
+  // Tout le remplacement dans une seule transaction : un import interrompu
+  // (coupure réseau, délai dépassé) laisse l'historique existant intact au
+  // lieu de l'effacer en ne réécrivant qu'une partie du fichier.
+  const entryIds = await reserveIds(db, "silo_production_entries", entries.length);
+  const entryValues = entries.map(({ entry }, index) => ({ ...entry, id: entryIds[index] }));
+  const allocationValues = entries.flatMap(({ allocations }, index) => allocationRows(entryIds[index], allocations, new Map()));
+  await db.batch([
+    db.delete(siloProductionAllocations),
+    db.delete(siloProductionEntries),
+    db.delete(siloShipments),
+    ...chunked(entryValues).map((values) => db.insert(siloProductionEntries).values(values)),
+    ...chunked(allocationValues).map((values) => db.insert(siloProductionAllocations).values(values)),
+    ...chunked(shipments).map((values) => db.insert(siloShipments).values(values)),
+  ] as QueryBatch);
 
   return { entries: entries.length, shipments: shipments.length };
 }
@@ -540,6 +619,7 @@ export async function loadLotMovements() {
         silo: shipment.silo,
         quantity: Number(shipment.quantity),
         shipmentType: shipment.shipmentType,
+        lotNumber: shipment.lotNumber,
       })),
     };
   }
@@ -566,7 +646,8 @@ export async function loadLotMovements() {
       silo: siloShipments.silo,
       quantity: siloShipments.quantity,
       shipmentType: siloShipments.shipmentType,
-    }).from(siloShipments),
+      lotNumber: siloShipments.lotNumber,
+    }).from(siloShipments).orderBy(asc(siloShipments.id)), // ordre de saisie : départage les sorties du même jour, comme les lots ci-dessus.
   ]);
 
   const entryById = new Map(entries.map((entry) => [entry.id, entry]));

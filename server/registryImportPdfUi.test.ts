@@ -46,7 +46,7 @@ describe("import Excel du registre et rapport PDF journalier (centralisé dans R
     expect(dayPdfReport).toContain("PERFORMANCE");
     expect(dayPdfReport).toContain("REBUTS / DÉCHETS");
     expect(dayPdfReport).toContain("TEMPS TOTAL PROD.");
-    expect(reportsPage).toContain("Rapport PDF (par jour)");
+    expect(reportsPage).toContain("Rapport Production / Jour");
     expect(reportsPage).toContain("Exporter le PDF");
   });
 

@@ -86,7 +86,12 @@ export default function SiloPf() {
                       <strong className="silo-card-name">{row.silo}</strong>
                       {status !== "empty" && <span className={`silo-card-percent silo-card-percent-${status}`}>{percent}%</span>}
                     </div>
-                    {row.article ? <span className="silo-badge">{row.article}</span> : <span className="silo-badge silo-badge-muted">Vide</span>}
+                    {row.articles.length > 1 ? (
+                      // Silo partagé (un reliquat sous une nouvelle production, par exemple) : chaque article avec sa quantité.
+                      <div className="silo-badge-list">
+                        {row.articles.map((item) => <span key={item.article} className="silo-badge silo-badge-mixed">{item.article}<small>{fmt(item.quantity, 2)} T</small></span>)}
+                      </div>
+                    ) : row.article ? <span className="silo-badge">{row.article}</span> : <span className="silo-badge silo-badge-muted">Vide</span>}
                     <p className="silo-card-qty">{row.quantity === null ? "—" : `${fmt(row.quantity, 2)} T`}</p>
                     <div className="silo-card-bar"><i className={`silo-card-bar-fill silo-card-bar-fill-${status}`} style={{ width: `${Math.min(percent, 100)}%` }} /></div>
                   </article>

@@ -96,6 +96,18 @@ describe("parseExpeditionPdfText (rapport « Traçabilité Expédition »)", () 
     expect(shipments.some((shipment) => shipment.article.includes(" "))).toBe(false);
   });
 
+  it("met la désignation en majuscules, pour que l'expédition décompte bien le stock de son code (Dg 3 -> DG3)", () => {
+    const text = `
+COV-MA2609099 LIVRE VRAC | LIVRAISON
+Date BC: 16/09/2026 10:28 Entrée: 16/09/2026 10:39 Sortie: 16/09/2026 11:12
+Code Désignation Qté théo Qté réelle Écart Lots Silo source
+DCCV01 Dg 3 vrac 8000 Kg 8000.00 Kg +0.00 Kg 2600662-0912 (8000 Kg) SPF7
+`;
+    const { shipments, errors } = parseExpeditionPdfText(text);
+    expect(errors).toEqual([]);
+    expect(shipments.map((shipment) => shipment.article)).toEqual(["DG3"]);
+  });
+
   it("signale un rapport sans référence « COV-... » plutôt que de planter", () => {
     const { shipments, errors } = parseExpeditionPdfText("Un document quelconque sans aucune expédition.");
     expect(shipments).toEqual([]);

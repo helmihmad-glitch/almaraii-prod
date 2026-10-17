@@ -39,6 +39,8 @@ export type LotShipmentInput = {
   silo: string;
   quantity: number;
   shipmentType: string;
+  /** N° de lot enregistré sur la ligne d'expédition : ce lot est consommé en priorité (voir computeLotLedger). */
+  lotNumber?: string | null;
 };
 
 export type LotConsumptionSource =
@@ -76,10 +78,13 @@ export type LotLedger = { lots: LotBalance[]; unattributed: UnattributedConsumpt
 
 type QueueEvent =
   | { kind: "produce"; date: string; sequence: number; entryId: number; lotNumber: string | null; entryDate: string | null; quantity: number; manuallyDepleted: boolean }
-  | { kind: "consume"; date: string; sequence: number; quantity: number; source: LotConsumptionSource };
+  | { kind: "consume"; date: string; sequence: number; quantity: number; lotNumber: string | null; source: LotConsumptionSource };
 
 /** Les mouvements sans date sont rares (saisie manuelle incomplete) ; on les place apres les mouvements dates plutot que de les laisser perturber l'ordre chronologique connu. */
 const UNDATED_SORT_KEY = "9999-99-99";
+
+/** Position chronologique d'un mouvement dans le grand livre (sans date : en fin de chronologie). */
+const movementKey = (date: string | null | undefined) => date ?? UNDATED_SORT_KEY;
 
 function roundTons(value: number) {
   return Math.round(value * 1e6) / 1e6;
@@ -100,8 +105,15 @@ export function compareLotOrder(a: { lotNumber: string | null; entryId: number }
   return a.entryId - b.entryId;
 }
 
-export function computeLotLedger(allocations: LotAllocationInput[], shipments: LotShipmentInput[]): LotLedger {
-  const groups = new Map<string, { article: string; silo: string; events: QueueEvent[] }>();
+type EventGroup = { article: string; silo: string; events: QueueEvent[] };
+
+/**
+ * Mouvements regroupés par couple (article, silo) et triés dans l'ordre où le
+ * grand livre les applique : par date (sans date en dernier), puis par ordre
+ * de saisie ; deux lots produits le même jour se départagent par n° de lot.
+ */
+function buildEventGroups(allocations: LotAllocationInput[], shipments: LotShipmentInput[]): EventGroup[] {
+  const groups = new Map<string, EventGroup>();
   let sequence = 0;
 
   const pushEvent = (article: string, silo: string, event: QueueEvent) => {
@@ -116,7 +128,7 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
 
   for (const allocation of allocations) {
     if (allocation.quantity === 0) continue;
-    const date = allocation.entryDate ?? UNDATED_SORT_KEY;
+    const date = movementKey(allocation.entryDate);
     sequence += 1;
     if (allocation.quantity > 0) {
       pushEvent(allocation.article, allocation.silo, {
@@ -135,6 +147,7 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
         date,
         sequence,
         quantity: -allocation.quantity,
+        lotNumber: allocation.lotNumber,
         source: { type: "correction", entryId: allocation.entryId, date: allocation.entryDate },
       });
     }
@@ -145,25 +158,31 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
     sequence += 1;
     pushEvent(shipment.article, shipment.silo, {
       kind: "consume",
-      date: shipment.shipmentDate ?? UNDATED_SORT_KEY,
+      date: movementKey(shipment.shipmentDate),
       sequence,
       quantity: shipment.quantity,
+      lotNumber: shipment.lotNumber ?? null,
       source: { type: "shipment", shipmentId: shipment.shipmentId, date: shipment.shipmentDate, shipmentType: shipment.shipmentType },
     });
   }
 
-  const lots: LotBalance[] = [];
-  const unattributed: UnattributedConsumption[] = [];
-
-  for (const group of Array.from(groups.values())) {
-    const { article, silo, events } = group;
-    events.sort((a: QueueEvent, b: QueueEvent) => {
+  const result = Array.from(groups.values());
+  for (const group of result) {
+    group.events.sort((a: QueueEvent, b: QueueEvent) => {
       if (a.date !== b.date) return a.date < b.date ? -1 : 1;
       // Deux lots produits (pas des sorties) à la même date : voir compareLotOrder.
       if (a.kind === "produce" && b.kind === "produce") return compareLotOrder(a, b) || a.sequence - b.sequence;
       return a.sequence - b.sequence;
     });
+  }
+  return result;
+}
 
+export function computeLotLedger(allocations: LotAllocationInput[], shipments: LotShipmentInput[]): LotLedger {
+  const lots: LotBalance[] = [];
+  const unattributed: UnattributedConsumption[] = [];
+
+  for (const { article, silo, events } of buildEventGroups(allocations, shipments)) {
     // File d'attente FIFO des lots encore actifs pour ce couple (article, silo).
     const queue: LotBalance[] = [];
 
@@ -188,19 +207,31 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
       }
 
       let remainingToConsume = event.quantity;
-      while (remainingToConsume > 1e-9 && queue.length > 0) {
-        const oldest = queue[0];
-        const taken = Math.min(oldest.remainingQuantity, remainingToConsume);
-        oldest.remainingQuantity = roundTons(oldest.remainingQuantity - taken);
-        oldest.consumedQuantity = roundTons(oldest.consumedQuantity + taken);
-        oldest.consumptions.push({ quantity: taken, source: event.source });
+      /** Prélève sur le lot queue[index] ; renvoie true si le lot, épuisé, a quitté la file. */
+      const takeFrom = (index: number) => {
+        const lot = queue[index];
+        const taken = Math.min(lot.remainingQuantity, remainingToConsume);
+        lot.remainingQuantity = roundTons(lot.remainingQuantity - taken);
+        lot.consumedQuantity = roundTons(lot.consumedQuantity + taken);
+        lot.consumptions.push({ quantity: taken, source: event.source });
         remainingToConsume -= taken;
-        if (oldest.remainingQuantity <= 1e-9) {
-          oldest.remainingQuantity = 0;
-          oldest.status = "depleted";
-          queue.shift();
+        if (lot.remainingQuantity > 1e-9) return false;
+        lot.remainingQuantity = 0;
+        lot.status = "depleted";
+        queue.splice(index, 1);
+        return true;
+      };
+
+      // Une sortie qui désigne son lot (n° de lot de l'expédition ou de la
+      // correction) le consomme en priorité : la traçabilité suit alors ce qui
+      // a été enregistré, et seul un éventuel surplus repasse en FIFO.
+      if (event.lotNumber) {
+        let index = 0;
+        while (remainingToConsume > 1e-9 && index < queue.length) {
+          if (queue[index].lotNumber !== event.lotNumber || !takeFrom(index)) index += 1;
         }
       }
+      while (remainingToConsume > 1e-9 && queue.length > 0) takeFrom(0);
       if (remainingToConsume > 1e-9) {
         unattributed.push({ article, silo, quantity: roundTons(remainingToConsume), source: event.source });
       }
@@ -238,33 +269,262 @@ export function manualDepletionWriteOffs(lots: LotBalance[]): { article: string;
 
 export type FifoAllocationChunk = { lotNumber: string | null; quantity: number };
 
+/** Lots encore ouverts d'un article dans un silo, du plus ancien au plus récent : l'ordre FIFO du grand livre (sans date en dernier). */
+export function openLotsInFifoOrder(lots: LotBalance[], article: string, silo: string): LotBalance[] {
+  return lots
+    .filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active")
+    .sort((a, b) => movementKey(a.entryDate).localeCompare(movementKey(b.entryDate)) || compareLotOrder(a, b));
+}
+
+/**
+ * Plafond par n° de lot (voir computeLotFreeQuantities) : ce qu'un lot peut
+ * céder sans contredire une sortie enregistrée plus tard qui le désigne. Un
+ * n° de lot absent de la table n'est limité que par le contenu du lot.
+ */
+export type LotCaps = ReadonlyMap<string, number>;
+
+/**
+ * Lots ouverts dans l'ordre FIFO, chacun avec ce qu'il peut céder : son
+ * contenu, dans la limite du plafond de son n° de lot. Une ligne prise sur un
+ * lot sans n° est enregistrée sans lot, et le grand livre l'impute alors au
+ * plus ancien lot encore entamé : un tel lot n'est donc utilisable qu'une fois
+ * tous les lots plus anciens entièrement cédés (aucune part réservée restante).
+ */
+function cappedOpenLots(lots: LotBalance[], article: string, silo: string, caps: LotCaps) {
+  const capLeft = new Map(caps);
+  let olderLotKeepsStock = false;
+  return openLotsInFifoOrder(lots, article, silo).map((lot) => {
+    if (lot.lotNumber === null) {
+      const available = olderLotKeepsStock ? 0 : lot.remainingQuantity;
+      if (available < lot.remainingQuantity - 1e-9) olderLotKeepsStock = true;
+      return { lot, available };
+    }
+    const cap = capLeft.get(lot.lotNumber);
+    const available = Math.max(Math.min(lot.remainingQuantity, cap ?? Number.POSITIVE_INFINITY), 0);
+    if (cap !== undefined) capLeft.set(lot.lotNumber, cap - available);
+    if (available < lot.remainingQuantity - 1e-9) olderLotKeepsStock = true;
+    return { lot, available };
+  });
+}
+
 /**
  * Répartit une quantité à expédier sur les lots actifs les plus anciens
  * d'abord (FIFO) pour cet article et ce silo, un seul lot ne suffisant pas
  * toujours à couvrir toute l'expédition (ex. 18 T alors que le lot le plus
  * ancien n'en a que 5) : un tronçon par lot réellement entamé, dans l'ordre
- * FIFO — exactement la même règle que la consommation dans computeLotLedger,
- * appliquée par avance pour savoir combien enregistrer sur chaque lot. Un
- * éventuel reliquat que les lots actifs ne couvrent pas (ne devrait pas
- * arriver si la quantité a déjà été validée face au stock affiché, voir
- * assertShipmentWithinStock côté appelant) est renvoyé avec lotNumber: null
- * plutôt que d'être silencieusement perdu.
+ * FIFO — la même règle que la consommation dans computeLotLedger, appliquée
+ * par avance pour savoir combien enregistrer sur chaque lot. `caps` réserve
+ * à une expédition déjà enregistrée plus tard ce qu'elle prend à son lot
+ * (cas d'une saisie antidatée). Un éventuel reliquat que les lots ne couvrent
+ * pas (ne devrait pas arriver si la quantité a déjà été validée, voir
+ * openLotQuantity) est renvoyé avec lotNumber: null plutôt que perdu.
  */
-export function allocateFifoShipment(lots: LotBalance[], article: string, silo: string, quantity: number): FifoAllocationChunk[] {
-  const candidates = lots
-    .filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active")
-    .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
+export function allocateFifoShipment(lots: LotBalance[], article: string, silo: string, quantity: number, caps: LotCaps = new Map()): FifoAllocationChunk[] {
   const chunks: FifoAllocationChunk[] = [];
   let remaining = quantity;
-  for (const lot of candidates) {
+  for (const { lot, available } of cappedOpenLots(lots, article, silo, caps)) {
     if (remaining <= 1e-9) break;
-    const taken = Math.min(lot.remainingQuantity, remaining);
+    const taken = Math.min(available, remaining);
     if (taken <= 1e-9) continue;
     chunks.push({ lotNumber: lot.lotNumber, quantity: roundTons(taken) });
     remaining -= taken;
   }
   if (remaining > 1e-9) chunks.push({ lotNumber: null, quantity: roundTons(remaining) });
   return chunks;
+}
+
+/**
+ * Grand livre tel qu'il se présentait pour une sortie datée `date` : seuls
+ * les mouvements que computeLotLedger applique avant elle, même jour compris
+ * (une sortie sans date se place en fin de chronologie, après tout le reste).
+ */
+export function computeLotLedgerAsOf(allocations: LotAllocationInput[], shipments: LotShipmentInput[], date: string | null): LotLedger {
+  const key = movementKey(date);
+  return computeLotLedger(
+    allocations.filter((allocation) => movementKey(allocation.entryDate) <= key),
+    shipments.filter((shipment) => movementKey(shipment.shipmentDate) <= key),
+  );
+}
+
+/** Quantité couverte par les lots encore ouverts d'un article dans un silo, dans la limite de `caps` : ce qu'allocateFifoShipment peut réellement répartir. */
+export function openLotQuantity(lots: LotBalance[], article: string, silo: string, caps: LotCaps = new Map()): number {
+  return roundTons(cappedOpenLots(lots, article, silo, caps).reduce((total, { available }) => total + available, 0));
+}
+
+/**
+ * Pour chaque n° de lot d'un article présent dans un silo à la date `date`,
+ * ce qu'il peut encore céder à une sortie de ce jour-là sans contredire une
+ * sortie déjà enregistrée plus tard qui le désigne : son contenu à cette date,
+ * diminué de ce que ces sorties ultérieures lui prendront (le plus bas niveau
+ * qu'il atteint ensuite). Sert de plafond (LotCaps) à une saisie antidatée.
+ */
+export function computeLotFreeQuantities(allocations: LotAllocationInput[], shipments: LotShipmentInput[], article: string, silo: string, date: string | null): Map<string, number> {
+  const level = new Map<string, number>();
+  for (const lot of computeLotLedgerAsOf(allocations, shipments, date).lots) {
+    if (lot.article !== article || lot.silo !== silo || lot.lotNumber === null || lot.manuallyDepleted) continue;
+    level.set(lot.lotNumber, (level.get(lot.lotNumber) ?? 0) + lot.remainingQuantity);
+  }
+  const lowest = new Map(level);
+  const key = movementKey(date);
+  const group = buildEventGroups(allocations, shipments).find((item) => item.article === article && item.silo === silo);
+  for (const event of group?.events ?? []) {
+    if (event.date <= key || event.lotNumber === null || !level.has(event.lotNumber)) continue;
+    const current = level.get(event.lotNumber)!;
+    if (event.kind === "produce") {
+      if (!event.manuallyDepleted) level.set(event.lotNumber, current + event.quantity);
+      continue;
+    }
+    level.set(event.lotNumber, current - event.quantity);
+    lowest.set(event.lotNumber, Math.min(lowest.get(event.lotNumber)!, current - event.quantity));
+  }
+  return new Map(Array.from(lowest.entries()).map(([lotNumber, quantity]) => [lotNumber, Math.max(roundTons(quantity), 0)]));
+}
+
+export type ContradictedLotClaim = { lotNumber: string; silo: string; date: string | null };
+
+/**
+ * Simule l'ajout de nouvelles sorties (datées `date`) dans le grand livre et
+ * renvoie la première sortie déjà enregistrée qui perdrait alors une partie
+ * du lot qu'elle désigne (null s'il n'y en a aucune) : une saisie antidatée
+ * ne doit jamais contredire un n° de lot déjà enregistré. Les nouvelles
+ * sorties elles-mêmes sont vérifiées en amont (voir checkLotClaim et LotCaps).
+ */
+export function findContradictedLotClaim(
+  allocations: LotAllocationInput[],
+  shipments: LotShipmentInput[],
+  additions: { article: string; silo: string; lotNumber: string | null; quantity: number }[],
+  date: string | null,
+): ContradictedLotClaim | null {
+  const claims = new Map<string, ContradictedLotClaim>();
+  shipments.forEach((shipment) => {
+    if (shipment.lotNumber && shipment.quantity > 0) claims.set(`shipment:${shipment.shipmentId}:${shipment.silo}`, { lotNumber: shipment.lotNumber, silo: shipment.silo, date: shipment.shipmentDate });
+  });
+  allocations.forEach((allocation) => {
+    if (allocation.lotNumber && allocation.quantity < 0) claims.set(`correction:${allocation.entryId}:${allocation.silo}`, { lotNumber: allocation.lotNumber, silo: allocation.silo, date: allocation.entryDate });
+  });
+  if (claims.size === 0) return null;
+
+  /** Ce que chaque sortie enregistrée qui désigne un lot obtient réellement de ce lot. */
+  const fulfilment = (ledger: LotLedger) => {
+    const obtained = new Map<string, number>();
+    for (const lot of ledger.lots) {
+      for (const consumption of lot.consumptions) {
+        const id = consumption.source.type === "shipment" ? consumption.source.shipmentId : consumption.source.entryId;
+        const key = `${consumption.source.type}:${id}:${lot.silo}`;
+        if (claims.get(key)?.lotNumber === lot.lotNumber) obtained.set(key, (obtained.get(key) ?? 0) + consumption.quantity);
+      }
+    }
+    return obtained;
+  };
+
+  const before = fulfilment(computeLotLedger(allocations, shipments));
+  // Ids négatifs : jamais confondus avec une vraie expédition. Ajoutées après
+  // toutes les autres, comme une nouvelle ligne enregistrée (ordre de saisie).
+  const hypothetical: LotShipmentInput[] = additions.map((addition, index) => ({
+    shipmentId: -1 - index,
+    shipmentDate: date,
+    article: addition.article,
+    silo: addition.silo,
+    quantity: addition.quantity,
+    shipmentType: "",
+    lotNumber: addition.lotNumber,
+  }));
+  const after = fulfilment(computeLotLedger(allocations, [...shipments, ...hypothetical]));
+
+  for (const [key, claim] of Array.from(claims.entries())) {
+    if ((after.get(key) ?? 0) < (before.get(key) ?? 0) - 1e-6) return claim;
+  }
+  return null;
+}
+
+/**
+ * Quantité qu'un silo peut encore fournir d'un article pour une sortie datée
+ * `date`, sans qu'aucune sortie (celle-ci, ou une autre déjà enregistrée plus
+ * tard) se retrouve sans lot à imputer : le plus bas niveau de stock atteint à
+ * partir de cette date. Une expédition antidatée ne peut donc puiser ni dans
+ * une production entrée après elle, ni dans ce qu'une expédition ultérieure a
+ * déjà emporté. Un lot fermé manuellement ne compte que pour ce qui en est
+ * réellement sorti (voir manualDepletionWriteOffs).
+ */
+export function computeShippableQuantity(allocations: LotAllocationInput[], shipments: LotShipmentInput[], article: string, silo: string, date: string | null): number {
+  const group = buildEventGroups(allocations, shipments).find((item) => item.article === article && item.silo === silo);
+  if (!group) return 0;
+
+  const writeOffByEntry = new Map<number, number>();
+  for (const lot of computeLotLedger(allocations, shipments).lots) {
+    if (lot.article !== article || lot.silo !== silo || !lot.manuallyDepleted) continue;
+    writeOffByEntry.set(lot.entryId, (writeOffByEntry.get(lot.entryId) ?? 0) + Math.max(lot.producedQuantity - lot.consumedQuantity, 0));
+  }
+
+  // Niveau cumulé production - sorties, sans plancher à zéro : son minimum
+  // global mesure ce que le grand livre laisse déjà sans lot (unattributed),
+  // et son minimum à partir de la date ce que la nouvelle sortie peut encore
+  // prendre sans en laisser davantage.
+  const key = movementKey(date);
+  let level = 0;
+  let lowest = 0;
+  let lowestFromDate = Number.POSITIVE_INFINITY;
+  let reachedDate = false;
+  for (const event of group.events) {
+    if (!reachedDate && event.date > key) {
+      reachedDate = true;
+      lowestFromDate = level;
+    }
+    if (event.kind === "produce") {
+      const writeOff = Math.min(writeOffByEntry.get(event.entryId) ?? 0, event.quantity);
+      if (writeOff > 0) writeOffByEntry.set(event.entryId, (writeOffByEntry.get(event.entryId) ?? 0) - writeOff);
+      level += event.quantity - writeOff;
+    } else {
+      level -= event.quantity;
+    }
+    lowest = Math.min(lowest, level);
+    if (reachedDate) lowestFromDate = Math.min(lowestFromDate, level);
+  }
+  if (!reachedDate) lowestFromDate = level;
+  return Math.max(roundTons(lowestFromDate + Math.max(-lowest, 0)), 0);
+}
+
+export type LotClaimCheck =
+  | { status: "ok" }
+  | { status: "untracked" }
+  | { status: "other-silo"; silos: string[] }
+  | { status: "closed" }
+  | { status: "not-yet-produced"; entryDate: string | null }
+  /** `reservedLater` : le lot contenait davantage ce jour-là, mais des sorties enregistrées plus tard qui le désignent en ont besoin. */
+  | { status: "insufficient"; available: number; reservedLater: boolean };
+
+/**
+ * Vérifie qu'un lot désigné sur une expédition pouvait bien fournir, dans ce
+ * silo et à la date de l'expédition, la quantité qu'on lui impute — sans
+ * priver une sortie enregistrée plus tard qui le désigne aussi (voir
+ * computeLotFreeQuantities). Sans quoi la ligne enregistrée et la traçabilité
+ * des lots se contrediraient. Un lot que l'application ne connaît pas du tout
+ * pour cet article (« untracked ») ne peut pas être vérifié : le grand livre
+ * impute alors la sortie en FIFO.
+ */
+export function checkLotClaim(
+  allocations: LotAllocationInput[],
+  shipments: LotShipmentInput[],
+  claim: { article: string; silo: string; lotNumber: string; quantity: number; date: string | null },
+): LotClaimCheck {
+  const isClaimedLot = (lot: LotBalance) => lot.article === claim.article && lot.lotNumber === claim.lotNumber;
+  const known = computeLotLedger(allocations, shipments).lots.filter(isClaimedLot);
+  if (known.length === 0) return { status: "untracked" };
+  const inSilo = known.filter((lot) => lot.silo === claim.silo);
+  if (inSilo.length === 0) return { status: "other-silo", silos: Array.from(new Set(known.map((lot) => lot.silo))) };
+  const open = inSilo.filter((lot) => !lot.manuallyDepleted);
+  if (open.length === 0) return { status: "closed" };
+
+  const asOf = computeLotLedgerAsOf(allocations, shipments, claim.date).lots
+    .filter((lot) => isClaimedLot(lot) && lot.silo === claim.silo && !lot.manuallyDepleted);
+  if (asOf.length === 0) {
+    const firstEntryDate = open.map((lot) => lot.entryDate).sort((a, b) => movementKey(a).localeCompare(movementKey(b)))[0] ?? null;
+    return { status: "not-yet-produced", entryDate: firstEntryDate };
+  }
+  const content = roundTons(asOf.reduce((total, lot) => total + lot.remainingQuantity, 0));
+  const free = computeLotFreeQuantities(allocations, shipments, claim.article, claim.silo, claim.date).get(claim.lotNumber) ?? content;
+  const available = Math.min(content, free);
+  return claim.quantity > available + 0.005 ? { status: "insufficient", available, reservedLater: free < content - 0.005 } : { status: "ok" };
 }
 
 const LEDGER_SHEET_NAME = "Traçabilité des lots";

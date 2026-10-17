@@ -118,12 +118,16 @@ export default function SiloExpedition() {
     return distinctSilos.join(", ");
   };
 
+  // Code article tel que le serveur l'enregistre (majuscules, sans espaces autour) :
+  // « dg3 » saisi désigne bien le stock et les lots de DG3.
+  const draftArticle = shipmentDraft.article.trim().toUpperCase();
+
   // Lots encore actifs pour l'article en cours de saisie : la base des suggestions
   // de N° Lot et de silo ci-dessous (elles s'affinent l'une l'autre).
   const lotsForArticle = useMemo(() => {
     const activeLots = ledgerQuery.data?.lots.filter((lot) => lot.status === "active") ?? [];
-    return activeLots.filter((lot) => lot.article === shipmentDraft.article);
-  }, [ledgerQuery.data, shipmentDraft.article]);
+    return activeLots.filter((lot) => lot.article === draftArticle);
+  }, [ledgerQuery.data, draftArticle]);
 
   // N° Lot : actifs pour cet article, restreints en plus au silo déjà choisi le cas échéant,
   // triés du plus ancien au plus récent (ordre FIFO : celui à expédier en premier).
@@ -331,7 +335,7 @@ export default function SiloExpedition() {
   };
 
   const submitSplitShipment = () => {
-    if (!shipmentDraft.article.trim()) { toast.error("Indiquez l’article expédié."); return; }
+    if (!draftArticle) { toast.error("Indiquez l’article expédié."); return; }
     if (!splitAllocations) return;
 
     const parsedRows: { silo: string; lotNumber: string; quantity: number }[] = [];
@@ -339,7 +343,8 @@ export default function SiloExpedition() {
       if (!row.silo) { toast.error("Choisissez un silo pour chaque ligne répartie."); return; }
       if (!row.lotNumber.trim()) { toast.error(`Indiquez le n° de lot pour la ligne ${row.silo}.`); return; }
       const quantity = parseQuantity(row.quantity);
-      if (!quantity) { toast.error(`Indiquez une quantité valide pour ${row.silo}.`); return; }
+      // Au moins 0,01 T une fois arrondie au centième, comme elle sera enregistrée.
+      if (!quantity || Math.round(quantity * 100) <= 0) { toast.error(`Indiquez une quantité positive (au moins 0,01 T) pour ${row.silo}.`); return; }
       parsedRows.push({ silo: row.silo, lotNumber: row.lotNumber.trim(), quantity });
     }
     if (parsedRows.length < 2) { toast.error("Ajoutez au moins deux répartitions, sinon utilisez la saisie simple."); return; }
@@ -348,16 +353,16 @@ export default function SiloExpedition() {
     const quantityBySilo = new Map<string, number>();
     parsedRows.forEach((row) => quantityBySilo.set(row.silo, (quantityBySilo.get(row.silo) ?? 0) + row.quantity));
     for (const [silo, quantity] of Array.from(quantityBySilo.entries())) {
-      const available = stateQuery.data?.matrix?.[silo]?.[shipmentDraft.article] ?? 0;
+      const available = stateQuery.data?.matrix?.[silo]?.[draftArticle] ?? 0;
       if (quantity > available + 0.005) {
-        toast.error(`La quantité expédiée depuis ${silo} (${fmt(quantity)} T) dépasse le stock disponible de ${shipmentDraft.article} (${fmt(available)} T).`);
+        toast.error(`La quantité expédiée depuis ${silo} (${fmt(quantity)} T) dépasse le stock disponible de ${draftArticle} (${fmt(available)} T).`);
         return;
       }
     }
 
     createSplitShipment.mutate({
       shipmentDate: shipmentDraft.shipmentDate || undefined,
-      article: shipmentDraft.article.trim(),
+      article: draftArticle,
       shipmentType: shipmentDraft.shipmentType as typeof SHIPMENT_TYPES[number],
       allocations: parsedRows,
     });
@@ -366,23 +371,25 @@ export default function SiloExpedition() {
   const submitShipment = (event: React.FormEvent) => {
     event.preventDefault();
     if (splitAllocations) { submitSplitShipment(); return; }
-    if (!shipmentDraft.article.trim()) { toast.error("Indiquez l’article expédié."); return; }
+    if (!draftArticle) { toast.error("Indiquez l’article expédié."); return; }
     if (!shipmentDraft.silo) { toast.error("Choisissez le silo d’où part l’expédition."); return; }
     const quantity = parseQuantity(shipmentDraft.quantity);
     if (quantity === undefined || quantity === null) { toast.error("Indiquez une quantité expédiée valide."); return; }
+    // Au moins 0,01 T une fois arrondie au centième, comme elle sera enregistrée.
+    if (Math.round(quantity * 100) <= 0) { toast.error("La quantité expédiée doit être positive (au moins 0,01 T)."); return; }
     // Vérification immédiate côté client (le serveur reste la source de vérité, en particulier
     // pour une modification : voir assertShipmentWithinStock, qui exclut l'expédition éditée).
     if (!editingShipmentId) {
-      const available = stateQuery.data?.matrix?.[shipmentDraft.silo]?.[shipmentDraft.article] ?? 0;
+      const available = stateQuery.data?.matrix?.[shipmentDraft.silo]?.[draftArticle] ?? 0;
       if (quantity > available + 0.005) {
-        toast.error(`La quantité expédiée (${fmt(quantity)} T) dépasse le stock disponible de ${shipmentDraft.article} dans ${shipmentDraft.silo} (${fmt(available)} T).`);
+        toast.error(`La quantité expédiée (${fmt(quantity)} T) dépasse le stock disponible de ${draftArticle} dans ${shipmentDraft.silo} (${fmt(available)} T).`);
         return;
       }
     }
 
     const payload = {
       shipmentDate: shipmentDraft.shipmentDate || undefined,
-      article: shipmentDraft.article.trim(),
+      article: draftArticle,
       lotNumber: shipmentDraft.lotNumber.trim() || undefined,
       quantity,
       silo: shipmentDraft.silo,
@@ -477,7 +484,7 @@ export default function SiloExpedition() {
           <form className="silo-form" onSubmit={submitShipment}>
             <div className="silo-fields">
               <label>Date<input type="date" value={shipmentDraft.shipmentDate} onChange={(event) => setShipmentDraft({ ...shipmentDraft, shipmentDate: event.target.value })} /></label>
-              <label>Article<input list="silo-articles" value={shipmentDraft.article} onChange={(event) => handleArticleChange(event.target.value)} placeholder="CG3" required /></label>
+              <label>Article<input className="silo-article-input" list="silo-articles" value={shipmentDraft.article} onChange={(event) => handleArticleChange(event.target.value)} placeholder="CG3" required /></label>
               {!splitAllocations && <>
                 <label>N° Lot<input list="silo-expedition-lots" value={shipmentDraft.lotNumber} onChange={(event) => handleLotChange(event.target.value)} placeholder="2600646-0905" /></label>
                 <label>Qté (T)<input value={shipmentDraft.quantity} onChange={(event) => setShipmentDraft({ ...shipmentDraft, quantity: event.target.value })} placeholder="25" inputMode="decimal" required /></label>

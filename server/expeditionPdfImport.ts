@@ -7,7 +7,7 @@
 // computeLotLedger dans siloLots.ts) — le lot actif le plus ancien pour cet
 // article et ce silo, tel qu'il se présentait à cette date-là. Même règle
 // que la suggestion de lot affichée à la saisie manuelle d'une expédition.
-import { compareLotOrder, computeLotLedger } from "./siloLots";
+import { computeLotLedgerAsOf, openLotsInFifoOrder } from "./siloLots";
 import { createSiloShipment, loadLotMovements } from "./siloDb";
 
 /**
@@ -59,9 +59,9 @@ function roundTons(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-/** "CG 25 Vrac" -> "CG25" ; "DG 3" -> "DG3" ; "CM1 Vrac" -> "CM1". */
+/** "CG 25 Vrac" -> "CG25" ; "DG 3" -> "DG3" ; "CM1 Vrac" -> "CM1" ; "Dg 3" -> "DG3" (codes en majuscules, comme partout ailleurs). */
 function normalizeArticle(designation: string): string {
-  return designation.replace(/vrac/gi, "").replace(/\s+/g, "").trim();
+  return designation.replace(/vrac/gi, "").replace(/\s+/g, "").trim().toUpperCase();
 }
 
 function parseAmount(text: string): number {
@@ -132,14 +132,10 @@ export function parseExpeditionPdfText(text: string): ParsedExpeditionPdf {
  */
 async function resolveFifoLot(article: string, silo: string, date: string): Promise<string | null> {
   const { allocations, shipments } = await loadLotMovements();
-  const ledger = computeLotLedger(
-    allocations.filter((allocation) => !allocation.entryDate || allocation.entryDate <= date),
-    shipments.filter((shipment) => !shipment.shipmentDate || shipment.shipmentDate <= date),
-  );
-  const candidates = ledger.lots
-    .filter((lot) => lot.article === article && lot.silo === silo && lot.status === "active")
-    .sort((a, b) => (a.entryDate ?? "").localeCompare(b.entryDate ?? "") || compareLotOrder(a, b));
-  return candidates[0]?.lotNumber ?? null;
+  // Même chronologie que le grand livre (computeLotLedgerAsOf) : le lot choisi
+  // est bien celui que la traçabilité consommera pour cette expédition.
+  const ledger = computeLotLedgerAsOf(allocations, shipments, date);
+  return openLotsInFifoOrder(ledger.lots, article, silo)[0]?.lotNumber ?? null;
 }
 
 export type ExpeditionImportResult = { imported: number; warnings: string[] };

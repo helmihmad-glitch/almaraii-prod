@@ -1,5 +1,17 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { getSiloFillStatus, SILO_CAPACITY_TONS } from "../shared/silo";
+
+const siloPfPage = readFileSync(fileURLToPath(new URL("../client/src/pages/SiloPf.tsx", import.meta.url)), "utf8");
+
+describe("carte d’un silo partagé entre deux articles", () => {
+  it("affiche chaque article avec sa quantité, et le total du silo pour le remplissage", () => {
+    expect(siloPfPage).toContain("row.articles.length > 1");
+    expect(siloPfPage).toContain("row.articles.map((item)");
+    expect(siloPfPage).toContain("getSiloFillStatus(row.quantity)");
+  });
+});
 
 describe("état de remplissage d’un silo (capacité 25 T)", () => {
   it("est vide sans quantité ou à quantité nulle/négative", () => {

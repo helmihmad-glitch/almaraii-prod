@@ -115,7 +115,8 @@ describe("export Excel des expéditions filtrées par type et période (Rapports
 describe("silo.exportShipmentsReport (filtre par type et période côté serveur)", () => {
   it("ne garde que les expéditions du type et de la période choisis", async () => {
     const caller = appRouter.createCaller(adminContext());
-    await caller.silo.createEntry({ article: "REPORT-TEST-A", entryDate: "2026-09-01", lotNumber: "LOT-A", allocations: [{ silo: "SPF6", quantity: 30 }] });
+    // Produit avant toutes les expéditions ci-dessous, y compris celle d'août : une expédition ne peut pas précéder sa production.
+    await caller.silo.createEntry({ article: "REPORT-TEST-A", entryDate: "2026-07-25", lotNumber: "LOT-A", allocations: [{ silo: "SPF6", quantity: 30 }] });
     await caller.silo.createShipment({ shipmentDate: "2026-09-10", article: "REPORT-TEST-A", silo: "SPF6", lotNumber: "LOT-A", quantity: 5, shipmentType: "Vrac" });
     await caller.silo.createShipment({ shipmentDate: "2026-09-10", article: "REPORT-TEST-A", silo: "SPF6", lotNumber: "LOT-A", quantity: 4, shipmentType: "Sac" });
     await caller.silo.createShipment({ shipmentDate: "2026-08-01", article: "REPORT-TEST-A", silo: "SPF6", lotNumber: "LOT-A", quantity: 3, shipmentType: "Vrac" }); // hors période.

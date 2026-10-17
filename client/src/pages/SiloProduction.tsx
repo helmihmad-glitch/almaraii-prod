@@ -127,7 +127,7 @@ export default function SiloProduction() {
 
     const payload = {
       entryDate: entryDraft.entryDate || undefined,
-      article: entryDraft.article.trim(),
+      article: entryDraft.article.trim().toUpperCase(),
       lotNumber: entryDraft.lotNumber.trim() || undefined,
       totalQuantity: declaredTotal,
       allocations,
@@ -216,7 +216,7 @@ export default function SiloProduction() {
           <form className="silo-form" onSubmit={submitEntry}>
             <div className="silo-fields">
               <label>Date<input type="date" value={entryDraft.entryDate} onChange={(event) => setEntryDraft({ ...entryDraft, entryDate: event.target.value })} /></label>
-              <label>Article<input list="silo-articles" value={entryDraft.article} onChange={(event) => setEntryDraft({ ...entryDraft, article: event.target.value })} placeholder="CG3" required /></label>
+              <label>Article<input className="silo-article-input" list="silo-articles" value={entryDraft.article} onChange={(event) => setEntryDraft({ ...entryDraft, article: event.target.value })} placeholder="CG3" required /></label>
               <label>N° Lot<input value={entryDraft.lotNumber} onChange={(event) => setEntryDraft({ ...entryDraft, lotNumber: event.target.value })} placeholder="2600645-0409" /></label>
               <label>Qté totale (T)<input value={entryDraft.totalQuantity} onChange={(event) => setEntryDraft({ ...entryDraft, totalQuantity: event.target.value })} placeholder="35" inputMode="decimal" /></label>
             </div>

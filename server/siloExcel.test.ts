@@ -119,7 +119,6 @@ describe("classeur Silo_PF", () => {
         silo: shipment.silo,
         shipmentType: shipment.shipmentType,
       })),
-      ["CM1", "CG3"],
     );
 
     const reparsed = await parseSiloWorkbook(exported);
@@ -128,7 +127,10 @@ describe("classeur Silo_PF", () => {
     expect(reparsed.shipments).toEqual(parsed.shipments);
   });
 
-  it("exporte les quatre feuilles avec les formules et leurs résultats calculés", async () => {
+  // L'export « Flux production (Entrées/Sorties) » (voir Rapports) ne garde
+  // volontairement que les deux feuilles de flux : l'état des silos se
+  // consulte dans l'application (page État des silos).
+  it("exporte uniquement les deux feuilles de flux : entrées de production et expéditions", async () => {
     const parsed = await parseSiloWorkbook(await makeSourceWorkbook());
     const exported = await buildSiloWorkbook(
       parsed.entries.map((entry) => ({
@@ -146,26 +148,33 @@ describe("classeur Silo_PF", () => {
         silo: shipment.silo,
         shipmentType: shipment.shipmentType,
       })),
-      ["CM1", "CG3"],
     );
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(exported as unknown as ArrayBuffer);
-    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Production ", "Expidition Vrac-Sac", "Etat final silo", "Silo_Article"]);
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["Production ", "Expidition Vrac-Sac"]);
+  });
 
-    // SPF3 / CG3 : 25 produits - 5 de correction - 4,52 expédiés = 15,48
-    const stateCell = workbook.getWorksheet("Etat final silo")!.getRow(11).getCell(5) as ExcelJS.Cell;
-    const stateValue = stateCell.value as ExcelJS.CellFormulaValue;
-    expect(stateValue.result).toBe(15.48);
-    expect(stateValue.formula).toContain("SUMIF('Production '!$D$6:$D$998");
-    expect(stateValue.formula).toContain("SUMIFS('Expidition Vrac-Sac'!$F$7:$F$999");
+  it("met en majuscules les codes article saisis à la main dans le classeur, pour qu'une expédition « dg3 » décompte bien le stock de DG3", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const production = workbook.addWorksheet("Production ");
+    ["Date", "Article", "N° Lot", "Qté totale (T)", "SPF1", "SPF2"].forEach((label, index) => { production.getRow(5).getCell(3 + index).value = label; });
+    production.getRow(6).getCell(3).value = new Date("2026-09-05T00:00:00Z");
+    production.getRow(6).getCell(4).value = "dg3";
+    production.getRow(6).getCell(7).value = 20; // SPF1
+    const shipment = workbook.addWorksheet("Expidition Vrac-Sac");
+    ["Date", "Article", "N° Lot", "Qté (T)", "Silo", "Expédition"].forEach((label, index) => { shipment.getRow(6).getCell(3 + index).value = label; });
+    shipment.getRow(7).getCell(3).value = new Date("2026-09-07T00:00:00Z");
+    shipment.getRow(7).getCell(4).value = " Dg3 ";
+    shipment.getRow(7).getCell(6).value = 5;
+    shipment.getRow(7).getCell(7).value = "SPF1";
+    shipment.getRow(7).getCell(8).value = "Vrac";
 
-    // Silo_Article : SPF1 occupé par CM1, SPF3 par CG3.
-    const occupancy = workbook.getWorksheet("Silo_Article")!;
-    expect((occupancy.getRow(6).getCell(3).value as ExcelJS.CellFormulaValue).result).toBe("CM1");
-    expect((occupancy.getRow(6).getCell(4).value as ExcelJS.CellFormulaValue).result).toBe(16.92);
-    expect((occupancy.getRow(8).getCell(4).value as ExcelJS.CellFormulaValue).result).toBe(15.48);
-    expect((occupancy.getRow(6).getCell(7).value as ExcelJS.CellFormulaValue).result).toBe(16.92);
+    const parsed = await parseSiloWorkbook(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.entries.map((entry) => entry.article)).toEqual(["DG3"]);
+    expect(parsed.shipments.map((row) => row.article)).toEqual(["DG3"]);
   });
 
   it("fusionne Date, Article, Qté G(T), Silo et Expédition sur les lignes d'une même expédition répartie sur plusieurs lots (même splitGroupId)", async () => {
@@ -181,7 +190,6 @@ describe("classeur Silo_PF", () => {
         { shipmentDate: "2026-09-20", article: "DG3", lotNumber: "2600677-0917", quantity: "3.00", silo: "SPF11", shipmentType: "Vrac", splitGroupId: 101 },
         { shipmentDate: "2026-09-20", article: "CG3", lotNumber: "2600666-0914", quantity: "3.00", silo: "SPF3", shipmentType: "Sac", splitGroupId: null },
       ],
-      ["DG3", "CG3"],
     );
 
     const workbook = new ExcelJS.Workbook();
@@ -233,7 +241,6 @@ describe("classeur Silo_PF", () => {
         { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "20006649-0905", quantity: "10.00", silo: "SPF3", shipmentType: "Sac", splitGroupId: 201 },
         { shipmentDate: "2026-09-24", article: "CG3", lotNumber: "26006648-09004", quantity: "10.00", silo: "SPF5", shipmentType: "Sac", splitGroupId: 201 },
       ],
-      ["CG3"],
     );
 
     const workbook = new ExcelJS.Workbook();
@@ -272,7 +279,6 @@ describe("classeur Silo_PF", () => {
         { shipmentDate: "2026-09-18", article: "CG25", lotNumber: "2600680-0918", quantity: "13.46", silo: "SPF2", shipmentType: "Vrac", splitGroupId: null },
         { shipmentDate: "2026-09-18", article: "CG25", lotNumber: "2600680-0918", quantity: "8.02", silo: "SPF2", shipmentType: "Vrac", splitGroupId: null },
       ],
-      ["CG25"],
     );
 
     const workbook = new ExcelJS.Workbook();

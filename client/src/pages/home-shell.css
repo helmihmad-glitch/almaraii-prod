@@ -1,2 +1,6 @@
 /* La vue d’ensemble occupe toute la zone de contenu de la coque commune. */
 .home-main { display: block; width: 100%; min-width: 0; }
+
+/* Tendance d’une tuile par rapport au mois précédent : verte en hausse (style de base), rouge en baisse, neutre si stable. */
+.metric-trend-down { color: var(--destructive); }
+.metric-trend-flat { color: var(--muted-foreground); }

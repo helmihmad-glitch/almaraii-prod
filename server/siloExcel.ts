@@ -1,13 +1,13 @@
 // Lecture et écriture du classeur Silo_PF.
 //
-// Le fichier exporté reprend la structure d’origine — quatre feuilles, mêmes
-// en-têtes, mêmes formules — afin de rester utilisable tel quel dans Excel.
-// Les formules sont écrites avec leur résultat calculé par l’application, si
-// bien que le fichier affiche les bonnes valeurs même avant recalcul.
+// Le fichier exporté (« Flux production (Entrées/Sorties) » dans Rapports)
+// reprend les deux feuilles de flux du classeur d’origine — entrées de
+// production et expéditions, mêmes en-têtes — afin de rester utilisable tel
+// quel dans Excel et réimportable. L’état des silos se consulte dans
+// l’application (page État des silos).
 
 import ExcelJS from "exceljs";
 import { SHIPMENT_TYPES, SILOS } from "../shared/silo";
-import { computeArticleStock, computeSiloMatrix, computeSiloOccupancy, type SiloAllocationInput, type SiloShipmentInput } from "./siloStock";
 
 export type ParsedSiloEntry = { entryDate?: string; article: string; lotNumber?: string; totalQuantity?: number; allocations: { silo: string; quantity: number }[] };
 export type ParsedSiloShipment = { shipmentDate?: string; article: string; lotNumber?: string; quantity: number; silo: string; shipmentType: string };
@@ -15,21 +15,12 @@ export type ParsedSiloWorkbook = { entries: ParsedSiloEntry[]; shipments: Parsed
 
 const PRODUCTION_SHEET = "Production ";
 const SHIPMENT_SHEET = "Expidition Vrac-Sac";
-const STATE_SHEET = "Etat final silo";
-const OCCUPANCY_SHEET = "Silo_Article";
-/** Lignes de données, alignées sur le classeur d’origine pour que les formules exportées pointent au bon endroit. */
+/** Premières lignes de données, alignées sur le classeur d’origine. */
 const PRODUCTION_FIRST_ROW = 6;
-const PRODUCTION_LAST_ROW = 998;
 const SHIPMENT_FIRST_ROW = 7;
-const SHIPMENT_LAST_ROW = 999;
-const STATE_HEADER_ROW = 8;
-const STATE_FIRST_ROW = 9;
-const OCCUPANCY_FIRST_ROW = 6;
 /** Colonnes du classeur : C=3 Date … G=7 SPF1 … R=18 SPF12. */
 const PRODUCTION_DATE_COL = 3;
 const PRODUCTION_SILO_FIRST_COL = 7;
-const STATE_SILO_COL = 3;
-const STATE_ARTICLE_FIRST_COL = 4;
 
 /**
  * Convertit une date AAAA-MM-JJ en Date à écrire dans une cellule Excel
@@ -178,7 +169,8 @@ export async function parseSiloWorkbook(buffer: Buffer, knownSilos: readonly str
     let lastDate: string | undefined;
     for (let rowNumber = header.rowNumber + 1; rowNumber <= productionSheet.rowCount; rowNumber += 1) {
       const row = productionSheet.getRow(rowNumber);
-      const article = readText(row.getCell(articleCol));
+      // En majuscules, comme partout ailleurs : « dg3 » saisi à la main dans le classeur reste DG3.
+      const article = readText(row.getCell(articleCol)).toUpperCase();
       if (!article || IGNORED_ROW_LABELS.includes(normalizeHeader(article))) continue;
 
       // Une ligne sans date poursuit la journée précédente, comme à la lecture du classeur.
@@ -230,7 +222,7 @@ export async function parseSiloWorkbook(buffer: Buffer, knownSilos: readonly str
     let lastType: string | undefined;
     for (let rowNumber = header.rowNumber + 1; rowNumber <= shipmentSheet.rowCount; rowNumber += 1) {
       const row = shipmentSheet.getRow(rowNumber);
-      const rawArticle = readText(row.getCell(articleCol));
+      const rawArticle = readText(row.getCell(articleCol)).toUpperCase();
       const rawSilo = readText(row.getCell(siloCol)).toUpperCase();
       const quantity = readNumber(row.getCell(quantityCol));
       if (rawArticle && IGNORED_ROW_LABELS.includes(normalizeHeader(rawArticle))) continue;
@@ -302,22 +294,14 @@ export function writeTitle(worksheet: ExcelJS.Worksheet, rowNumber: number, firs
   row.height = 26;
 }
 
-/**
- * Reconstruit le classeur Silo_PF à partir des données de l’application :
- * les deux feuilles de saisie, puis les deux feuilles calculées qui reprennent
- * les formules d’origine (avec leur résultat déjà renseigné).
- */
-export async function buildSiloWorkbook(entries: ExportEntry[], shipments: ExportShipment[], articles: readonly string[], silos: readonly string[] = SILOS): Promise<Buffer> {
+/** Reconstruit le classeur Silo_PF à partir des données de l’application : ses deux feuilles de flux (entrées et expéditions). */
+export async function buildSiloWorkbook(entries: ExportEntry[], shipments: ExportShipment[], silos: readonly string[] = SILOS): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Almaraïi Production Pulse";
   workbook.created = new Date();
   workbook.modified = new Date();
 
-  const exportedArticles = articles.length > 0 ? [...articles] : ["—"];
   const siloLastCol = PRODUCTION_SILO_FIRST_COL + silos.length - 1;
-  const stateLastArticleCol = STATE_ARTICLE_FIRST_COL + exportedArticles.length - 1;
-  const stateLastRow = STATE_FIRST_ROW + silos.length - 1;
-  const occupancyLastRow = OCCUPANCY_FIRST_ROW + silos.length - 1;
 
   // --- 1. Entrées de production ---
   const production = workbook.addWorksheet(PRODUCTION_SHEET, { views: [{ state: "frozen", ySplit: 5 }] });

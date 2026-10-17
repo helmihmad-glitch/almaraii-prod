@@ -104,8 +104,11 @@ export default function Registry() {
     return prepared.key;
   };
 
-  /** N'écrit rien : ajoute les nouvelles lignes et, si applyModifications, applique aussi les modifications confirmées. */
-  const finalizeImport = async (storageKey: string, applyModifications: boolean) => {
+  /**
+   * Ajoute les nouvelles lignes et, si applyModifications, applique aussi les modifications confirmées.
+   * `announceRejected` : faux quand l'aperçu a déjà signalé les lignes ignorées (voir handleImportFile).
+   */
+  const finalizeImport = async (storageKey: string, applyModifications: boolean, announceRejected = true) => {
     setIsImporting(true);
     try {
       const result = await importExcel.mutateAsync({ storageKey, applyModifications });
@@ -114,8 +117,9 @@ export default function Registry() {
       if (applyModifications) parts.push(`${result.updated} modification(s) appliquée(s)`);
       else if (result.pendingModifications) parts.push(`${result.pendingModifications} modification(s) non appliquée(s) (annulée${result.pendingModifications > 1 ? "s" : ""})`);
       parts.push(`${result.skipped} doublon(s) déjà identique(s) ignoré(s)`);
+      if (result.restDays) parts.push(`${result.restDays} jour(s) de repos enregistré(s), visibles dans Rapports`);
       toast.success("Import Excel terminé", { description: `${parts.join(", ")}.` });
-      if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
+      if (announceRejected && result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s)`, { description: result.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
       setImportReview(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "L’import Excel a échoué.");
@@ -139,11 +143,12 @@ export default function Registry() {
       const storageKey = await uploadToImportStorage(file);
       const preview = await previewExcel.mutateAsync({ storageKey });
       if (preview.toUpdate.length === 0) {
+        // Les lignes ignorées sont signalées une seule fois, par finalizeImport.
         await finalizeImport(storageKey, false);
       } else {
         setImportReview({ storageKey, fileName: file.name, toCreate: preview.toCreate, toUpdate: preview.toUpdate, unchanged: preview.unchanged });
+        if (preview.rejected) toast.warning(`${preview.rejected} ligne(s) ignorée(s)`, { description: preview.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
       }
-      if (preview.rejected) toast.warning(`${preview.rejected} ligne(s) ignorée(s)`, { description: preview.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "L’import Excel a échoué.");
     } finally {
@@ -162,8 +167,8 @@ export default function Registry() {
       </ul>
       <div className="registry-import-dialog-actions">
         <button type="button" className="registry-clear" onClick={() => setImportReview(null)} disabled={isImporting}>Annuler tout l’import</button>
-        <button type="button" className="registry-clear" onClick={() => finalizeImport(importReview.storageKey, false)} disabled={isImporting}>Ajouter les nouvelles lignes seulement</button>
-        <button type="button" className="registry-import" onClick={() => finalizeImport(importReview.storageKey, true)} disabled={isImporting}>{isImporting ? "Import…" : "Ajouter et appliquer les modifications"}</button>
+        <button type="button" className="registry-clear" onClick={() => finalizeImport(importReview.storageKey, false, false)} disabled={isImporting}>Ajouter les nouvelles lignes seulement</button>
+        <button type="button" className="registry-import" onClick={() => finalizeImport(importReview.storageKey, true, false)} disabled={isImporting}>{isImporting ? "Import…" : "Ajouter et appliquer les modifications"}</button>
       </div>
     </div></div>}
     <header className="registry-topbar">

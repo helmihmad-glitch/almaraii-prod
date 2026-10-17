@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { neon } from "@neondatabase/serverless";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import {
   dailyProgramLines,
@@ -186,7 +186,8 @@ function loadFallbackStore() {
       operators: parsed.operators ?? [],
       smsContacts: parsed.smsContacts ?? [],
       smsGroups: parsed.smsGroups ?? [],
-      records: parsed.records ?? [],
+      // Codes article en majuscules, comme la saisie et la migration 0010_normalize_article_codes côté Postgres.
+      records: (parsed.records ?? []).map((record) => ({ ...record, article: record.article.trim().toUpperCase() })),
       settings: parsed.settings,
       synchronizedFile: parsed.synchronizedFile,
       dailyPrograms: parsed.dailyPrograms ?? [],
@@ -292,6 +293,16 @@ let nextFallbackRestDayId = persistedFallback.nextRestDayId;
  */
 function getDatabaseUrl() {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+}
+
+/** Violation d'un index unique Postgres (code 23505), éventuellement enveloppée par drizzle dans `cause`. */
+export function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    if ((current as { code?: unknown }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 export async function getDb() {
@@ -856,12 +867,21 @@ export async function addSmsGroup(name: string, contactIds: number[]) {
   return group;
 }
 
+/** Un autre groupe (actif ou retiré) porte déjà ce nom — voir updateSmsGroup. */
+export class SmsGroupNameTakenError extends Error {
+  constructor(readonly groupName: string, readonly archived: boolean) {
+    super(`Un groupe porte déjà le nom « ${groupName} ».`);
+  }
+}
+
 export async function updateSmsGroup(id: number, name: string, contactIds: number[]) {
   const db = await getDb();
   const normalizedName = name.trim();
   if (!db) {
     const group = fallbackSmsGroups.find((item) => item.id === id);
     if (!group) return undefined;
+    const taken = fallbackSmsGroups.find((item) => item.id !== id && item.name === normalizedName);
+    if (taken) throw new SmsGroupNameTakenError(normalizedName, !taken.isActive);
     group.name = normalizedName;
     group.contactIds = contactIds;
     group.updatedAt = new Date();
@@ -869,8 +889,18 @@ export async function updateSmsGroup(id: number, name: string, contactIds: numbe
     return group;
   }
 
-  const [group] = await db.update(smsGroups).set({ name: normalizedName, contactIds, updatedAt: new Date() }).where(eq(smsGroups.id, id)).returning();
-  return group;
+  // Même ordre que le stockage de secours : un groupe introuvable l'emporte sur un nom déjà pris.
+  const [current] = await db.select({ id: smsGroups.id }).from(smsGroups).where(eq(smsGroups.id, id)).limit(1);
+  if (!current) return undefined;
+  const [taken] = await db.select({ isActive: smsGroups.isActive }).from(smsGroups).where(and(eq(smsGroups.name, normalizedName), ne(smsGroups.id, id))).limit(1);
+  if (taken) throw new SmsGroupNameTakenError(normalizedName, !taken.isActive);
+  try {
+    const [group] = await db.update(smsGroups).set({ name: normalizedName, contactIds, updatedAt: new Date() }).where(eq(smsGroups.id, id)).returning();
+    return group;
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new SmsGroupNameTakenError(normalizedName, false);
+    throw error;
+  }
 }
 
 export async function archiveSmsGroup(id: number) {

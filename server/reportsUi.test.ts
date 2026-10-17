@@ -42,9 +42,13 @@ describe("Rapports (centre d’export)", () => {
   });
 
   it("classe les rapports par domaine plutôt qu’en une grille indifférenciée", () => {
+    // Deux domaines depuis la refonte « Update Rapport vue » : les flux de
+    // production (entrées/sorties des silos) et le registre journalier, qui
+    // regroupe aussi le programme journalier.
     const groupMatches = reportsPage.match(/className="reports-group"/g) ?? [];
-    expect(groupMatches.length).toBe(3);
-    expect(reportsPage).toContain("État des silos");
+    expect(groupMatches.length).toBe(2);
+    expect(reportsPage).toContain("Flux production (Entrées/Sorties)");
+    expect(reportsPage).toContain("Registre journalier");
     expect(reportsPage).toContain("reports-group-title");
   });
 

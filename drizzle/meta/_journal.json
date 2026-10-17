@@ -71,6 +71,13 @@
       "when": 1790869650956,
       "tag": "0009_sticky_ozymandias",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792216759685,
+      "tag": "0010_normalize_article_codes",
+      "breakpoints": true
     }
   ]
 }

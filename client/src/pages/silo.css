@@ -44,6 +44,11 @@
 .silo-card-percent-over { background: #a24c37; }
 .silo-badge { align-self: flex-start; border-radius: 999px; padding: 4px 11px; background: #e8f2e4; color: #356a40; font: 700 16px 'Space Grotesk'; letter-spacing: -.01em; }
 .silo-badge-muted { background: #eef0ea; color: #86917f; }
+/* Codes article affichés en majuscules pendant la saisie ; la valeur n'est normalisée qu'à l'envoi, pour ne pas déplacer le curseur. */
+.silo-article-input { text-transform: uppercase; }
+.silo-badge-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.silo-badge-mixed { display: inline-flex; align-items: baseline; gap: 5px; padding: 3px 9px; font-size: 13px; }
+.silo-badge-mixed small { color: #5f7a63; font: 500 10px 'IBM Plex Sans'; letter-spacing: 0; }
 .silo-card-qty { margin: auto 0 0; color: var(--ink); font: 600 16px 'Space Grotesk'; letter-spacing: -.03em; }
 .silo-card-qty small { color: #7c8980; font: 500 10px 'IBM Plex Sans'; }
 .silo-card-bar { position: relative; height: 6px; border-radius: 999px; overflow: hidden; background: #e7ece2; }

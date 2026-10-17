@@ -1,6 +1,17 @@
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
-import { allocateFifoShipment, buildLotLedgerWorkbook, computeLotLedger, manualDepletionWriteOffs } from "./siloLots";
+import {
+  allocateFifoShipment,
+  buildLotLedgerWorkbook,
+  checkLotClaim,
+  computeLotFreeQuantities,
+  computeLotLedger,
+  computeLotLedgerAsOf,
+  computeShippableQuantity,
+  findContradictedLotClaim,
+  manualDepletionWriteOffs,
+  openLotQuantity,
+} from "./siloLots";
 
 describe("tracabilite FIFO des lots", () => {
   it("consomme le lot le plus ancien en premier (exemple demande)", () => {
@@ -452,5 +463,200 @@ describe("allocateFifoShipment (répartition d'une expédition sans N° Lot pré
   it("signale un reliquat plutôt que de le perdre si les lots actifs ne couvrent pas toute la quantité", () => {
     const { lots } = computeLotLedger([{ entryId: 1, entryDate: "2026-09-17", article: "CM1", lotNumber: "A", silo: "SPF2", quantity: 5 }], []);
     expect(allocateFifoShipment(lots, "CM1", "SPF2", 8)).toEqual([{ lotNumber: "A", quantity: 5 }, { lotNumber: null, quantity: 3 }]);
+  });
+
+  it("place un lot sans date après les lots datés, comme le grand livre", () => {
+    const { lots } = computeLotLedger(
+      [
+        { entryId: 1, entryDate: null, article: "CM1", lotNumber: "SANS-DATE", silo: "SPF2", quantity: 5 },
+        { entryId: 2, entryDate: "2026-09-17", article: "CM1", lotNumber: "DATE", silo: "SPF2", quantity: 5 },
+      ],
+      [],
+    );
+    expect(allocateFifoShipment(lots, "CM1", "SPF2", 6)).toEqual([{ lotNumber: "DATE", quantity: 5 }, { lotNumber: "SANS-DATE", quantity: 1 }]);
+  });
+});
+
+const TWO_LOTS = [
+  { entryId: 1, entryDate: "2026-10-01", article: "DG3", lotNumber: "LOT-OLD", silo: "SPF1", quantity: 5 },
+  { entryId: 2, entryDate: "2026-10-05", article: "DG3", lotNumber: "LOT-NEW", silo: "SPF1", quantity: 20 },
+];
+
+describe("lot désigné sur une sortie (n° de lot de l'expédition ou de la correction)", () => {
+  // Bug signalé par l'audit : le grand livre ignorait le n° de lot enregistré
+  // sur une expédition et consommait toujours le lot le plus ancien, si bien
+  // que la ligne enregistrée et la traçabilité des lots se contredisaient.
+  it("consomme le lot désigné plutôt que le plus ancien", () => {
+    const { lots } = computeLotLedger(TWO_LOTS, [
+      { shipmentId: 1, shipmentDate: "2026-10-06", article: "DG3", silo: "SPF1", quantity: 8, shipmentType: "Vrac", lotNumber: "LOT-NEW" },
+    ]);
+
+    expect(lots.find((lot) => lot.lotNumber === "LOT-OLD")).toMatchObject({ remainingQuantity: 5, status: "active" });
+    expect(lots.find((lot) => lot.lotNumber === "LOT-NEW")).toMatchObject({ remainingQuantity: 12, consumedQuantity: 8 });
+  });
+
+  it("ne repasse en FIFO que pour le surplus quand le lot désigné ne suffit pas", () => {
+    const { lots, unattributed } = computeLotLedger(TWO_LOTS, [
+      { shipmentId: 1, shipmentDate: "2026-10-06", article: "DG3", silo: "SPF1", quantity: 7, shipmentType: "Vrac", lotNumber: "LOT-OLD" },
+    ]);
+
+    expect(unattributed).toEqual([]);
+    expect(lots.find((lot) => lot.lotNumber === "LOT-OLD")).toMatchObject({ remainingQuantity: 0, status: "depleted" });
+    expect(lots.find((lot) => lot.lotNumber === "LOT-NEW")).toMatchObject({ remainingQuantity: 18 });
+  });
+
+  it("une correction qui désigne son lot le consomme en priorité, comme une expédition", () => {
+    const { lots } = computeLotLedger([...TWO_LOTS, { entryId: 3, entryDate: "2026-10-06", article: "DG3", lotNumber: "LOT-NEW", silo: "SPF1", quantity: -4 }], []);
+    expect(lots.find((lot) => lot.lotNumber === "LOT-OLD")).toMatchObject({ remainingQuantity: 5 });
+    expect(lots.find((lot) => lot.lotNumber === "LOT-NEW")).toMatchObject({ remainingQuantity: 16 });
+  });
+
+  it("un lot désigné inconnu laisse la sortie en FIFO, sans la perdre", () => {
+    const { lots, unattributed } = computeLotLedger(TWO_LOTS, [
+      { shipmentId: 1, shipmentDate: "2026-10-06", article: "DG3", silo: "SPF1", quantity: 3, shipmentType: "Vrac", lotNumber: "LOT-INCONNU" },
+    ]);
+    expect(unattributed).toEqual([]);
+    expect(lots.find((lot) => lot.lotNumber === "LOT-OLD")).toMatchObject({ remainingQuantity: 2 });
+  });
+});
+
+describe("computeLotLedgerAsOf (grand livre à la date d'une sortie)", () => {
+  it("ignore les mouvements postérieurs à la date, et range les mouvements sans date en fin de chronologie", () => {
+    const allocations = [...TWO_LOTS, { entryId: 3, entryDate: null, article: "DG3", lotNumber: "LOT-SANS-DATE", silo: "SPF1", quantity: 4 }];
+    const shipments = [{ shipmentId: 1, shipmentDate: "2026-10-08", article: "DG3", silo: "SPF1", quantity: 5, shipmentType: "Vrac", lotNumber: null }];
+
+    expect(computeLotLedgerAsOf(allocations, shipments, "2026-10-03").lots.map((lot) => lot.lotNumber)).toEqual(["LOT-OLD"]);
+    expect(computeLotLedgerAsOf(allocations, shipments, "2026-10-06").lots.map((lot) => [lot.lotNumber, lot.remainingQuantity])).toEqual([["LOT-OLD", 5], ["LOT-NEW", 20]]);
+    // Sans date : après tout le reste, expédition du 08/10 comprise.
+    const atEnd = computeLotLedgerAsOf(allocations, shipments, null).lots;
+    expect(atEnd.map((lot) => [lot.lotNumber, lot.remainingQuantity])).toEqual([["LOT-OLD", 0], ["LOT-NEW", 20], ["LOT-SANS-DATE", 4]]);
+  });
+});
+
+describe("computeShippableQuantity (stock expédiable à une date)", () => {
+  it("ne laisse rien expédier avant la première production (expédition antidatée)", () => {
+    expect(computeShippableQuantity(TWO_LOTS, [], "DG3", "SPF1", "2026-09-30")).toBe(0);
+    expect(computeShippableQuantity(TWO_LOTS, [], "DG3", "SPF1", "2026-10-02")).toBe(5);
+    expect(computeShippableQuantity(TWO_LOTS, [], "DG3", "SPF1", "2026-10-05")).toBe(25);
+  });
+
+  it("réserve ce qu'une expédition enregistrée plus tard emporte déjà", () => {
+    // 5 T le 01/10, 20 T le 05/10 ; 22 T déjà expédiées le 10/10 : il ne reste
+    // que 3 T à partager, y compris pour une expédition antidatée au 06/10.
+    const shipments = [{ shipmentId: 1, shipmentDate: "2026-10-10", article: "DG3", silo: "SPF1", quantity: 22, shipmentType: "Vrac" }];
+    expect(computeShippableQuantity(TWO_LOTS, shipments, "DG3", "SPF1", "2026-10-06")).toBe(3);
+    // Au 02/10, seul LOT-OLD existe, mais l'expédition du 10/10 en a besoin aussi.
+    expect(computeShippableQuantity(TWO_LOTS, shipments, "DG3", "SPF1", "2026-10-02")).toBe(3);
+  });
+
+  it("ne compte un lot fermé manuellement que pour ce qui en est réellement sorti", () => {
+    const allocations = [{ ...TWO_LOTS[0], manuallyDepleted: true }, TWO_LOTS[1]];
+    // LOT-OLD fermé sans aucune sortie : avant LOT-NEW, plus rien n'est expédiable.
+    expect(computeShippableQuantity(allocations, [], "DG3", "SPF1", "2026-10-02")).toBe(0);
+    expect(computeShippableQuantity(allocations, [], "DG3", "SPF1", "2026-10-06")).toBe(20);
+  });
+
+  it("renvoie 0 pour un couple article/silo sans aucun mouvement", () => {
+    expect(computeShippableQuantity(TWO_LOTS, [], "DG4", "SPF1", "2026-10-06")).toBe(0);
+  });
+});
+
+describe("checkLotClaim (lot désigné sur une expédition)", () => {
+  const claim = (overrides: Partial<{ silo: string; lotNumber: string; quantity: number; date: string | null }>) =>
+    ({ article: "DG3", silo: "SPF1", lotNumber: "LOT-OLD", quantity: 3, date: "2026-10-06", ...overrides });
+
+  it("accepte une quantité que le lot contenait à cette date", () => {
+    expect(checkLotClaim(TWO_LOTS, [], claim({}))).toEqual({ status: "ok" });
+  });
+
+  it("refuse d'imputer à un lot plus qu'il ne contenait (15 T sur un lot de 5 T)", () => {
+    expect(checkLotClaim(TWO_LOTS, [], claim({ quantity: 15 }))).toEqual({ status: "insufficient", available: 5, reservedLater: false });
+  });
+
+  it("tient compte des sorties déjà imputées au lot avant cette date", () => {
+    const shipments = [{ shipmentId: 1, shipmentDate: "2026-10-02", article: "DG3", silo: "SPF1", quantity: 4, shipmentType: "Vrac", lotNumber: "LOT-OLD" }];
+    expect(checkLotClaim(TWO_LOTS, shipments, claim({ quantity: 2 }))).toEqual({ status: "insufficient", available: 1, reservedLater: false });
+  });
+
+  it("refuse un lot qui n'était pas encore entré à la date de l'expédition", () => {
+    expect(checkLotClaim(TWO_LOTS, [], claim({ lotNumber: "LOT-NEW", date: "2026-10-03" }))).toEqual({ status: "not-yet-produced", entryDate: "2026-10-05" });
+  });
+
+  it("refuse un lot présent dans un autre silo, en indiquant où il se trouve", () => {
+    expect(checkLotClaim(TWO_LOTS, [], claim({ silo: "SPF2" }))).toEqual({ status: "other-silo", silos: ["SPF1"] });
+  });
+
+  it("refuse un lot fermé manuellement", () => {
+    expect(checkLotClaim([{ ...TWO_LOTS[0], manuallyDepleted: true }, TWO_LOTS[1]], [], claim({}))).toEqual({ status: "closed" });
+  });
+
+  it("ne bloque pas un lot que l'application ne connaît pas du tout pour cet article", () => {
+    expect(checkLotClaim(TWO_LOTS, [], claim({ lotNumber: "LOT-EXTERNE" }))).toEqual({ status: "untracked" });
+  });
+
+  it("réserve à une expédition enregistrée plus tard ce qu'elle prend au lot qu'elle désigne (saisie antidatée)", () => {
+    // LOT-OLD contenait bien 5 T au 02/10, mais l'expédition du 08/10 lui en impute déjà 4.
+    const later = [{ shipmentId: 1, shipmentDate: "2026-10-08", article: "DG3", silo: "SPF1", quantity: 4, shipmentType: "Vrac", lotNumber: "LOT-OLD" }];
+    expect(checkLotClaim(TWO_LOTS, later, claim({ date: "2026-10-02", quantity: 3 }))).toEqual({ status: "insufficient", available: 1, reservedLater: true });
+    expect(checkLotClaim(TWO_LOTS, later, claim({ date: "2026-10-02", quantity: 1 }))).toEqual({ status: "ok" });
+  });
+});
+
+const SAME_DAY_LOTS = [
+  { entryId: 1, entryDate: "2026-01-01", article: "DG4", lotNumber: "A", silo: "SPF1", quantity: 10 },
+  { entryId: 2, entryDate: "2026-01-01", article: "DG4", lotNumber: "B", silo: "SPF1", quantity: 10 },
+];
+const LATER_CLAIM_ON_A = [{ shipmentId: 10, shipmentDate: "2026-01-03", article: "DG4", silo: "SPF1", quantity: 10, shipmentType: "Vrac", lotNumber: "A" }];
+
+describe("saisie antidatée : ne jamais contredire un n° de lot déjà enregistré", () => {
+  it("computeLotFreeQuantities retire du lot ce qu'une expédition ultérieure lui impute", () => {
+    expect(computeLotFreeQuantities(SAME_DAY_LOTS, LATER_CLAIM_ON_A, "DG4", "SPF1", "2026-01-02")).toEqual(new Map([["A", 0], ["B", 10]]));
+    // Après cette expédition, plus rien n'est réservé : A est simplement vide.
+    expect(computeLotFreeQuantities(SAME_DAY_LOTS, LATER_CLAIM_ON_A, "DG4", "SPF1", "2026-01-04")).toEqual(new Map([["A", 0], ["B", 10]]));
+  });
+
+  it("la répartition FIFO d'une expédition antidatée contourne la part déjà réservée d'un lot", () => {
+    const ledger = computeLotLedgerAsOf(SAME_DAY_LOTS, LATER_CLAIM_ON_A, "2026-01-02");
+    const caps = computeLotFreeQuantities(SAME_DAY_LOTS, LATER_CLAIM_ON_A, "DG4", "SPF1", "2026-01-02");
+    expect(allocateFifoShipment(ledger.lots, "DG4", "SPF1", 5, caps)).toEqual([{ lotNumber: "B", quantity: 5 }]);
+    expect(openLotQuantity(ledger.lots, "DG4", "SPF1", caps)).toBe(10);
+    expect(findContradictedLotClaim(SAME_DAY_LOTS, LATER_CLAIM_ON_A, [{ article: "DG4", silo: "SPF1", lotNumber: "B", quantity: 5 }], "2026-01-02")).toBeNull();
+  });
+
+  it("n'utilise pas un lot sans n° tant qu'un lot plus ancien garde une part réservée (le grand livre y imputerait la ligne sans lot)", () => {
+    const lots = [
+      { entryId: 1, entryDate: "2026-01-01", article: "DG4", lotNumber: "L2", silo: "SPF3", quantity: 7 },
+      { entryId: 2, entryDate: "2026-01-02", article: "DG4", lotNumber: null, silo: "SPF3", quantity: 9 },
+    ];
+    const later = [{ shipmentId: 1, shipmentDate: "2026-01-09", article: "DG4", silo: "SPF3", quantity: 7, shipmentType: "Vrac", lotNumber: "L2" }];
+    const ledger = computeLotLedgerAsOf(lots, later, "2026-01-05");
+    const caps = computeLotFreeQuantities(lots, later, "DG4", "SPF3", "2026-01-05");
+    expect(openLotQuantity(ledger.lots, "DG4", "SPF3", caps)).toBe(0);
+    // Sans réservation, le lot sans n° redevient utilisable une fois le lot plus ancien entièrement cédé.
+    expect(allocateFifoShipment(ledger.lots, "DG4", "SPF3", 10)).toEqual([{ lotNumber: "L2", quantity: 7 }, { lotNumber: null, quantity: 3 }]);
+  });
+
+  it("findContradictedLotClaim signale l'expédition enregistrée qui perdrait une partie de son lot", () => {
+    expect(findContradictedLotClaim(SAME_DAY_LOTS, LATER_CLAIM_ON_A, [{ article: "DG4", silo: "SPF1", lotNumber: "A", quantity: 5 }], "2026-01-02"))
+      .toEqual({ lotNumber: "A", silo: "SPF1", date: "2026-01-03" });
+  });
+
+  it("findContradictedLotClaim voit aussi l'effet indirect d'une sortie sans n° de lot qui se reporte en FIFO", () => {
+    // L (plus ancien) et M : une sortie sans lot de 6 T le 05/01 entame L en FIFO,
+    // puis une expédition du 06/01 désigne L pour 4 T. Imputer 3 T à L au 02/01
+    // laisse assez de L pour l'expédition du 06/01 en apparence (10 - 4 = 6),
+    // mais la sortie du 05/01 consommerait alors L en premier : celle du 06/01
+    // n'obtiendrait plus que 1 T de L.
+    const lots = [
+      { entryId: 1, entryDate: "2026-01-01", article: "DG4", lotNumber: "L", silo: "SPF2", quantity: 10 },
+      { entryId: 2, entryDate: "2026-01-01", article: "DG4", lotNumber: "M", silo: "SPF2", quantity: 10 },
+    ];
+    const shipments = [
+      { shipmentId: 1, shipmentDate: "2026-01-05", article: "DG4", silo: "SPF2", quantity: 6, shipmentType: "Vrac", lotNumber: null },
+      { shipmentId: 2, shipmentDate: "2026-01-06", article: "DG4", silo: "SPF2", quantity: 4, shipmentType: "Vrac", lotNumber: "L" },
+    ];
+    expect(checkLotClaim(lots, shipments, { article: "DG4", silo: "SPF2", lotNumber: "L", quantity: 3, date: "2026-01-02" })).toEqual({ status: "ok" });
+    expect(findContradictedLotClaim(lots, shipments, [{ article: "DG4", silo: "SPF2", lotNumber: "L", quantity: 3 }], "2026-01-02"))
+      .toEqual({ lotNumber: "L", silo: "SPF2", date: "2026-01-06" });
   });
 });

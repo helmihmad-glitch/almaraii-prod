@@ -40,7 +40,7 @@ describe("état des silos de produits finis", () => {
     expect(matrix.SPF5.CG3).toBe(15);
   });
 
-  it("retient le premier article présent dans un silo pour décrire son occupation", () => {
+  it("décrit l'occupation de chaque silo par l'article qu'il contient", () => {
     const matrix = computeSiloMatrix(
       [{ article: "CG3", silo: "SPF2", quantity: 3.5 }, { article: "CM1", silo: "SPF4", quantity: 16.92 }],
       [],
@@ -50,11 +50,49 @@ describe("état des silos de produits finis", () => {
     const occupancy = computeSiloOccupancy(matrix, SILOS, ARTICLES);
 
     expect(occupancy).toEqual([
-      { silo: "SPF1", article: null, quantity: null },
-      { silo: "SPF2", article: "CG3", quantity: 3.5 },
-      { silo: "SPF3", article: null, quantity: null },
-      { silo: "SPF4", article: "CM1", quantity: 16.92 },
+      { silo: "SPF1", article: null, quantity: null, articles: [] },
+      { silo: "SPF2", article: "CG3", quantity: 3.5, articles: [{ article: "CG3", quantity: 3.5 }] },
+      { silo: "SPF3", article: null, quantity: null, articles: [] },
+      { silo: "SPF4", article: "CM1", quantity: 16.92, articles: [{ article: "CM1", quantity: 16.92 }] },
     ]);
+  });
+
+  // Bug signalé : après des expéditions de DG3 et de DG4 depuis un même silo,
+  // le stock du second article disparaissait des totaux (seul le premier
+  // article du silo était compté, comme dans l'ancien classeur).
+  it("compte tous les articles d'un silo partagé (DG3 et DG4 dans SPF11) dans le stock par article et le total", () => {
+    const articles = ["DG3", "DG4"];
+    const matrix = computeSiloMatrix(
+      [{ article: "DG3", silo: "SPF11", quantity: 20 }, { article: "DG4", silo: "SPF11", quantity: 15 }],
+      [{ article: "DG3", silo: "SPF11", quantity: 8 }, { article: "DG4", silo: "SPF11", quantity: 5 }],
+      ["SPF11"],
+      articles,
+    );
+    const occupancy = computeSiloOccupancy(matrix, ["SPF11"], articles);
+
+    expect(occupancy).toEqual([
+      { silo: "SPF11", article: "DG3", quantity: 22, articles: [{ article: "DG3", quantity: 12 }, { article: "DG4", quantity: 10 }] },
+    ]);
+    expect(computeArticleStock(occupancy, articles)).toEqual([
+      { article: "DG3", quantity: 12 },
+      { article: "DG4", quantity: 10 },
+    ]);
+    expect(computeTotalStock(occupancy)).toBe(22);
+  });
+
+  it("présente d'abord l'article le plus abondant d'un silo mixte (un reliquat ne masque pas la nouvelle production)", () => {
+    const articles = ["DG3", "DG4"];
+    const matrix = computeSiloMatrix(
+      [{ article: "DG3", silo: "SPF5", quantity: 2 }, { article: "DG4", silo: "SPF5", quantity: 20 }],
+      [],
+      ["SPF5"],
+      articles,
+    );
+    const [occupancy] = computeSiloOccupancy(matrix, ["SPF5"], articles);
+
+    expect(occupancy.article).toBe("DG4");
+    expect(occupancy.quantity).toBe(22);
+    expect(occupancy.articles).toEqual([{ article: "DG4", quantity: 20 }, { article: "DG3", quantity: 2 }]);
   });
 
   it("totalise le stock par article à partir des silos occupés", () => {
