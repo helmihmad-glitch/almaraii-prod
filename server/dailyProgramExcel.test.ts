@@ -164,7 +164,100 @@ describe("import du classeur Programme de Production (Réf: For-Prod-09)", () =>
     const { days, errors } = await parseDailyProgramWorkbook(await toBuffer(workbook));
 
     expect(days.filter((day) => day.programDate === "2026-08-09")).toHaveLength(2);
-    expect(errors.some((message) => message.includes("2026-08-09") && message.includes("2 fois"))).toBe(true);
+    // Le message nomme les feuilles concernées, pour retrouver celle dont la date n'a pas été mise à jour.
+    expect(errors.some((message) => message.includes("09/08/2026") && message.includes("« 09092026 », « 10092026 »"))).toBe(true);
+  });
+
+  // Classeur réel « Prog de Prod_10-2026 » : N° et heures calculés par des formules
+  // (=ROWS(...), =TIME(6;30;0), =G15+$L$16…), et lignes du modèle laissées vides.
+  it("lit le N° et les heures calculés par des formules, avec le résultat enregistré par Excel", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("09102026");
+    writeTemplateHeader(sheet);
+    writeDayBlock(sheet, 9, { date: "09/10/2026", pupitreur: "Yosri", lines: [[0, "DG3", 18, "", 75, "", "", ""]] });
+    const row = sheet.getRow(14);
+    row.getCell(2).value = { formula: "ROWS(B$12:B13)", result: 1 } as ExcelJS.CellFormulaValue;
+    row.getCell(7).value = { formula: "TIME(6,30,0)", result: new Date(Date.UTC(1899, 11, 30, 6, 30)) } as ExcelJS.CellFormulaValue;
+    row.getCell(8).value = { formula: "G14+$L$16", result: new Date(Date.UTC(1899, 11, 30, 16, 0)) } as ExcelJS.CellFormulaValue;
+
+    const { days, errors } = await parseDailyProgramWorkbook(await toBuffer(workbook));
+
+    expect(errors).toEqual([]);
+    expect(days[0].lines).toEqual([
+      { sequence: 1, article: "DG3", version: "18", bagQuantity: null, bulkQuantity: "75", plannedStart: "06:30", plannedEnd: "16:00", observation: null },
+    ]);
+  });
+
+  it("ignore sans erreur les lignes du modèle restées vides, et enregistre « JOUR DE REPOS » comme jour de repos", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("10102026");
+    writeTemplateHeader(sheet);
+    writeDayBlock(sheet, 9, {
+      date: "10/10/2026",
+      pupitreur: "Yosri",
+      lines: [
+        [1, "", "", "", "", "", "", "JOUR DE REPOS"],
+        [2, "", "", "", "", "", "", ""], // seul le N° est pré-rempli
+        [3, "", "", "", "", "", "", ""],
+      ],
+    });
+    // Formule d'heure qui renvoie une valeur vide tant qu'aucun article n'est saisi.
+    sheet.getRow(16).getCell(7).value = { formula: 'IF(C16="","",G15)' } as ExcelJS.CellFormulaValue;
+
+    const { days, errors, restDays } = await parseDailyProgramWorkbook(await toBuffer(workbook));
+
+    expect(days).toEqual([{ programDate: "2026-10-10", operatorName: "Yosri", lines: [] }]);
+    expect(restDays).toEqual(["2026-10-10"]);
+    expect(errors).toEqual([]);
+  });
+
+  it("place une remarque de changement saisie sans horaire après le dernier article, avec le temps standard de la feuille Paramètres", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const params = workbook.addWorksheet("Paramètres");
+    params.getCell("B5").value = "Changement d'article";
+    params.getCell("C5").value = new Date(Date.UTC(1899, 11, 30, 0, 45));
+    params.getCell("B6").value = "Changement de filière";
+    params.getCell("C6").value = new Date(Date.UTC(1899, 11, 30, 2, 0));
+    const sheet = workbook.addWorksheet("20102026");
+    writeTemplateHeader(sheet);
+    writeDayBlock(sheet, 8, {
+      date: "20/10/2026",
+      pupitreur: "Yosri",
+      lines: [
+        [1, "CG25", 47, "", 160, { time: "06:30" }, { time: "22:30" }, ""],
+        [2, "", "", "", "", "", "", "changement Filière  ⌀ 3.5 mm"],
+        [3, "", "", "", "", "", "", "Nettoyage presse"],
+      ],
+    });
+
+    const { days, errors, restDays } = await parseDailyProgramWorkbook(await toBuffer(workbook));
+
+    expect(days[0].lines[1]).toEqual({
+      sequence: 2, article: null, version: null, bagQuantity: null, bulkQuantity: null,
+      plannedStart: "22:30", plannedEnd: "00:30", observation: "changement Filière  ⌀ 3.5 mm",
+    });
+    expect(restDays).toEqual([]);
+    // Une remarque qui n'est ni un changement ni un repos reste signalée.
+    expect(errors).toEqual(['Feuille "20102026", ligne 15 : remarque « Nettoyage presse » sans horaire, non importée.']);
+  });
+
+  it("lit le texte calculé d'une observation au format horaire (sans « Invalid Date »)", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("12102026");
+    writeTemplateHeader(sheet);
+    writeDayBlock(sheet, 8, {
+      date: "12/10/2026",
+      pupitreur: "Yosri",
+      lines: [[1, "", "", "", "", { time: "09:47" }, { time: "10:17" }, ""]],
+    });
+    const observation = sheet.getRow(13).getCell(9);
+    observation.value = { formula: "IF(T16,OFFSET(U16,1,0),\"\")", result: "Changement article DG2 → CG3 (0:30)" } as ExcelJS.CellFormulaValue;
+    observation.numFmt = "h:mm";
+
+    const { days, errors } = await parseDailyProgramWorkbook(await toBuffer(workbook));
+
+    expect(errors).toEqual([]);
+    expect(days[0].lines[0].observation).toBe("Changement article DG2 → CG3 (0:30)");
   });
 
   it("lit plusieurs feuilles du même classeur", async () => {

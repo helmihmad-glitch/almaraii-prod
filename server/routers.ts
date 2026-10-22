@@ -573,9 +573,11 @@ export const appRouter = router({
       for (const day of parsed.days) {
         await importDailyProgramDay({ programDate: day.programDate, operatorName: day.operatorName, lines: day.lines });
       }
+      await upsertRestDays(parsed.restDays);
 
       return {
         days: parsed.days.length,
+        restDays: parsed.restDays.length,
         lines: parsed.days.reduce((sum, day) => sum + day.lines.length, 0),
         rejected: parsed.errors.length,
         rejectedLines: parsed.errors.slice(0, 8),

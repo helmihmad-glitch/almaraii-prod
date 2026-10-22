@@ -81,7 +81,7 @@ export default function DailyProgramData() {
       }
       const result = await importFromStorage.mutateAsync({ storageKey: prepared.key });
       await refreshPrograms();
-      toast.success("Import du classeur terminé", { description: `${result.days} journée(s) et ${result.lines} ligne(s) de planning reprises depuis le fichier.` });
+      toast.success("Import du classeur terminé", { description: `${result.days} journée(s) et ${result.lines} ligne(s) de planning reprises depuis le fichier.${result.restDays ? ` ${result.restDays} jour(s) de repos enregistré(s).` : ""}` });
       if (result.rejected) toast.warning(`${result.rejected} ligne(s) ignorée(s) ou à vérifier`, { description: result.rejectedLines.join(" ") });
       setPendingImport(null);
     } catch (error) {
