@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { eq } from "drizzle-orm";
 import { productionRecords } from "../drizzle/schema";
-import { addProductionArticle, createProductionRecord, getDb, listProductionRecords, updateProductionRecord } from "./db";
+import { addProductionArticle, createProductionRecord, deleteProductionRecord, getDb, listProductionRecords, updateProductionRecord } from "./db";
 
 export type ImportedProductionRow = {
   rowNumber: number;
@@ -234,20 +234,12 @@ type ExistingProductionRecord = ProductionFingerprintInput & { id: number };
 export type ImportDecision =
   | { kind: "unchanged"; row: ImportedProductionRow }
   | { kind: "create"; row: ImportedProductionRow; values: ReturnType<typeof calculateRow> }
-  | { kind: "update"; row: ImportedProductionRow; existingId: number; before: ExistingProductionRecord; values: ReturnType<typeof calculateRow> };
+  | { kind: "update"; row: ImportedProductionRow; existingId: number; before: ExistingProductionRecord; values: ReturnType<typeof calculateRow> }
+  | { kind: "delete"; record: ExistingProductionRecord };
 
-/**
- * Date + article + production, normalisés comme dans productionRowFingerprint :
- * sert à retrouver une ligne existante quand le fichier n'a pas de colonne ID
- * (le cas courant — voir plus bas). La production fait partie de la clé : une
- * ligne qui change de date, d'article OU de production décrit une production
- * différente, pas une correction de la même ligne (ex. deux lots distincts du
- * même article le même jour) — elle est donc toujours ajoutée telle quelle,
- * jamais proposée comme modification. Seul un écart sur un autre champ (temps,
- * arrêts, rebuts, cadence, commentaire) déclenche une demande de confirmation.
- */
-function naturalKey(productionDate: string, article: string, productionTons: number | string) {
-  return `${productionDate}::${article.trim().toUpperCase()}::${Number(productionTons).toFixed(2)}`;
+/** Même jour + même article : la ligne du fichier remplace celle du registre (demande de l'utilisateur). */
+function dayArticleKey(productionDate: string, article: string) {
+  return `${productionDate}::${article.trim().toUpperCase()}`;
 }
 
 /**
@@ -256,48 +248,56 @@ function naturalKey(productionDate: string, article: string, productionTons: num
  * (claimedIds) : chaque ligne du fichier est mise en correspondance avec au
  * plus une ligne du registre, dans cet ordre —
  *   1. même ID (colonne ID du fichier, rarement présente) ;
- *   2. à défaut, la plus ancienne ligne existante pas encore associée qui
- *      partage la même date, le même article ET la même production ("clé
- *      naturelle", voir naturalKey ci-dessus) — le classeur maintenu à la main
- *      n'a presque jamais de colonne ID, donc c'est la correspondance normale.
- *      Plusieurs lignes existantes peuvent partager cette clé (deux saisies du
- *      même jour, même article, même tonnage, mais des arrêts ou rebuts
- *      différents) : associées par position (1ère ligne du fichier avec cette
- *      clé ↔ la plus ancienne, etc.) — la meilleure approximation possible
- *      sans identifiant stable côté fichier, mais réordonner ces lignes
- *      précises dans le fichier peut alors leur faire échanger leur correspondance.
+ *   2. même jour, même article ET même production : deux lots du même article
+ *      le même jour (ex. 40 T et 10 T) retrouvent chacun le leur ;
+ *   3. à défaut, même jour et même article : la ligne du fichier remplace celle
+ *      du registre (ex. CM1 du 21/10 passé de 100 T à 105 T dans le fichier).
+ *   Dans chaque étape, les lignes existantes sont prises de la plus ancienne à
+ *   la plus récente.
  * Une ligne sans correspondance est "create". Une ligne mise en correspondance
  * dont le contenu (hors indicateurs recalculés) est identique est "unchanged"
- * (jamais réimportée en double) ; sinon "update" (jamais appliquée sans
- * confirmation — voir previewProductionImport et importProductionRows).
+ * (jamais réimportée en double) ; sinon "update". Une ligne du registre restée
+ * sans correspondance alors que le fichier a ce jour et cet article est
+ * remplacée par le fichier : "delete". Modifications et suppressions ne sont
+ * jamais appliquées sans confirmation — voir previewProductionImport et
+ * importProductionRows.
  */
 function planImportDecisions(rows: ImportedProductionRow[], existing: ExistingProductionRecord[]): ImportDecision[] {
   const byId = new Map(existing.map((record) => [record.id, record]));
-  const byNaturalKey = new Map<string, ExistingProductionRecord[]>();
+  const byDayArticle = new Map<string, ExistingProductionRecord[]>();
   for (const record of existing) {
-    const key = naturalKey(record.productionDate, record.article, record.productionTons);
-    const group = byNaturalKey.get(key) ?? [];
-    group.push(record);
-    byNaturalKey.set(key, group);
+    const key = dayArticleKey(record.productionDate, record.article);
+    byDayArticle.set(key, [...(byDayArticle.get(key) ?? []), record]);
   }
-  for (const group of Array.from(byNaturalKey.values())) group.sort((a, b) => a.id - b.id);
+  for (const group of Array.from(byDayArticle.values())) group.sort((a, b) => a.id - b.id);
   const claimedIds = new Set<number>();
+  const allValues = rows.map((row) => calculateRow(row));
+  const matches: (ExistingProductionRecord | undefined)[] = rows.map(() => undefined);
+  const claim = (index: number, record: ExistingProductionRecord | undefined) => {
+    if (!record || matches[index] || claimedIds.has(record.id)) return;
+    matches[index] = record;
+    claimedIds.add(record.id);
+  };
+  rows.forEach((row, index) => { if (row.id) claim(index, byId.get(row.id)); });
+  const candidates = (index: number) => (byDayArticle.get(dayArticleKey(allValues[index].productionDate, allValues[index].article)) ?? []).filter((record) => !claimedIds.has(record.id));
+  rows.forEach((_, index) => {
+    if (!matches[index]) claim(index, candidates(index).find((record) => Number(record.productionTons).toFixed(2) === allValues[index].productionTons));
+  });
+  rows.forEach((_, index) => { if (!matches[index]) claim(index, candidates(index)[0]); });
   // Deux lignes identiques dans le même fichier (copier-coller involontaire, sans
   // correspondance existante) ne doivent pas non plus créer deux lignes.
   const seenNewFingerprints = new Set<string>();
 
   const decisions: ImportDecision[] = [];
-  for (const row of rows) {
-    const values = calculateRow(row);
+  rows.forEach((row, index) => {
+    const values = allValues[index];
+    const existingRecord = matches[index];
+    // Fichier sans colonne Commentaire (cas du Dashboard_Production) : le commentaire
+    // saisi sur le site est conservé, jamais effacé par l'import.
+    if (row.comment === undefined && existingRecord) values.comment = existingRecord.comment?.trim() || null;
     const fingerprint = productionRowFingerprint(values);
-    let existingRecord = row.id ? byId.get(row.id) : undefined;
-    if (!existingRecord) {
-      const key = naturalKey(values.productionDate, values.article, values.productionTons);
-      existingRecord = (byNaturalKey.get(key) ?? []).find((candidate) => !claimedIds.has(candidate.id));
-    }
 
     if (existingRecord) {
-      claimedIds.add(existingRecord.id);
       if (productionRowFingerprint(existingRecord) === fingerprint) {
         decisions.push({ kind: "unchanged", row });
       } else {
@@ -309,6 +309,10 @@ function planImportDecisions(rows: ImportedProductionRow[], existing: ExistingPr
       decisions.push({ kind: "create", row, values });
       seenNewFingerprints.add(fingerprint);
     }
+  });
+  const fileDayArticles = new Set(allValues.map((values) => dayArticleKey(values.productionDate, values.article)));
+  for (const record of existing) {
+    if (!claimedIds.has(record.id) && fileDayArticles.has(dayArticleKey(record.productionDate, record.article))) decisions.push({ kind: "delete", record });
   }
   return decisions;
 }
@@ -347,6 +351,8 @@ export type ProductionImportPreview = {
   toCreate: number;
   toUpdate: Array<{ id: number; productionDate: string; article: string; changes: Array<{ field: string; label: string; before: string; after: string }> }>;
   unchanged: number;
+  /** Lignes du registre remplacées par le fichier (même jour, même article) et supprimées. */
+  toDelete: Array<{ id: number; productionDate: string; article: string; productionTons: string }>;
 };
 
 /**
@@ -365,13 +371,16 @@ export async function previewProductionImport(rows: ImportedProductionRow[]): Pr
     toCreate: decisions.filter((decision) => decision.kind === "create").length,
     toUpdate,
     unchanged: decisions.filter((decision) => decision.kind === "unchanged").length,
+    toDelete: decisions
+      .filter((decision): decision is Extract<ImportDecision, { kind: "delete" }> => decision.kind === "delete")
+      .map(({ record }) => ({ id: record.id, productionDate: record.productionDate, article: record.article, productionTons: Number(record.productionTons).toFixed(2) })),
   };
 }
 
 /**
  * Applique un import Excel : les lignes nouvelles sont toujours ajoutées et
  * les doublons (par ID inchangé ou par contenu identique) toujours ignorés,
- * mais une ligne qui modifierait une ligne existante n'est écrite que si
+ * mais une ligne qui modifierait ou remplacerait (suppression) une ligne existante n'est écrite que si
  * `applyModifications` vaut true — après que l'utilisateur a confirmé
  * l'aperçu de previewProductionImport ci-dessus. Par défaut à true pour les
  * appels directs (scripts, tests) ; le routeur tRPC passe explicitement false
@@ -383,11 +392,21 @@ export async function importProductionRows(rows: ImportedProductionRow[], option
   const decisions = planImportDecisions(rows, await loadExistingProductionRecords());
   let created = 0;
   let updated = 0;
+  let deleted = 0;
   let skipped = 0;
   let pendingModifications = 0;
   for (const decision of decisions) {
     if (decision.kind === "unchanged") {
       skipped += 1;
+      continue;
+    }
+    if (decision.kind === "delete") {
+      if (!applyModifications) {
+        pendingModifications += 1;
+        continue;
+      }
+      await deleteProductionRecord(decision.record.id);
+      deleted += 1;
       continue;
     }
     if (decision.kind === "create") {
@@ -411,5 +430,5 @@ export async function importProductionRows(rows: ImportedProductionRow[], option
     }
     await addProductionArticle(decision.row.article);
   }
-  return { created, updated, skipped, pendingModifications, total: rows.length };
+  return { created, updated, deleted, skipped, pendingModifications, total: rows.length };
 }

@@ -312,27 +312,78 @@ describe("previewProductionImport / importProductionRows (aperçu et confirmatio
     expect(Number(rows[0].wasteTons)).toBe(2);
   });
 
-  // Demande explicite de l'utilisateur : une ligne dont la date, l'article OU
-  // la production diffère décrit une production différente (ex. un deuxième
-  // lot du même article le même jour), jamais une correction de la ligne
-  // existante — elle s'ajoute donc directement, sans jamais proposer de modification.
-  it("une ligne dont seule la production diffère n'est jamais une modification : elle est toujours ajoutée comme une nouvelle ligne", async () => {
-    await createProductionRecord({
-      productionDate: "2026-09-16", article: "DM1", totalProductionHours: "7.50", plannedStopsHours: "0.00", unplannedStopsHours: "0.83",
-      productionTons: "20.00", wasteTons: "0.00", standardRate: "15.00", availability: "0.889000", performance: "0.238000", quality: "1.000000", trs: "0.211000", realHours: "6.67", comment: null, source: "manual",
+  // Demande de l'utilisateur : même jour + même article dans le registre et dans le
+  // fichier → la ligne du fichier remplace celle du registre, même si la production
+  // diffère (ex. le 21/10, CM1 100 T dans le registre, 105 T dans le fichier : on garde 105 T).
+  it("même jour et même article : la ligne du fichier remplace celle du registre, même avec une production différente", async () => {
+    const tableRow = await createProductionRecord({
+      productionDate: "2029-10-21", article: "CM1", totalProductionHours: "12.00", plannedStopsHours: "0.50", unplannedStopsHours: "1.00",
+      productionTons: "100.00", wasteTons: "0.00", standardRate: "10.00", availability: "0.916667", performance: "0.952381", quality: "1.000000", trs: "0.873016", realHours: "10.50", comment: null, source: "manual",
     });
-    // Même date, même article, mais une production différente (25 au lieu de 20) : un deuxième lot, pas une correction du premier.
-    const secondBatch = { rowNumber: 2, productionDate: "2026-09-16", article: "DM1", totalProductionHours: 7.5, plannedStopsHours: 0, unplannedStopsHours: 0.83, productionTons: 25, wasteTons: 0, standardRate: 15 };
+    const fileRow = { rowNumber: 2, productionDate: "2029-10-21", article: "CM1", totalProductionHours: 12, plannedStopsHours: 0.5, unplannedStopsHours: 1, productionTons: 105, wasteTons: 0, standardRate: 10 };
 
-    const preview = await previewProductionImport([secondBatch]);
-    expect(preview.toCreate).toBe(1);
-    expect(preview.toUpdate).toEqual([]);
+    const preview = await previewProductionImport([fileRow]);
+    expect(preview).toMatchObject({ toCreate: 0, toDelete: [] });
+    expect(preview.toUpdate).toEqual([{ id: tableRow.id, productionDate: "2029-10-21", article: "CM1", changes: [{ field: "productionTons", label: "Production (T)", before: "100.00", after: "105.00" }] }]);
 
-    const result = await importProductionRows([secondBatch], { applyModifications: true });
-    expect(result.created).toBe(1);
-    expect(result.updated).toBe(0);
-    const rows = (await listProductionRecords()).filter((record) => record.productionDate === "2026-09-16" && record.article === "DM1");
-    expect(rows).toHaveLength(2); // les deux lots coexistent, aucun n'a écrasé l'autre.
+    const result = await importProductionRows([fileRow], { applyModifications: true });
+    expect(result).toMatchObject({ created: 0, updated: 1, deleted: 0 });
+    const rows = (await listProductionRecords()).filter((record) => record.productionDate === "2029-10-21" && record.article === "CM1");
+    expect(rows.map((record) => Number(record.productionTons))).toEqual([105]); // une seule ligne : celle du fichier.
+  });
+
+  it("deux lots du même article le même jour retrouvent chacun le leur (même production d'abord), sans rien changer", async () => {
+    const record = (productionTons: string) => createProductionRecord({
+      productionDate: "2029-09-16", article: "DG3", totalProductionHours: "4.00", plannedStopsHours: "0.00", unplannedStopsHours: "0.00",
+      productionTons, wasteTons: "0.00", standardRate: "15.00", availability: "1.000000", performance: "0.500000", quality: "1.000000", trs: "0.500000", realHours: "4.00", comment: null, source: "excel-import",
+    });
+    await record("10.00");
+    await record("40.00");
+    const lot = (rowNumber: number, productionTons: number) => ({ rowNumber, productionDate: "2029-09-16", article: "DG3", totalProductionHours: 4, plannedStopsHours: 0, unplannedStopsHours: 0, productionTons, wasteTons: 0, standardRate: 15 });
+
+    // Ordre du fichier inverse de l'ordre d'enregistrement : 40 T puis 10 T.
+    const preview = await previewProductionImport([lot(2, 40), lot(3, 10)]);
+
+    expect(preview).toMatchObject({ toCreate: 0, toUpdate: [], unchanged: 2, toDelete: [] });
+  });
+
+  it("supprime, après confirmation, les lignes en trop du registre quand le fichier en a moins pour ce jour et cet article", async () => {
+    const record = (productionTons: string) => createProductionRecord({
+      productionDate: "2029-08-05", article: "CG3", totalProductionHours: "6.00", plannedStopsHours: "0.00", unplannedStopsHours: "0.00",
+      productionTons, wasteTons: "0.00", standardRate: "15.00", availability: "1.000000", performance: "0.500000", quality: "1.000000", trs: "0.500000", realHours: "6.00", comment: null, source: "manual",
+    });
+    const first = await record("45.00");
+    const second = await record("20.00");
+    const otherDay = await createProductionRecord({
+      productionDate: "2029-08-06", article: "CG3", totalProductionHours: "6.00", plannedStopsHours: "0.00", unplannedStopsHours: "0.00",
+      productionTons: "30.00", wasteTons: "0.00", standardRate: "15.00", availability: "1.000000", performance: "0.333333", quality: "1.000000", trs: "0.333333", realHours: "6.00", comment: null, source: "manual",
+    });
+    const fileRow = { rowNumber: 2, productionDate: "2029-08-05", article: "CG3", totalProductionHours: 6, plannedStopsHours: 0, unplannedStopsHours: 0, productionTons: 50, wasteTons: 0, standardRate: 15 };
+
+    const preview = await previewProductionImport([fileRow]);
+    expect(preview.toUpdate.map((update) => update.id)).toEqual([first.id]);
+    expect(preview.toDelete).toEqual([{ id: second.id, productionDate: "2029-08-05", article: "CG3", productionTons: "20.00" }]);
+
+    const declined = await importProductionRows([fileRow], { applyModifications: false });
+    expect(declined).toMatchObject({ updated: 0, deleted: 0, pendingModifications: 2 });
+
+    const confirmed = await importProductionRows([fileRow], { applyModifications: true });
+    expect(confirmed).toMatchObject({ updated: 1, deleted: 1 });
+    const remaining = (await listProductionRecords()).filter((row) => row.article === "CG3" && row.productionDate.startsWith("2029-08-0"));
+    expect(remaining.map((row) => [row.productionDate, Number(row.productionTons)]).sort()).toEqual([["2029-08-05", 50], ["2029-08-06", 30]]);
+    expect(remaining.map((row) => row.id)).toContain(otherDay.id); // un autre jour n'est jamais touché.
+  });
+
+  it("conserve le commentaire saisi sur le site quand le fichier n'a pas de colonne Commentaire", async () => {
+    await createProductionRecord({
+      productionDate: "2029-07-16", article: "DM1", totalProductionHours: "9.00", plannedStopsHours: "0.50", unplannedStopsHours: "1.00",
+      productionTons: "20.00", wasteTons: "20.00", standardRate: "10.00", availability: "0.888889", performance: "0.266667", quality: "0.000000", trs: "0.000000", realHours: "7.50", comment: "Montage les tamis PF incompatible", source: "manual",
+    });
+    const fileRow = { rowNumber: 2, productionDate: "2029-07-16", article: "DM1", totalProductionHours: 9, plannedStopsHours: 0.5, unplannedStopsHours: 1, productionTons: 20, wasteTons: 20, standardRate: 10 };
+
+    const preview = await previewProductionImport([fileRow]);
+
+    expect(preview).toMatchObject({ toCreate: 0, toUpdate: [], unchanged: 1, toDelete: [] });
   });
 
   // Cas réel signalé : deux saisies du même jour, même article, même tonnage,

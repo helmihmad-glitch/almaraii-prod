@@ -56,6 +56,7 @@ type ImportReview = {
   toCreate: number;
   toUpdate: Array<{ id: number; productionDate: string; article: string; changes: ImportChange[] }>;
   unchanged: number;
+  toDelete: Array<{ id: number; productionDate: string; article: string; productionTons: string }>;
 };
 
 export default function Registry() {
@@ -114,7 +115,7 @@ export default function Registry() {
       const result = await importExcel.mutateAsync({ storageKey, applyModifications });
       await registryQuery.refetch();
       const parts = [`${result.created} ligne(s) ajoutée(s)`];
-      if (applyModifications) parts.push(`${result.updated} modification(s) appliquée(s)`);
+      if (applyModifications) parts.push(`${result.updated} ligne(s) remplacée(s) par celles du fichier`, ...(result.deleted ? [`${result.deleted} ancienne(s) ligne(s) supprimée(s)`] : []));
       else if (result.pendingModifications) parts.push(`${result.pendingModifications} modification(s) non appliquée(s) (annulée${result.pendingModifications > 1 ? "s" : ""})`);
       parts.push(`${result.skipped} doublon(s) déjà identique(s) ignoré(s)`);
       if (result.restDays) parts.push(`${result.restDays} jour(s) de repos enregistré(s), visibles dans Rapports`);
@@ -142,11 +143,11 @@ export default function Registry() {
     try {
       const storageKey = await uploadToImportStorage(file);
       const preview = await previewExcel.mutateAsync({ storageKey });
-      if (preview.toUpdate.length === 0) {
+      if (preview.toUpdate.length === 0 && preview.toDelete.length === 0) {
         // Les lignes ignorées sont signalées une seule fois, par finalizeImport.
         await finalizeImport(storageKey, false);
       } else {
-        setImportReview({ storageKey, fileName: file.name, toCreate: preview.toCreate, toUpdate: preview.toUpdate, unchanged: preview.unchanged });
+        setImportReview({ storageKey, fileName: file.name, toCreate: preview.toCreate, toUpdate: preview.toUpdate, unchanged: preview.unchanged, toDelete: preview.toDelete });
         if (preview.rejected) toast.warning(`${preview.rejected} ligne(s) ignorée(s)`, { description: preview.rejectedLines.join(" ") || "Les lignes incomplètes ou incohérentes n’ont pas été importées." });
       }
     } catch (error) {
@@ -159,16 +160,22 @@ export default function Registry() {
     {importReview && <div className="registry-import-dialog-backdrop" role="presentation"><div className="registry-import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-dialog-title">
       <span className="registry-kicker"><Upload size={14} />Confirmation d’import</span>
       <h2 id="import-dialog-title">Importer <em>{importReview.fileName}</em></h2>
-      <p>{importReview.toCreate} nouvelle{importReview.toCreate > 1 ? "s" : ""} ligne{importReview.toCreate > 1 ? "s" : ""} {importReview.toCreate > 1 ? "seront ajoutées" : "sera ajoutée"} sans autre confirmation. En revanche, {importReview.toUpdate.length} ligne{importReview.toUpdate.length > 1 ? "s" : ""} déjà enregistrée{importReview.toUpdate.length > 1 ? "s" : ""} {importReview.toUpdate.length > 1 ? "seraient modifiées" : "serait modifiée"} — vérifiez avant d’appliquer :</p>
-      <ul className="registry-import-changes">
+      <p>{importReview.toCreate} nouvelle{importReview.toCreate > 1 ? "s" : ""} ligne{importReview.toCreate > 1 ? "s" : ""} {importReview.toCreate > 1 ? "seront ajoutées" : "sera ajoutée"} sans autre confirmation. En revanche, le fichier contient des jours et articles déjà enregistrés : la ligne du fichier remplacerait celle du registre — vérifiez avant d’appliquer :</p>
+      {importReview.toUpdate.length > 0 && <ul className="registry-import-changes">
         {importReview.toUpdate.map((update) => <li key={update.id}><strong>{update.article}</strong> du {prettyDate(update.productionDate)}
           <ul>{update.changes.map((change) => <li key={change.field}>{change.label} : {change.before} → {change.after}</li>)}</ul>
         </li>)}
-      </ul>
+      </ul>}
+      {importReview.toDelete.length > 0 && <>
+        <p>{importReview.toDelete.length > 1 ? "Ces lignes du registre seraient supprimées" : "Cette ligne du registre serait supprimée"}, le fichier ayant moins de lignes pour ce jour et cet article :</p>
+        <ul className="registry-import-changes">
+          {importReview.toDelete.map((line) => <li key={line.id}><strong>{line.article}</strong> du {prettyDate(line.productionDate)} — {line.productionTons} T</li>)}
+        </ul>
+      </>}
       <div className="registry-import-dialog-actions">
         <button type="button" className="registry-clear" onClick={() => setImportReview(null)} disabled={isImporting}>Annuler tout l’import</button>
         <button type="button" className="registry-clear" onClick={() => finalizeImport(importReview.storageKey, false, false)} disabled={isImporting}>Ajouter les nouvelles lignes seulement</button>
-        <button type="button" className="registry-import" onClick={() => finalizeImport(importReview.storageKey, true, false)} disabled={isImporting}>{isImporting ? "Import…" : "Ajouter et appliquer les modifications"}</button>
+        <button type="button" className="registry-import" onClick={() => finalizeImport(importReview.storageKey, true, false)} disabled={isImporting}>{isImporting ? "Import…" : "Garder les lignes du fichier"}</button>
       </div>
     </div></div>}
     <header className="registry-topbar">

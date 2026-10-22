@@ -345,7 +345,7 @@ async function importWorkbookBuffer(buffer: Buffer, applyModifications: boolean)
   // valable : ses jours de repos s'enregistrent même sans ligne de production.
   const result = parsed.rows.length
     ? await importProductionRows(parsed.rows, { applyModifications })
-    : { created: 0, updated: 0, skipped: 0, pendingModifications: 0, total: 0 };
+    : { created: 0, updated: 0, deleted: 0, skipped: 0, pendingModifications: 0, total: 0 };
   await upsertRestDays(parsed.restDays);
   if (parsed.rows.length) await syncExcelFromRecords();
   return { ...result, restDays: parsed.restDays.length, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
@@ -357,7 +357,7 @@ async function previewWorkbookBuffer(buffer: Buffer) {
   assertImportableWorkbook(parsed);
   const preview: ProductionImportPreview = parsed.rows.length
     ? await previewProductionImport(parsed.rows)
-    : { toCreate: 0, toUpdate: [], unchanged: 0 };
+    : { toCreate: 0, toUpdate: [], unchanged: 0, toDelete: [] };
   return { ...preview, restDays: parsed.restDays.length, rejected: parsed.errors.length, rejectedLines: parsed.errors.slice(0, 5) };
 }
 
