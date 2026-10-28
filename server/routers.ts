@@ -72,7 +72,6 @@ import { buildSiloWorkbook, parseSiloWorkbook } from "./siloExcel";
 import {
   allocateFifoShipment,
   buildLotLedgerWorkbook,
-  parseLotLedgerEstimate,
   checkLotClaim,
   computeLotFreeQuantities,
   computeLotLedger,
@@ -839,24 +838,6 @@ export const appRouter = router({
         fileName: `Tracabilite_Lots_${new Date().toISOString().slice(0, 10)}.xlsx`,
         fileBase64: workbook.toString("base64"),
       };
-    }),
-    /**
-     * Lit un classeur « Traçabilité des lots » (même format que exportLotLedger, éventuellement
-     * retouché) et renvoie l'état ESTIMÉ de chaque silo, affiché en transparence sur la page
-     * État des silos. Rien n'est enregistré : le stock réel n'est jamais modifié.
-     */
-    parseEstimate: publicProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), fileBase64: z.string().min(1).max(4_000_000) })).mutation(async ({ input }) => {
-      if (!/\.xlsx$/i.test(input.fileName)) throw new TRPCError({ code: "BAD_REQUEST", message: "Importez un fichier Excel au format .xlsx." });
-      let parsed: Awaited<ReturnType<typeof parseLotLedgerEstimate>>;
-      try {
-        parsed = await parseLotLedgerEstimate(Buffer.from(input.fileBase64, "base64"), await resolveSiloCodes());
-      } catch {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Le fichier Excel est illisible. Vérifiez qu’il s’agit bien d’un classeur .xlsx." });
-      }
-      if (parsed.silos.length === 0) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: parsed.errors[0] ?? "Aucun silo n’a été trouvé dans le fichier." });
-      }
-      return parsed;
     }),
     /** Export Excel des expéditions filtrées par type (Vrac/Sac) et par période, comme depuis Ajouter une expédition. */
     exportShipmentsReport: publicProcedure.input(shipmentReportFilterInput).query(async ({ input }) => {
