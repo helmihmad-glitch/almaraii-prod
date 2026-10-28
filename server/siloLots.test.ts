@@ -11,6 +11,7 @@ import {
   findContradictedLotClaim,
   manualDepletionWriteOffs,
   openLotQuantity,
+  parseLotLedgerEstimate,
 } from "./siloLots";
 
 describe("tracabilite FIFO des lots", () => {
@@ -658,5 +659,87 @@ describe("saisie antidatée : ne jamais contredire un n° de lot déjà enregist
     expect(checkLotClaim(lots, shipments, { article: "DG4", silo: "SPF2", lotNumber: "L", quantity: 3, date: "2026-01-02" })).toEqual({ status: "ok" });
     expect(findContradictedLotClaim(lots, shipments, [{ article: "DG4", silo: "SPF2", lotNumber: "L", quantity: 3 }], "2026-01-02"))
       .toEqual({ lotNumber: "L", silo: "SPF2", date: "2026-01-06" });
+  });
+});
+
+describe("estimation de l'état des silos (réimport du classeur Traçabilité des lots)", () => {
+  const exportedLedger = () => buildLotLedgerWorkbook(computeLotLedger(
+    [
+      { entryId: 1, entryDate: "2026-09-05", article: "CM1", lotNumber: "2600655-0905", silo: "SPF1", quantity: 10 },
+      { entryId: 2, entryDate: "2026-09-06", article: "CM1", lotNumber: "2600659-0906", silo: "SPF1", quantity: 10 },
+      { entryId: 3, entryDate: "2026-09-07", article: "DG3", lotNumber: "2600700-0907", silo: "SPF3", quantity: 18.5 },
+    ],
+    [{ shipmentId: 1, shipmentDate: "2026-09-06", article: "CM1", silo: "SPF1", quantity: 5, shipmentType: "Vrac" }],
+  ), ["SPF1", "SPF2", "SPF3"]);
+
+  it("relit tel quel le classeur exporté : silos, articles et lots fusionnés, silo vide, total ignoré", async () => {
+    const estimate = await parseLotLedgerEstimate(await exportedLedger(), ["SPF1", "SPF2", "SPF3"]);
+
+    expect(estimate.errors).toEqual([]);
+    expect(estimate.label).toMatch(/^Le \d/);
+    expect(estimate.silos).toEqual([
+      {
+        silo: "SPF1", quantity: 15, articles: [{ article: "CM1", quantity: 15 }],
+        lots: [
+          { article: "CM1", lotNumber: "2600655-0905", date: expect.any(String), quantity: 5 },
+          { article: "CM1", lotNumber: "2600659-0906", date: expect.any(String), quantity: 10 },
+        ],
+      },
+      { silo: "SPF2", quantity: 0, articles: [], lots: [] },
+      { silo: "SPF3", quantity: 18.5, articles: [{ article: "DG3", quantity: 18.5 }], lots: [expect.objectContaining({ lotNumber: "2600700-0907", quantity: 18.5 })] },
+    ]);
+  });
+
+  it("prend les quantités retouchées à la main dans Excel (somme des lots, avec un avertissement si la quantité silo n'a pas suivi)", async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await exportedLedger() as unknown as ArrayBuffer);
+    const sheet = workbook.getWorksheet("Traçabilité des lots")!;
+    sheet.getRow(6).getCell(6).value = 7.25; // SPF1, premier lot : 5 → 7,25 T estimées
+    sheet.getRow(8).getCell(3).value = "CG3"; // SPF2 « Vide » → estimé avec 12 T de CG3
+    sheet.getRow(8).getCell(6).value = 12;
+
+    const estimate = await parseLotLedgerEstimate(Buffer.from(await workbook.xlsx.writeBuffer()), ["SPF1", "SPF2", "SPF3"]);
+
+    expect(estimate.silos.find((silo) => silo.silo === "SPF1")!.quantity).toBe(17.25);
+    expect(estimate.silos.find((silo) => silo.silo === "SPF2")).toMatchObject({ quantity: 12, articles: [{ article: "CG3", quantity: 12 }] });
+    expect(estimate.errors).toEqual(["SPF1 : la quantité silo (15 T) ne correspond pas à la somme des lots (17.25 T) ; la somme des lots est retenue."]);
+  });
+
+  it("ne lit que la dernière feuille (onglet le plus à droite) d'un classeur à une feuille par jour", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const addDay = (name: string, spf1: number, spf2: number) => {
+      const sheet = workbook.addWorksheet(name);
+      sheet.addRow([]);
+      sheet.addRow([null, "TRAÇABILITÉ DES LOTS"]);
+      sheet.addRow([null, `Le ${name} oct. 2026`]);
+      sheet.addRow([]);
+      sheet.addRow([null, "Silo", "Article", "Date Fabrication", "N° Lot", "Quantité par lot (T)", "Quantité silo (T)"]);
+      sheet.addRow([null, "SPF1", "CM1", "20 oct. 2026", "L1", spf1, spf1]);
+      sheet.addRow([null, "SPF2", "DG3", "21 oct. 2026", "L2", spf2, spf2]);
+      sheet.addRow([null, "Total", null, null, null, null, spf1 + spf2]);
+      return sheet;
+    };
+    addDay("24", 20, 10);
+    addDay("26", 18, 12);
+    addDay("27", 15, 14);
+    addDay("28", 11.5, 16.25);
+    addDay("brouillon", 99, 99).state = "hidden"; // une feuille masquée n'est jamais « la dernière »
+
+    const estimate = await parseLotLedgerEstimate(Buffer.from(await workbook.xlsx.writeBuffer()), ["SPF1", "SPF2"]);
+
+    expect(estimate.sheet).toBe("28");
+    expect(estimate.label).toBe("Le 28 oct. 2026");
+    expect(estimate.errors).toEqual([]);
+    expect(estimate.silos.map((silo) => [silo.silo, silo.quantity, silo.lots.length])).toEqual([["SPF1", 11.5, 1], ["SPF2", 16.25, 1]]);
+  });
+
+  it("refuse un classeur qui n'a pas le tableau Silo / Article / Quantité", async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet("Feuil1").addRow(["Date", "Production"]);
+
+    const estimate = await parseLotLedgerEstimate(Buffer.from(await workbook.xlsx.writeBuffer()));
+
+    expect(estimate.silos).toEqual([]);
+    expect(estimate.errors[0]).toContain("Tableau introuvable");
   });
 });

@@ -178,3 +178,22 @@
 .silo-import-dialog input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
 .silo-import-dialog input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
 .silo-secondary:disabled { opacity: .55; cursor: wait; }
+
+/* Estimation importée (classeur « Traçabilité des lots ») : couche hachurée et
+   texte en italique, volontairement transparents pour ne jamais se confondre
+   avec le stock réel. */
+.silo-estimate-tools { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.silo-estimate-tools .silo-manage-link { cursor: pointer; }
+.silo-estimate-tools .silo-manage-link:disabled { opacity: .55; cursor: wait; }
+.silo-estimate-chip { display: inline-flex; align-items: center; gap: 8px; border: 1px dashed rgba(53,106,64,.45); border-radius: 999px; padding: 5px 6px 5px 12px; color: rgba(29,72,38,.7); background: rgba(243,248,241,.6); font-size: 11px; font-style: italic; font-weight: 600; }
+.silo-estimate-chip button { display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 999px; padding: 4px 9px; color: #8a4a35; background: rgba(193,90,63,.1); font-size: 10px; font-style: normal; font-weight: 700; cursor: pointer; }
+.silo-estimate-chip button:hover { background: rgba(193,90,63,.18); }
+.silo-estimate-legend { display: flex; align-items: center; gap: 8px; margin: -6px 0 14px; color: #7c8980; font-size: 11px; font-style: italic; }
+.silo-estimate-swatch, .silo-estimate-layer { background: repeating-linear-gradient(135deg, rgba(53,106,64,.38) 0 4px, rgba(53,106,64,.1) 4px 8px); }
+.silo-estimate-swatch { display: inline-block; flex: none; width: 26px; height: 8px; border-radius: 999px; outline: 1px dashed rgba(53,106,64,.5); }
+.silo-estimate-layer { position: absolute; inset: 0 auto 0 0; z-index: 1; display: block; height: 100%; border-radius: inherit; box-shadow: inset -2px 0 0 rgba(29,72,38,.55); transition: width .3s ease; }
+.silo-card-has-estimate { border-style: dashed; border-color: rgba(53,106,64,.35); }
+.silo-card-estimate { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 2px 8px; margin: 0; padding-top: 7px; border-top: 1px dashed rgba(53,106,64,.25); color: rgba(29,72,38,.6); font-size: 11px; font-style: italic; }
+.silo-card-estimate small { color: rgba(29,72,38,.5); font-size: 10px; }
+.silo-estimate-note { display: block; color: rgba(29,72,38,.55) !important; font-size: 11px; font-style: italic; }
+.silo-article-chip-estimate { border-style: dashed; background: rgba(251,252,248,.5); opacity: .8; }
