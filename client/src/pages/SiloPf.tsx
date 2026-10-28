@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Boxes, Database, Layers, Menu, PackageSearch, Truck, Upload, X } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowLeft, Boxes, Database, Layers, Menu, PackageSearch, Truck } from "lucide-react";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import { SiloEstimateTools, useSiloEstimate } from "@/components/SiloEstimateTools";
+import { formatSignedTons as signedTons } from "@/lib/siloEstimate";
 import { getSiloFillStatus, SILO_CAPACITY_TONS } from "@shared/silo";
 import "./silo.css";
 
@@ -12,44 +13,6 @@ const fmt = (value: number | null | undefined, digits = 2) =>
   value === null || value === undefined ? "—" : new Intl.NumberFormat("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
 const formatDate = (value: string | null) =>
   value ? new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—";
-const signedTons = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : "±"}${fmt(Math.abs(value), 2)} T`;
-
-/**
- * Estimation importée (classeur « Traçabilité des lots » retouché) : affichée en
- * transparence à côté du stock réel, jamais enregistrée. Gardée dans ce navigateur
- * jusqu'à « Retirer », pour survivre à un rechargement de la page.
- */
-type SiloEstimate = { silo: string; quantity: number; articles: { article: string; quantity: number }[] };
-type StoredEstimate = { fileName: string; sheet?: string | null; label: string | null; silos: SiloEstimate[] };
-const ESTIMATE_STORAGE_KEY = "silo-pf-estimate";
-
-function loadStoredEstimate(): StoredEstimate | null {
-  try {
-    const raw = window.localStorage.getItem(ESTIMATE_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) as StoredEstimate : null;
-    return parsed && Array.isArray(parsed.silos) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeEstimate(estimate: StoredEstimate | null) {
-  try {
-    if (estimate) window.localStorage.setItem(ESTIMATE_STORAGE_KEY, JSON.stringify(estimate));
-    else window.localStorage.removeItem(ESTIMATE_STORAGE_KEY);
-  } catch {
-    // Stockage indisponible (navigation privée) : l'estimation reste affichée jusqu'au rechargement.
-  }
-}
-
-function readFileAsBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Le fichier n’a pas pu être lu."));
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function SiloPf() {
   const { openSidebar } = useSidebar();
@@ -62,9 +25,8 @@ export default function SiloPf() {
   const entriesQuery = trpc.silo.listEntries.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const shipmentsQuery = trpc.silo.listShipments.useQuery(undefined, LIVE_QUERY_OPTIONS);
 
-  const [estimate, setEstimate] = useState<StoredEstimate | null>(loadStoredEstimate);
-  const estimateInputRef = useRef<HTMLInputElement>(null);
-  const parseEstimate = trpc.silo.parseEstimate.useMutation();
+  const estimateTools = useSiloEstimate();
+  const { estimate } = estimateTools;
   const estimateBySilo = useMemo(() => new Map((estimate?.silos ?? []).map((item) => [item.silo, item])), [estimate]);
 
   const state = stateQuery.data;
@@ -81,25 +43,6 @@ export default function SiloPf() {
     (estimate?.silos ?? []).forEach((item) => item.articles.forEach((line) => totals.set(line.article, (totals.get(line.article) ?? 0) + line.quantity)));
     return totals;
   }, [estimate]);
-
-  const handleEstimateFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".xlsx")) { toast.error("Sélectionnez un classeur Excel au format .xlsx."); return; }
-    if (file.size > 2_500_000) { toast.error("Le fichier Excel est trop volumineux (2,5 Mo maximum)."); return; }
-    try {
-      const result = await parseEstimate.mutateAsync({ fileName: file.name, fileBase64: await readFileAsBase64(file) });
-      const next: StoredEstimate = { fileName: file.name, sheet: result.sheet, label: result.label, silos: result.silos.map(({ silo, quantity, articles }) => ({ silo, quantity, articles })) };
-      setEstimate(next);
-      storeEstimate(next);
-      toast.success("Estimation affichée", { description: `${result.silos.length} silo(s) lus dans ${file.name}${result.sheet ? `, feuille « ${result.sheet} »` : ""}. Le stock réel n’est pas modifié.` });
-      if (result.errors.length) toast.warning(`${result.errors.length} remarque(s) sur le fichier`, { description: result.errors.slice(0, 4).join(" ") });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "L’import de l’estimation a échoué.");
-    }
-  };
-  const clearEstimate = () => { setEstimate(null); storeEstimate(null); };
 
   const recentEntries = useMemo(() => (entriesQuery.data ?? []).slice(0, 8), [entriesQuery.data]);
   const recentShipments = useMemo(() => (shipmentsQuery.data ?? []).slice(0, 8), [shipmentsQuery.data]);
@@ -149,16 +92,7 @@ export default function SiloPf() {
           <div className="silo-section-head">
             <div><span className="silo-section-label"><Layers size={14} />Occupation</span><h2>Silos</h2></div>
             <div className="silo-estimate-tools">
-              <input ref={estimateInputRef} type="file" accept=".xlsx" onChange={handleEstimateFile} hidden />
-              {estimate ? (
-                <span className="silo-estimate-chip" title={estimate.fileName}>
-                  Estimation{estimate.sheet ? ` · feuille ${estimate.sheet}` : ""}{estimate.label ? ` · ${estimate.label}` : ""}
-                  <button type="button" onClick={clearEstimate} aria-label="Retirer l’estimation"><X size={13} />Retirer</button>
-                </span>
-              ) : null}
-              <button type="button" className="silo-manage-link" onClick={() => estimateInputRef.current?.click()} disabled={parseEstimate.isPending}>
-                <Upload size={14} />{parseEstimate.isPending ? "Lecture…" : estimate ? "Remplacer l’estimation" : "Importer une estimation"}
-              </button>
+              <SiloEstimateTools {...estimateTools} />
               <label className="silo-toggle"><input type="checkbox" checked={showEmptySilos} onChange={(event) => setShowEmptySilos(event.target.checked)} />Afficher les silos vides</label>
             </div>
           </div>

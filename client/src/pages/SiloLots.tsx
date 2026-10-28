@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { LIVE_QUERY_OPTIONS, trpc } from "@/lib/trpc";
 import { BRAND_LOGO_URL } from "@/lib/brand";
 import { useSidebar } from "@/components/AppShell";
+import { SiloEstimateTools, useSiloEstimate } from "@/components/SiloEstimateTools";
+import { estimateLotKey, formatSignedTons, type SiloEstimateLot } from "@/lib/siloEstimate";
 import ListPagination from "@/components/ListPagination";
 import { usePagination } from "@/hooks/usePagination";
 import type { LotConsumptionSource } from "../../../server/siloLots";
@@ -75,6 +77,44 @@ export default function SiloLots() {
   const activeCount = lots.filter((lot) => lot.status === "active").length;
   const totalRemaining = lots.reduce((sum, lot) => sum + lot.remainingQuantity, 0);
 
+  // Estimation importée (dernière feuille du classeur « Traçabilité des lots ») : chaque lot
+  // estimé retrouve le lot réel du même silo et du même n° de lot ; un lot réel encore
+  // actif dans un silo estimé mais absent du fichier est estimé à 0 ; un lot du fichier
+  // sans lot réel correspondant est listé à part, en transparence.
+  const estimateTools = useSiloEstimate();
+  const { estimate } = estimateTools;
+  const estimateMatch = useMemo(() => {
+    const byRealLot = new Map<string, SiloEstimateLot>();
+    const estimateOnly: (SiloEstimateLot & { silo: string })[] = [];
+    if (!estimate) return { byRealLot, estimateOnly, silos: new Set<string>() };
+    const realByKey = new Map<string, typeof lots>();
+    lots.forEach((lot) => {
+      const key = estimateLotKey(lot.silo, lot.lotNumber);
+      realByKey.set(key, [...(realByKey.get(key) ?? []), lot]);
+    });
+    const claimed = new Set<string>();
+    estimate.silos.forEach((silo) => (silo.lots ?? []).forEach((estimated) => {
+      const candidates = (realByKey.get(estimateLotKey(silo.silo, estimated.lotNumber)) ?? [])
+        .filter((lot) => !claimed.has(`${lot.entryId}-${lot.silo}`) && (estimated.lotNumber || lot.article === estimated.article))
+        .sort((a, b) => Number(b.status === "active") - Number(a.status === "active"));
+      const match = candidates[0];
+      if (match) {
+        claimed.add(`${match.entryId}-${match.silo}`);
+        byRealLot.set(`${match.entryId}-${match.silo}`, estimated);
+      } else {
+        estimateOnly.push({ ...estimated, silo: silo.silo });
+      }
+    }));
+    return { byRealLot, estimateOnly, silos: new Set(estimate.silos.map((silo) => silo.silo)) };
+  }, [estimate, lots]);
+  const estimatedTotal = estimate ? estimate.silos.reduce((sum, silo) => sum + silo.quantity, 0) : 0;
+  const estimatedSilosRealTotal = lots.filter((lot) => estimateMatch.silos.has(lot.silo)).reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+  const estimateOnlyLots = estimateMatch.estimateOnly
+    .filter((lot) => siloFilter === "all" || lot.silo === siloFilter)
+    .filter((lot) => articleFilter === "all" || lot.article === articleFilter)
+    .filter((lot) => !lotQuery.trim() || (lot.lotNumber ?? "").toLowerCase().includes(lotQuery.trim().toLowerCase()));
+  const tableColumns = 9 + (isAdmin ? 1 : 0) + (estimate ? 1 : 0);
+
   if (ledgerQuery.error) {
     return (
       <main className="silo-screen">
@@ -103,6 +143,7 @@ export default function SiloLots() {
               <span>Quantité tracée restante</span>
               <strong>{ledgerQuery.isLoading ? "…" : `${fmt(totalRemaining)} T`}</strong>
               <small>{activeCount} lot(s) actif(s) sur {lots.length}</small>
+              {estimate && <small className="silo-estimate-note">≈ {fmt(estimatedTotal)} T estimés sur {estimate.silos.length} silo(s) · écart {formatSignedTons(estimatedTotal - estimatedSilosRealTotal)}</small>}
             </div>
           </div>
         </div>
@@ -116,11 +157,13 @@ export default function SiloLots() {
               <label className="silo-toggle"><input type="checkbox" checked={showDepleted} onChange={(event) => setShowDepleted(event.target.checked)} />Afficher les lots épuisés</label>
             </div>
           </div>
+          <div className="silo-estimate-tools silo-estimate-tools-start"><SiloEstimateTools {...estimateTools} /></div>
+          {estimate && <p className="silo-estimate-legend"><b className="silo-estimate-swatch" />Colonne « Estimation » en italique : quantité de chaque lot dans {estimate.fileName}{estimate.sheet ? ` (feuille ${estimate.sheet})` : ""}, affichée pour comparaison avec le restant réel. Rien n’est modifié.</p>}
 
           {ledgerQuery.isLoading ? <p className="silo-empty">Chargement de la traçabilité…</p> : filteredLots.length === 0 ? <div className="silo-empty-cell">Aucun lot ne correspond à ces filtres.</div> : (
             <div className="silo-table-wrap">
               <table className="silo-list-table silo-lot-table">
-                <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th><th>Statut</th>{isAdmin && <th>Actions</th>}</tr></thead>
+                <thead><tr><th></th><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Produit (T)</th><th>Sorti (T)</th><th>Restant (T)</th>{estimate && <th className="silo-estimate-head">Estimation (T)</th>}<th>Statut</th>{isAdmin && <th>Actions</th>}</tr></thead>
                 <tbody>
                   {pageLots.map((lot) => {
                     const key = `${lot.entryId}-${lot.silo}`;
@@ -136,6 +179,19 @@ export default function SiloLots() {
                           <td>{fmt(lot.producedQuantity)}</td>
                           <td>{fmt(lot.consumedQuantity)}</td>
                           <td className="silo-strong-cell">{fmt(lot.remainingQuantity)}</td>
+                          {estimate && (() => {
+                            const estimated = estimateMatch.byRealLot.get(key);
+                            // Lot réel encore actif dans un silo du fichier, mais absent de l'estimation : estimé vide.
+                            const quantity = estimated ? estimated.quantity : estimateMatch.silos.has(lot.silo) && lot.remainingQuantity > 0 ? 0 : undefined;
+                            if (quantity === undefined) return <td className="silo-estimate-cell">—</td>;
+                            const gap = quantity - lot.remainingQuantity;
+                            return (
+                              <td className="silo-estimate-cell">
+                                ≈ {fmt(quantity)}{!estimated && <small> absent du fichier</small>}
+                                {Math.abs(gap) >= 0.005 && <small className="silo-estimate-gap">{formatSignedTons(gap)}</small>}
+                              </td>
+                            );
+                          })()}
                           <td><span className={`silo-lot-status silo-lot-status-${lot.status}`} title={lot.manuallyDepleted ? "Fermé manuellement, quelle que soit la quantité réellement sortie." : undefined}>{lot.status === "active" ? "Actif" : lot.manuallyDepleted ? "Épuisé (manuel)" : "Épuisé"}</span></td>
                           {isAdmin && (
                             <td onClick={(event) => event.stopPropagation()}>
@@ -150,7 +206,7 @@ export default function SiloLots() {
                         </tr>
                         {expanded && (
                           <tr className="silo-lot-detail-row">
-                            <td colSpan={isAdmin ? 10 : 9}>
+                            <td colSpan={tableColumns}>
                               {lot.consumptions.length === 0 ? <p className="silo-lot-detail-empty">Aucune sortie n’a encore consommé ce lot.</p> : (
                                 <ul className="silo-lot-detail-list">
                                   {lot.consumptions.map((consumption, index) => (
@@ -169,6 +225,27 @@ export default function SiloLots() {
             </div>
           )}
           <ListPagination page={lotsPage} pageCount={lotsPageCount} onPageChange={setLotsPage} totalCount={filteredLots.length} itemLabel="lot" pageSize={lotsPageSize} onPageSizeChange={setLotsPageSize} />
+          {estimate && estimateOnlyLots.length > 0 && (
+            <div className="silo-estimate-only">
+              <h3>{estimateOnlyLots.length} lot(s) présent(s) seulement dans l’estimation</h3>
+              <div className="silo-table-wrap">
+                <table className="silo-list-table silo-lot-table">
+                  <thead><tr><th>Silo</th><th>Article</th><th>N° Lot</th><th>Date</th><th>Estimation (T)</th></tr></thead>
+                  <tbody>
+                    {estimateOnlyLots.map((lot, index) => (
+                      <tr key={`${lot.silo}-${lot.lotNumber ?? "sans"}-${index}`} className="silo-lot-row-estimate-only">
+                        <td>{lot.silo}</td>
+                        <td className="silo-strong-cell">{lot.article}</td>
+                        <td>{lot.lotNumber || "—"}</td>
+                        <td>{lot.date || "—"}</td>
+                        <td className="silo-estimate-cell">≈ {fmt(lot.quantity)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </section>
            {unattributed.length > 0 && (
           <div className="silo-error-card silo-warning-card">
