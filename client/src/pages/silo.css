@@ -197,11 +197,3 @@
 .silo-card-estimate small { color: rgba(29,72,38,.5); font-size: 10px; }
 .silo-estimate-note { display: block; color: rgba(29,72,38,.55) !important; font-size: 11px; font-style: italic; }
 .silo-article-chip-estimate { border-style: dashed; background: rgba(251,252,248,.5); opacity: .8; }
-.silo-estimate-tools-start { justify-content: flex-start; margin-bottom: 12px; }
-.silo-estimate-head { color: rgba(29,72,38,.6) !important; font-style: italic; }
-.silo-estimate-cell { color: rgba(29,72,38,.62) !important; font-style: italic; white-space: nowrap; background: repeating-linear-gradient(135deg, rgba(53,106,64,.06) 0 6px, transparent 6px 12px); }
-.silo-estimate-cell small { color: rgba(29,72,38,.5); font-size: 10px; }
-.silo-estimate-gap { display: block; }
-.silo-estimate-only { margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(53,106,64,.3); }
-.silo-estimate-only h3 { margin: 0 0 10px; color: rgba(29,72,38,.65); font: italic 600 13px 'IBM Plex Sans'; }
-.silo-lot-row-estimate-only td { opacity: .65; font-style: italic; }
