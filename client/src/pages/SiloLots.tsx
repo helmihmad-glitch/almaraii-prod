@@ -46,6 +46,7 @@ export default function SiloLots() {
   const ledgerQuery = trpc.silo.lotLedger.useQuery(undefined, LIVE_QUERY_OPTIONS);
   const lots = ledgerQuery.data?.lots ?? [];
   const unattributed = ledgerQuery.data?.unattributed ?? [];
+  const carriedOver = ledgerQuery.data?.carriedOver ?? [];
 
   const setDepletion = trpc.silo.setLotDepletion.useMutation({
     onSuccess: async () => { await utils.silo.lotLedger.invalidate(); },
@@ -154,7 +155,7 @@ export default function SiloLots() {
                               {lot.consumptions.length === 0 ? <p className="silo-lot-detail-empty">Aucune sortie n’a encore consommé ce lot.</p> : (
                                 <ul className="silo-lot-detail-list">
                                   {lot.consumptions.map((consumption, index) => (
-                                    <li key={index}><span>{describeSource(consumption.source)}</span><strong>-{fmt(consumption.quantity)} T</strong></li>
+                                    <li key={index}><span>{describeSource(consumption.source)}{consumption.carriedOver && <em className="silo-lot-carried"> · excédent reporté (aucun lot à cette date)</em>}</span><strong>-{fmt(consumption.quantity)} T</strong></li>
                                   ))}
                                 </ul>
                               )}
@@ -170,7 +171,21 @@ export default function SiloLots() {
           )}
           <ListPagination page={lotsPage} pageCount={lotsPageCount} onPageChange={setLotsPage} totalCount={filteredLots.length} itemLabel="lot" pageSize={lotsPageSize} onPageSizeChange={setLotsPageSize} />
         </section>
-           {unattributed.length > 0 && (
+        {carriedOver.length > 0 && (
+          <div className="silo-error-card silo-warning-card">
+            <TriangleAlert size={20} />
+            <div>
+              <strong>{carriedOver.length} sortie(s) dépassaient la production enregistrée à leur date</strong>
+              <span>Ces quantités sont bien sorties du silo : pour que le restant des lots rejoigne l’État des silos, leur excédent a été retiré du lot le plus ancien encore ouvert. Vérifiez le silo de ces expéditions ou la répartition de la production correspondante.</span>
+              <ul>
+                {carriedOver.map((item, index) => (
+                  <li key={index}>{item.silo} · {item.article} : {fmt(item.quantity)} T ({describeSource(item.source)}) → retirés du lot {item.lotNumber || "sans numéro"}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+        {unattributed.length > 0 && (
           <div className="silo-error-card silo-warning-card">
             <TriangleAlert size={20} />
             <div>

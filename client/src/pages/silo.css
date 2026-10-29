@@ -178,3 +178,4 @@
 .silo-import-dialog input { width: 100%; border: 1px solid #dce3d9; border-radius: 7px; outline: 0; background: #fcfbf7; color: var(--ink); padding: 10px 11px; font-size: 12px; }
 .silo-import-dialog input:focus { border-color: var(--signal); box-shadow: 0 0 0 3px rgba(232,181,58,.14); }
 .silo-secondary:disabled { opacity: .55; cursor: wait; }
+.silo-lot-carried { color: #9a6a12; font-size: 11px; }

@@ -47,7 +47,12 @@ export type LotConsumptionSource =
   | { type: "shipment"; shipmentId: number; date: string | null; shipmentType: string }
   | { type: "correction"; entryId: number; date: string | null };
 
-export type LotConsumption = { quantity: number; source: LotConsumptionSource };
+/**
+ * `carriedOver` : excédent d'une sortie qui dépassait les lots présents à sa date
+ * (production sous-enregistrée), reporté ensuite sur ce lot encore ouvert — voir
+ * computeLotLedger.
+ */
+export type LotConsumption = { quantity: number; source: LotConsumptionSource; carriedOver?: boolean };
 
 export type LotBalance = {
   entryId: number;
@@ -74,7 +79,13 @@ export type LotBalance = {
 /** Consommation qu'aucun lot n'a pu couvrir (retraits excedant la production connue). */
 export type UnattributedConsumption = { article: string; silo: string; quantity: number; source: LotConsumptionSource };
 
-export type LotLedger = { lots: LotBalance[]; unattributed: UnattributedConsumption[] };
+/**
+ * `unattributed` : ce qu'aucun lot n'a pu couvrir, même après report.
+ * `carriedOver` : excédents reportés sur un lot encore ouvert (voir computeLotLedger),
+ * à signaler car ils révèlent une production ou un silo mal saisi.
+ */
+export type CarriedOverConsumption = UnattributedConsumption & { lotNumber: string | null; entryId: number };
+export type LotLedger = { lots: LotBalance[]; unattributed: UnattributedConsumption[]; carriedOver: CarriedOverConsumption[] };
 
 type QueueEvent =
   | { kind: "produce"; date: string; sequence: number; entryId: number; lotNumber: string | null; entryDate: string | null; quantity: number; manuallyDepleted: boolean }
@@ -181,10 +192,13 @@ function buildEventGroups(allocations: LotAllocationInput[], shipments: LotShipm
 export function computeLotLedger(allocations: LotAllocationInput[], shipments: LotShipmentInput[]): LotLedger {
   const lots: LotBalance[] = [];
   const unattributed: UnattributedConsumption[] = [];
+  const carriedOver: CarriedOverConsumption[] = [];
 
   for (const { article, silo, events } of buildEventGroups(allocations, shipments)) {
     // File d'attente FIFO des lots encore actifs pour ce couple (article, silo).
     const queue: LotBalance[] = [];
+    // Sorties qui dépassaient les lots présents à leur date, dans l'ordre chronologique.
+    const excess: UnattributedConsumption[] = [];
 
     for (const event of events) {
       if (event.kind === "produce") {
@@ -233,8 +247,36 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
       }
       while (remainingToConsume > 1e-9 && queue.length > 0) takeFrom(0);
       if (remainingToConsume > 1e-9) {
-        unattributed.push({ article, silo, quantity: roundTons(remainingToConsume), source: event.source });
+        excess.push({ article, silo, quantity: roundTons(remainingToConsume), source: event.source });
       }
+    }
+
+    // Une sortie qui dépassait les lots présents à sa date est bien sortie du silo
+    // (l'État des silos la compte) : la production correspondante a simplement été
+    // sous-enregistrée. Son excédent est donc retiré, une fois toute la chronologie
+    // appliquée, des lots encore ouverts — du plus ancien au plus récent — pour que le
+    // restant des lots rejoigne le stock du silo (cas réel : SPF6, 33,95 T de CG3 sur
+    // le lot 2600750-1026 contre 25 T dans l'État des silos, 8,95 T de sorties du
+    // 03/10 au 08/10 n'ayant trouvé aucun lot). Un lot fermé manuellement n'est pas
+    // touché : sa fermeture compte déjà comme retrait (voir manualDepletionWriteOffs).
+    // Seul ce qu'aucun lot ouvert ne peut couvrir reste « sans lot d'origine ».
+    for (const item of excess) {
+      let left = item.quantity;
+      for (const lot of queue) {
+        if (left <= 1e-9) break;
+        if (lot.manuallyDepleted || lot.remainingQuantity <= 1e-9) continue;
+        const taken = roundTons(Math.min(lot.remainingQuantity, left));
+        lot.remainingQuantity = roundTons(lot.remainingQuantity - taken);
+        lot.consumedQuantity = roundTons(lot.consumedQuantity + taken);
+        lot.consumptions.push({ quantity: taken, source: item.source, carriedOver: true });
+        carriedOver.push({ ...item, quantity: taken, lotNumber: lot.lotNumber, entryId: lot.entryId });
+        if (lot.remainingQuantity <= 1e-9) {
+          lot.remainingQuantity = 0;
+          lot.status = "depleted";
+        }
+        left = roundTons(left - taken);
+      }
+      if (left > 1e-9) unattributed.push({ ...item, quantity: left });
     }
   }
 
@@ -249,7 +291,7 @@ export function computeLotLedger(allocations: LotAllocationInput[], shipments: L
     }
   }
 
-  return { lots, unattributed };
+  return { lots, unattributed, carriedOver };
 }
 
 /**

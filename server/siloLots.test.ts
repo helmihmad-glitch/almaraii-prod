@@ -660,3 +660,43 @@ describe("saisie antidatée : ne jamais contredire un n° de lot déjà enregist
       .toEqual({ lotNumber: "L", silo: "SPF2", date: "2026-01-06" });
   });
 });
+
+// Cas réel (SPF6, CG3) : 8,95 T sorties du 03/10 au 08/10 alors qu'aucun lot ne les couvrait
+// à ces dates. La traçabilité affichait 33,95 T restantes sur le dernier lot, l'État des silos 25 T.
+describe("excédent d'une sortie sans lot à sa date : reporté sur les lots encore ouverts", () => {
+  const allocations = [
+    { entryId: 1, entryDate: "2026-10-01", article: "CG3", lotNumber: "A-1001", silo: "SPF6", quantity: 47.25 },
+    { entryId: 2, entryDate: "2026-10-12", article: "CG3", lotNumber: "B-1012", silo: "SPF6", quantity: 105, manuallyDepleted: true },
+    { entryId: 3, entryDate: "2026-10-26", article: "CG3", lotNumber: "C-1026", silo: "SPF6", quantity: 94.27 },
+  ];
+  const shipments = [
+    { shipmentId: 162, shipmentDate: "2026-10-01", article: "CG3", silo: "SPF6", quantity: 29.1, shipmentType: "Sac", lotNumber: "A-1001" },
+    { shipmentId: 174, shipmentDate: "2026-10-03", article: "CG3", silo: "SPF6", quantity: 27.1, shipmentType: "Sac", lotNumber: "A-1001" }, // 8,95 T de trop
+    { shipmentId: 364, shipmentDate: "2026-10-12", article: "CG3", silo: "SPF6", quantity: 101.61, shipmentType: "Vrac", lotNumber: "B-1012" },
+    { shipmentId: 470, shipmentDate: "2026-10-26", article: "CG3", silo: "SPF6", quantity: 60.32, shipmentType: "Sac", lotNumber: "C-1026" },
+  ];
+
+  it("le restant du lot ouvert rejoint le stock de l'État des silos ; le lot fermé manuellement n'est pas touché", () => {
+    const ledger = computeLotLedger(allocations, shipments);
+    const lot = (lotNumber: string) => ledger.lots.find((item) => item.lotNumber === lotNumber)!;
+
+    // Stock du silo (État des silos) : produit − expédié − part écartée du lot fermé.
+    const produced = allocations.reduce((sum, item) => sum + item.quantity, 0);
+    const shipped = shipments.reduce((sum, item) => sum + item.quantity, 0);
+    const writeOff = manualDepletionWriteOffs(ledger.lots).reduce((sum, item) => sum + item.quantity, 0);
+    expect(Math.round((produced - shipped - writeOff) * 100) / 100).toBe(25);
+
+    expect(lot("C-1026").remainingQuantity).toBe(25); // 94,27 − 60,32 − 8,95 (au lieu de 33,95)
+    expect(lot("C-1026").consumptions.at(-1)).toEqual({ quantity: 8.95, source: { type: "shipment", shipmentId: 174, date: "2026-10-03", shipmentType: "Sac" }, carriedOver: true });
+    expect(writeOff).toBe(3.39); // la fermeture manuelle du lot B-1012 compte toujours pour 3,39 T
+    expect(ledger.unattributed).toEqual([]);
+    expect(ledger.carriedOver).toEqual([{ article: "CG3", silo: "SPF6", quantity: 8.95, source: { type: "shipment", shipmentId: 174, date: "2026-10-03", shipmentType: "Sac" }, lotNumber: "C-1026", entryId: 3 }]);
+  });
+
+  it("ce qu'aucun lot ouvert ne peut couvrir reste sans lot d'origine", () => {
+    const ledger = computeLotLedger(allocations.slice(0, 1), shipments.slice(0, 2));
+
+    expect(ledger.carriedOver).toEqual([]);
+    expect(ledger.unattributed).toEqual([{ article: "CG3", silo: "SPF6", quantity: 8.95, source: { type: "shipment", shipmentId: 174, date: "2026-10-03", shipmentType: "Sac" } }]);
+  });
+});
